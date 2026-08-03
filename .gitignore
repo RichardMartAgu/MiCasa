@@ -32,6 +32,12 @@ yarn-error.*
 
 # local env files
 .env*.local
+.env
+
+# autoskills (regenerables con `npx autoskills`)
+.claude/skills/
+.agents/
+skills-lock.json
 
 # typescript
 *.tsbuildinfo
