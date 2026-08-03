@@ -1,0 +1,193 @@
+import { supabase } from './supabase';
+import { friendlyError } from './errors';
+import type {
+  Appointment,
+  AppointmentKind,
+  Category,
+  Contact,
+  Expense,
+  ShoppingItem,
+  ShoppingList,
+} from './types';
+
+export type ApiError = { message: string };
+
+function toError(error: { message: string } | null): ApiError | null {
+  return error ? { message: friendlyError(error.message) } : null;
+}
+
+// ---- Categorías / secciones ------------------------------------------------
+
+export async function fetchCategories(casaId: string): Promise<Category[]> {
+  const { data } = await supabase
+    .from('categories')
+    .select('*')
+    .eq('casa_id', casaId)
+    .order('name');
+  return (data ?? []) as Category[];
+}
+
+export async function addCategory(input: {
+  casa_id: string;
+  name: string;
+  color: string;
+  icon: string;
+  budget: number | null;
+}): Promise<ApiError | null> {
+  const { error } = await supabase.from('categories').insert(input);
+  return toError(error);
+}
+
+export async function removeCategory(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('categories').delete().eq('id', id);
+  return toError(error);
+}
+
+// ---- Gastos -----------------------------------------------------------------
+
+export async function fetchExpenses(casaId: string): Promise<Expense[]> {
+  const { data } = await supabase
+    .from('expenses')
+    .select('*')
+    .eq('casa_id', casaId)
+    .order('spent_at', { ascending: false });
+  return (data ?? []) as Expense[];
+}
+
+export async function addExpense(input: {
+  casa_id: string;
+  user_id: string;
+  category_id: string | null;
+  title: string;
+  amount: number;
+  spent_at: string;
+  note?: string | null;
+}): Promise<ApiError | null> {
+  const { error } = await supabase.from('expenses').insert(input);
+  return toError(error);
+}
+
+export async function removeExpense(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('expenses').delete().eq('id', id);
+  return toError(error);
+}
+
+// ---- Citas ------------------------------------------------------------------
+
+export async function fetchAppointments(casaId: string): Promise<Appointment[]> {
+  const { data } = await supabase
+    .from('appointments')
+    .select('*')
+    .eq('casa_id', casaId)
+    .order('starts_at', { ascending: true });
+  return (data ?? []) as Appointment[];
+}
+
+export async function addAppointment(input: {
+  casa_id: string;
+  user_id: string;
+  title: string;
+  description?: string | null;
+  person?: string | null;
+  location?: string | null;
+  kind: AppointmentKind;
+  starts_at: string;
+  reminder_at?: string | null;
+}): Promise<ApiError | null> {
+  const { error } = await supabase.from('appointments').insert(input);
+  return toError(error);
+}
+
+export async function removeAppointment(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('appointments').delete().eq('id', id);
+  return toError(error);
+}
+
+// ---- Listas de la compra -----------------------------------------------------
+
+export async function fetchShoppingLists(casaId: string): Promise<ShoppingList[]> {
+  const { data } = await supabase
+    .from('shopping_lists')
+    .select('*')
+    .eq('casa_id', casaId)
+    .order('created_at', { ascending: false });
+  return (data ?? []) as ShoppingList[];
+}
+
+export async function addShoppingList(
+  casaId: string,
+  userId: string,
+  title: string,
+): Promise<ApiError | null> {
+  const { error } = await supabase
+    .from('shopping_lists')
+    .insert({ casa_id: casaId, user_id: userId, title });
+  return toError(error);
+}
+
+export async function removeShoppingList(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('shopping_lists').delete().eq('id', id);
+  return toError(error);
+}
+
+export async function toggleShoppingList(id: string, done: boolean): Promise<ApiError | null> {
+  const { error } = await supabase.from('shopping_lists').update({ done }).eq('id', id);
+  return toError(error);
+}
+
+export async function fetchShoppingItems(listId: string): Promise<ShoppingItem[]> {
+  const { data } = await supabase
+    .from('shopping_items')
+    .select('*')
+    .eq('list_id', listId)
+    .order('created_at', { ascending: true });
+  return (data ?? []) as ShoppingItem[];
+}
+
+export async function addShoppingItem(input: {
+  list_id: string;
+  name: string;
+  quantity?: number | null;
+  unit?: string | null;
+}): Promise<ApiError | null> {
+  const { error } = await supabase.from('shopping_items').insert(input);
+  return toError(error);
+}
+
+export async function toggleShoppingItem(id: string, done: boolean): Promise<ApiError | null> {
+  const { error } = await supabase.from('shopping_items').update({ done }).eq('id', id);
+  return toError(error);
+}
+
+export async function removeShoppingItem(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('shopping_items').delete().eq('id', id);
+  return toError(error);
+}
+
+// ---- Contactos / cumpleaños ---------------------------------------------------
+
+export async function fetchContacts(casaId: string): Promise<Contact[]> {
+  const { data } = await supabase
+    .from('contacts')
+    .select('*')
+    .eq('casa_id', casaId)
+    .order('name');
+  return (data ?? []) as Contact[];
+}
+
+export async function addContact(input: {
+  casa_id: string;
+  user_id: string;
+  name: string;
+  birth_date: string;
+  relationship?: string | null;
+  phone?: string | null;
+}): Promise<ApiError | null> {
+  const { error } = await supabase.from('contacts').insert(input);
+  return toError(error);
+}
+
+export async function removeContact(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('contacts').delete().eq('id', id);
+  return toError(error);
+}
