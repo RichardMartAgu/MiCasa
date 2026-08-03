@@ -1,56 +1,106 @@
-# Welcome to your Expo app 👋
+# 🏠 MiCasa
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Aplicación móvil para gestionar tu hogar entre varias personas, con coste cero.
 
-## Get started
+MiCasa te permite llevar la **contabilidad de compras** por secciones (Bebé, Reformas, Comida…), gestionar **citas** (médico, escuela, mascotas…), crear **listas de la compra** y recordar los **cumpleaños** de la familia — todo con varios usuarios compartiendo la misma casa en tiempo real.
 
-1. Install dependencies
+---
 
-   ```bash
-   npm install
-   ```
+## ✨ Funcionalidades
 
-2. Start the app
+- **Autenticación** con correo y contraseña (Supabase Auth).
+- **Casas multi-usuario**: crea una casa, comparte su código de invitación y toda tu pareja/familia gestiona los mismos datos en tiempo real.
+- **Gastos con secciones**: categorías con color, icono y presupuesto mensual, barras de progreso y aviso cuando se supera el presupuesto.
+- **Citas**: tipo (médico, escuela, mascota…), persona, lugar, fecha y hora.
+- **Listas de la compra**: artículos con cantidad, marcado de completado y listas terminadas.
+- **Cumpleaños**: contactos con fecha de nacimiento y widget de «próximos 30 días».
+- **Tiempo real**: los cambios de cualquier miembro se reflejan al instante (Supabase Realtime).
+- **Seguridad**: Row Level Security en toda la base de datos.
 
-   ```bash
-   npx expo start
-   ```
+## 🧱 Stack
 
-In the output, you'll find options to open the app in a
+| Capa | Tecnología |
+| --- | --- |
+| Móvil | [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/) (React Native 0.86, React 19, TypeScript) |
+| Navegación | expo-router (file-based) |
+| Backend | [Supabase](https://supabase.com) (PostgreSQL + Auth + Realtime) |
+| Tests | Jest + jest-expo |
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## 🚀 Puesta en marcha
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+### 1. Crear el proyecto en Supabase (gratis)
 
-## Get a fresh project
+1. Crea una cuenta y un proyecto en [supabase.com](https://supabase.com).
+2. Abre **SQL Editor** y ejecuta el contenido de [`supabase/schema.sql`](supabase/schema.sql). Esto crea tablas, índices, triggers, políticas de seguridad y Realtime.
+3. En **Project Settings → API** copia la `Project URL` y la `anon public key`.
 
-When you're ready, run:
+### 2. Configurar el entorno
 
 ```bash
-npm run reset-project
+cp .env.example .env
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Rellena `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` en `.env`.
 
-### Other setup steps
+### 3. Instalar y ejecutar
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```bash
+npm install
+npm start        # escanea el QR con la app Expo Go
+npm run web      # o pruébala en el navegador
+npm run android  # emulador Android
+```
 
-## Learn more
+## 🧪 Calidad
 
-To learn more about developing your project with Expo, look at the following resources:
+```bash
+npm test          # 50 tests unitarios (Jest)
+npm run typecheck # TypeScript estricto
+npm run lint      # ESLint (config de Expo)
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+La lógica pura de negocio (validación, fechas, finanzas y cumpleaños) está aislada en `src/lib/` y cubierta por tests en `__tests__/`.
 
-## Join the community
+## 📁 Estructura
 
-Join our community of developers creating universal apps.
+```
+src/
+├── app/                 # Rutas de expo-router
+│   ├── (tabs)/          # Pantallas principales (Inicio, Citas, Gastos, Listas, Cumpleaños, Ajustes)
+│   ├── _layout.tsx      # Providers (Auth, Casa) + Stack
+│   ├── login.tsx
+│   └── register.tsx
+├── components/ui/       # Componentes reutilizables (Button, Card, TextField, EmptyState)
+├── constants/theme.ts   # Colores y espaciados
+├── context/             # AuthProvider y CasaProvider (casa actual, miembros)
+├── hooks/               # useRealtimeCollection (fetch + suscripción Realtime)
+└── lib/                 # Lógica pura testeable + capa de datos
+    ├── validation.ts    # Validaciones de formularios
+    ├── date.ts          # Utilidades de fechas
+    ├── finance.ts       # Agregación de gastos y presupuestos
+    ├── birthdays.ts     # Próximos cumpleaños
+    ├── format.ts        # Moneda, iniciales, códigos
+    ├── api.ts           # Capa de datos tipada sobre Supabase
+    └── supabase.ts      # Cliente Supabase
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## 🗄️ Modelo de datos
+
+- `profiles` — perfil de cada usuario.
+- `casas` — hogares, con `invite_code` para compartir.
+- `casa_members` — relación usuario ↔ casa (rol owner/member).
+- `categories` — secciones de gasto (nombre, color, icono, presupuesto).
+- `expenses` — gastos con importe, sección y fecha.
+- `appointments` — citas con tipo, persona, lugar y hora.
+- `shopping_lists` / `shopping_items` — listas de la compra.
+- `contacts` — contactos con fecha de nacimiento.
+
+Todas las tablas tienen **Row Level Security**: solo los miembros de una casa pueden leer/escribir sus datos.
+
+## 🗺️ Siguientes pasos sugeridos
+
+- Notificaciones push de recordatorios (citas y cumpleaños) con `expo-notifications`.
+- Subida de justificantes/fotos de gastos a Supabase Storage.
+- Presupuestos compartidos y alertas por sección.
+- Vista de gastos por mes con gráficos.
+- Soporte multi-moneda.
