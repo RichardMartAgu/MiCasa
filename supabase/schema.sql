@@ -135,6 +135,12 @@ create index if not exists idx_categories_casa on public.categories (casa_id);
 create index if not exists idx_shopping_lists_casa on public.shopping_lists (casa_id);
 create index if not exists idx_shopping_items_list on public.shopping_items (list_id);
 create index if not exists idx_contacts_casa on public.contacts (casa_id);
+-- FKs de user_id sin cobertura
+create index if not exists idx_appointments_user on public.appointments (user_id);
+create index if not exists idx_casas_created_by on public.casas (created_by);
+create index if not exists idx_contacts_user on public.contacts (user_id);
+create index if not exists idx_expenses_user on public.expenses (user_id);
+create index if not exists idx_shopping_lists_user on public.shopping_lists (user_id);
 
 -- ============================================================================
 -- Funciones auxiliares para RLS
@@ -201,6 +207,16 @@ $$;
 
 revoke all on function public.join_casa(text) from public;
 grant execute on function public.join_casa(text) to authenticated;
+revoke all on function public.join_casa(text) from anon;
+
+-- Funciones SECURITY DEFINER: revocar de anon (y de authenticated solo donde no se necesitan).
+-- authenticated conserva EXECUTE en is_casa_member/is_casa_owner (RLS),
+-- generate_invite_code (default de columna) y join_casa (RPC del cliente).
+revoke all on function public.generate_invite_code() from public, anon;
+revoke all on function public.handle_new_user() from public, anon, authenticated;
+revoke all on function public.handle_new_casa() from public, anon, authenticated;
+revoke all on function public.is_casa_member(uuid) from public, anon;
+revoke all on function public.is_casa_owner(uuid) from public, anon;
 
 -- ============================================================================
 -- Row Level Security
@@ -215,38 +231,42 @@ alter table public.shopping_lists enable row level security;
 alter table public.shopping_items enable row level security;
 alter table public.contacts enable row level security;
 
--- profiles: cada usuario ve/edita su propio perfil
+-- profiles: cada usuario ve/edita su propio perfil; también ve el de sus co-miembros.
+-- (select auth.uid()) evita re-evaluar auth.uid() por fila (initplan).
 drop policy if exists "profiles_select_own" on public.profiles;
-create policy "profiles_select_own" on public.profiles
-  for select using (auth.uid() = id);
-
-drop policy if exists "profiles_insert_own" on public.profiles;
-create policy "profiles_insert_own" on public.profiles
-  for insert with check (auth.uid() = id);
-
-drop policy if exists "profiles_update_own" on public.profiles;
-create policy "profiles_update_own" on public.profiles
-  for update using (auth.uid() = id);
-
--- Los miembros de la misma casa pueden leer el perfil (display_name) de sus co-miembros
 drop policy if exists "profiles_select_member" on public.profiles;
 create policy "profiles_select_member" on public.profiles
   for select using (
-    exists (
+    (select auth.uid()) = id
+    or exists (
       select 1 from public.casa_members cm
       where cm.user_id = profiles.id
         and public.is_casa_member(cm.casa_id)
     )
   );
 
+drop policy if exists "profiles_insert_own" on public.profiles;
+create policy "profiles_insert_own" on public.profiles
+  for insert with check ((select auth.uid()) = id);
+
+drop policy if exists "profiles_update_own" on public.profiles;
+create policy "profiles_update_own" on public.profiles
+  for update using ((select auth.uid()) = id);
+
 -- casas: el creador puede insertar; se ve si se es miembro; solo el owner la modifica/borra
 drop policy if exists "casas_insert" on public.casas;
 create policy "casas_insert" on public.casas
-  for insert with check (auth.uid() = created_by);
+  for insert with check ((select auth.uid()) = created_by);
 
+-- casas: el creador puede insertar; se ve si se es miembro o si eres el creador.
+-- La cláusula `or created_by = (select auth.uid())` es imprescindible:
+-- Postgres aplica la política SELECT al INSERT ... RETURNING, y la membresía
+-- del owner la crea un trigger AFTER INSERT (que corre después del RETURNING).
 drop policy if exists "casas_select_member" on public.casas;
 create policy "casas_select_member" on public.casas
-  for select using (public.is_casa_member(id));
+  for select using (
+    public.is_casa_member(id) or created_by = (select auth.uid())
+  );
 
 drop policy if exists "casas_update_member" on public.casas;
 drop policy if exists "casas_update_owner" on public.casas;
@@ -275,7 +295,7 @@ create policy "members_update" on public.casa_members
 
 drop policy if exists "members_delete" on public.casa_members;
 create policy "members_delete" on public.casa_members
-  for delete using (user_id = auth.uid() or public.is_casa_owner(casa_id));
+  for delete using (user_id = (select auth.uid()) or public.is_casa_owner(casa_id));
 
 -- Contenido de la casa: accesible si eres miembro.
 -- En INSERT, `user_id` se obliga a ser el usuario autenticado (sin suplantación).
@@ -293,7 +313,7 @@ create policy "expenses_select_member" on public.expenses
   for select using (public.is_casa_member(casa_id));
 
 create policy "expenses_insert_member" on public.expenses
-  for insert with check (public.is_casa_member(casa_id) and user_id = auth.uid());
+  for insert with check (public.is_casa_member(casa_id) and user_id = (select auth.uid()));
 
 create policy "expenses_update_member" on public.expenses
   for update using (public.is_casa_member(casa_id))
@@ -311,7 +331,7 @@ create policy "appointments_select_member" on public.appointments
   for select using (public.is_casa_member(casa_id));
 
 create policy "appointments_insert_member" on public.appointments
-  for insert with check (public.is_casa_member(casa_id) and user_id = auth.uid());
+  for insert with check (public.is_casa_member(casa_id) and user_id = (select auth.uid()));
 
 create policy "appointments_update_member" on public.appointments
   for update using (public.is_casa_member(casa_id))
@@ -329,7 +349,7 @@ create policy "shopping_lists_select_member" on public.shopping_lists
   for select using (public.is_casa_member(casa_id));
 
 create policy "shopping_lists_insert_member" on public.shopping_lists
-  for insert with check (public.is_casa_member(casa_id) and user_id = auth.uid());
+  for insert with check (public.is_casa_member(casa_id) and user_id = (select auth.uid()));
 
 create policy "shopping_lists_update_member" on public.shopping_lists
   for update using (public.is_casa_member(casa_id))
@@ -362,7 +382,7 @@ create policy "contacts_select_member" on public.contacts
   for select using (public.is_casa_member(casa_id));
 
 create policy "contacts_insert_member" on public.contacts
-  for insert with check (public.is_casa_member(casa_id) and user_id = auth.uid());
+  for insert with check (public.is_casa_member(casa_id) and user_id = (select auth.uid()));
 
 create policy "contacts_update_member" on public.contacts
   for update using (public.is_casa_member(casa_id))
