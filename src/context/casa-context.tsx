@@ -27,9 +27,20 @@ const CasaContext = createContext<CasaContextValue | undefined>(undefined);
 export function CasaProvider({ children }: { children: ReactNode }) {
   const [casas, setCasas] = useState<Casa[]>([]);
   const [currentCasa, setCurrentCasaState] = useState<Casa | null>(null);
-  const [members, setMembers] = useState<CasaMember[]>([]);
-  const [profiles, setProfiles] = useState<Record<string, Profile | null>>({});
+  const [membersByCasa, setMembersByCasa] = useState<Record<string, CasaMember[]>>({});
+  const [profilesByCasa, setProfilesByCasa] = useState<
+    Record<string, Record<string, Profile | null>>
+  >({});
   const [loading, setLoading] = useState(true);
+
+  const members = useMemo(
+    () => (currentCasa ? (membersByCasa[currentCasa.id] ?? []) : []),
+    [currentCasa, membersByCasa],
+  );
+  const profiles = useMemo(
+    () => (currentCasa ? (profilesByCasa[currentCasa.id] ?? {}) : {}),
+    [currentCasa, profilesByCasa],
+  );
 
   const refresh = useCallback(async () => {
     const {
@@ -58,7 +69,9 @@ export function CasaProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    refresh();
+    (async () => {
+      await refresh();
+    })();
   }, [refresh]);
 
   const setCurrentCasa = useCallback(async (casa: Casa) => {
@@ -66,39 +79,40 @@ export function CasaProvider({ children }: { children: ReactNode }) {
     setCurrentCasaState(casa);
   }, []);
 
-  const loadMembers = useCallback(async (casaId: string) => {
-    const { data } = await supabase
-      .from('casa_members')
-      .select('*')
-      .eq('casa_id', casaId);
-
-    const rows = data ?? [];
-    setMembers(rows);
-
-    const userIds = rows.map((m) => m.user_id);
-    if (userIds.length > 0) {
-      const { data: profileRows } = await supabase
-        .from('profiles')
-        .select('*')
-        .in('id', userIds);
-      const map: Record<string, Profile | null> = {};
-      for (const id of userIds) {
-        map[id] = profileRows?.find((p) => p.id === id) ?? null;
-      }
-      setProfiles(map);
-    } else {
-      setProfiles({});
-    }
-  }, []);
-
   useEffect(() => {
-    if (currentCasa) {
-      loadMembers(currentCasa.id);
-    } else {
-      setMembers([]);
-      setProfiles({});
-    }
-  }, [currentCasa, loadMembers]);
+    if (!currentCasa) return;
+    let cancelled = false;
+
+    (async () => {
+      const { data } = await supabase
+        .from('casa_members')
+        .select('*')
+        .eq('casa_id', currentCasa.id);
+      if (cancelled) return;
+      const rows = data ?? [];
+      setMembersByCasa((prev) => ({ ...prev, [currentCasa.id]: rows }));
+
+      const userIds = rows.map((m) => m.user_id);
+      if (userIds.length > 0) {
+        const { data: profileRows } = await supabase
+          .from('profiles')
+          .select('*')
+          .in('id', userIds);
+        if (cancelled) return;
+        const map: Record<string, Profile | null> = {};
+        for (const id of userIds) {
+          map[id] = profileRows?.find((p) => p.id === id) ?? null;
+        }
+        setProfilesByCasa((prev) => ({ ...prev, [currentCasa.id]: map }));
+      } else {
+        setProfilesByCasa((prev) => ({ ...prev, [currentCasa.id]: {} }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentCasa]);
 
   const createCasa = useCallback(
     async (name: string): Promise<CasaError | null> => {
