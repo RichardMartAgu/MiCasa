@@ -9,11 +9,31 @@ interface CollectionResult<T> {
   reload: () => Promise<void>;
 }
 
+const FILTER_PATTERN =
+  /^([a-zA-Z_][a-zA-Z0-9_]*)=(eq|neq|lt|lte|gt|gte|like|ilike|is|in)\.(\(?[a-zA-Z0-9_.,\-: ]*\)?)$/;
+
+export function safeRealtimeFilter(
+  filter: string | undefined,
+  casaId: string,
+  memberColumn = 'casa_id',
+): string {
+  const fallback = `${memberColumn}=eq.${casaId}`;
+  if (!filter || !FILTER_PATTERN.test(filter)) {
+    return fallback;
+  }
+  const [, column, , value] = filter.match(FILTER_PATTERN) ?? [];
+  if (column === memberColumn && value !== casaId) {
+    return fallback;
+  }
+  return filter;
+}
+
 export function useRealtimeCollection<T>(
   fetchFn: () => Promise<T[]>,
   table: string,
   casaId: string | null,
   filter?: string,
+  memberColumn = 'casa_id',
 ): CollectionResult<T> {
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +73,7 @@ export function useRealtimeCollection<T>(
     const isActive = () => active;
     runFetch(isActive);
 
-    const channelFilter = filter ?? `casa_id=eq.${casaId}`;
+    const channelFilter = safeRealtimeFilter(filter, casaId, memberColumn);
     const channel = supabase
       .channel(`realtime-${table}-${casaId}-${channelFilter}`)
       .on(
@@ -74,7 +94,7 @@ export function useRealtimeCollection<T>(
       active = false;
       supabase.removeChannel(channel);
     };
-  }, [casaId, table, filter, runFetch]);
+  }, [casaId, table, filter, memberColumn, runFetch]);
 
   return { data, loading, error, reload };
 }

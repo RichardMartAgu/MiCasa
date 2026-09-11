@@ -1,6 +1,9 @@
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
-import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
+import {
+  safeRealtimeFilter,
+  useRealtimeCollection,
+} from '@/hooks/use-realtime-collection';
 
 const mockChannel = jest.fn();
 const mockRemoveChannel = jest.fn();
@@ -24,6 +27,30 @@ function stubChannel() {
 beforeEach(() => {
   jest.clearAllMocks();
   stubChannel();
+});
+
+describe('safeRealtimeFilter', () => {
+  it('acepta filtros PostgREST simples', () => {
+    expect(safeRealtimeFilter('list_id=eq.abc-123', 'casa-1')).toBe('list_id=eq.abc-123');
+    expect(safeRealtimeFilter('amount=gt.100', 'casa-1')).toBe('amount=gt.100');
+  });
+
+  it('rechaza filtros con payload sospechoso y cae al filtro casa', () => {
+    expect(safeRealtimeFilter('casa_id=eq.otra-casa', 'casa-1')).toBe('casa_id=eq.casa-1');
+    expect(safeRealtimeFilter('x=eq.1; drop table users', 'casa-1')).toBe('casa_id=eq.casa-1');
+    expect(safeRealtimeFilter('casa_id=eq.', 'casa-1')).toBe('casa_id=eq.casa-1');
+  });
+
+  it('usa filtro casa si no se pasa filter', () => {
+    expect(safeRealtimeFilter(undefined, 'casa-1')).toBe('casa_id=eq.casa-1');
+  });
+
+  it('usa columna de membresía personalizada en fallback', () => {
+    expect(safeRealtimeFilter(undefined, 'lista-1', 'list_id')).toBe('list_id=eq.lista-1');
+    expect(safeRealtimeFilter('list_id=eq.lista-2', 'lista-1', 'list_id')).toBe(
+      'list_id=eq.lista-1',
+    );
+  });
 });
 
 describe('useRealtimeCollection', () => {
@@ -60,6 +87,20 @@ describe('useRealtimeCollection', () => {
     expect(mockOn).toHaveBeenCalledWith(
       'postgres_changes',
       expect.objectContaining({ table: 'items', filter: 'list_id=eq.1' }),
+      expect.any(Function),
+    );
+  });
+
+  it('ignora filtro inválido y usa filtro casa', async () => {
+    const fetchFn = jest.fn().mockResolvedValue([]);
+    renderHook(() =>
+      useRealtimeCollection(fetchFn, 'items', 'casa-1', 'casa_id=eq.otra-casa'),
+    );
+
+    await waitFor(() => expect(fetchFn).toHaveBeenCalled());
+    expect(mockOn).toHaveBeenCalledWith(
+      'postgres_changes',
+      expect.objectContaining({ table: 'items', filter: 'casa_id=eq.casa-1' }),
       expect.any(Function),
     );
   });

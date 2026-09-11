@@ -54,6 +54,7 @@ export default function ListasScreen() {
     'shopping_items',
     expandedId,
     expandedId ? `list_id=eq.${expandedId}` : undefined,
+    'list_id',
   );
 
   async function handleAddList() {
