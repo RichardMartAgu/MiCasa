@@ -3,7 +3,7 @@ export type ValidationResult =
   | { valid: false; message: string };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const INVITE_CODE_RE = /^[A-Z0-9]{8}$/;
+const INVITE_CODE_RE = /^[A-F0-9]{16}$/;
 
 export function validateEmail(value: string): ValidationResult {
   const email = value.trim();
@@ -45,7 +45,7 @@ export function validateInviteCode(value: string): ValidationResult {
   if (!INVITE_CODE_RE.test(code))
     return {
       valid: false,
-      message: 'El código debe tener 8 caracteres alfanuméricos.',
+      message: 'El código debe tener 16 caracteres hexadecimales.',
     };
   return { valid: true };
 }

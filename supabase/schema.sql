@@ -205,6 +205,13 @@ begin
     raise exception 'Debes iniciar sesión para unirte a una casa.';
   end if;
 
+  if char_length(code) <> 16 then
+    raise exception 'Código de invitación inválido.';
+  end if;
+
+  -- Serializa intentos concurrentes del mismo usuario (rate limit atómico).
+  perform pg_advisory_xact_lock(hashtext('join_casa:' || auth.uid()::text));
+
   -- Rate limit: máx 10 intentos por hora por usuario.
   delete from public.join_attempts
   where user_id = auth.uid()
@@ -501,7 +508,12 @@ as $$
 declare
   owner_count bigint;
 begin
+  -- Si la casa ya no existe (cascade de DELETE on casas), el invariante no aplica.
   if old.role = 'owner' then
+    if not exists (select 1 from public.casas where id = old.casa_id) then
+      return old;
+    end if;
+
     select count(*) into owner_count
     from public.casa_members
     where casa_id = old.casa_id and role = 'owner';
@@ -528,6 +540,13 @@ alter table public.profiles add constraint profiles_display_name_len
 alter table public.casas drop constraint if exists casas_name_len;
 alter table public.casas add constraint casas_name_len
   check (char_length(name) between 1 and 60);
+
+-- Códigos de invitación: 16 hex (match con generate_invite_code).
+-- OJO al aplicar en BD con datos: migrar primero los códigos viejos de 8 chars
+-- (update public.casas set invite_code = public.generate_invite_code() where char_length(invite_code) <> 16;)
+alter table public.casas drop constraint if exists casas_invite_code_format;
+alter table public.casas add constraint casas_invite_code_format
+  check (invite_code ~ '^[A-F0-9]{16}$');
 
 alter table public.categories drop constraint if exists categories_name_len;
 alter table public.categories add constraint categories_name_len
