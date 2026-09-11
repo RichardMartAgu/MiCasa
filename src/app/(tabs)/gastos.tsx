@@ -7,7 +7,6 @@ import type { CategoryManagerInput } from '@/components/expenses/category-manage
 import { ExpenseForm } from '@/components/expenses/expense-form';
 import type { ExpenseFormInput } from '@/components/expenses/expense-form';
 import { ExpenseList } from '@/components/expenses/expense-list';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -47,6 +46,8 @@ export default function GastosScreen() {
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [saving, setSaving] = useState(false);
+  const [expenseFormKey, setExpenseFormKey] = useState(0);
+  const [categoryFormKey, setCategoryFormKey] = useState(0);
 
   const now = useMemo(() => new Date(), []);
   const thisMonth = monthKey(now);
@@ -65,11 +66,13 @@ export default function GastosScreen() {
 
   function openAddExpense() {
     setEditingExpense(null);
+    setExpenseFormKey((k) => k + 1);
     setExpenseModalVisible(true);
   }
 
   function openEditExpense(expense: Expense) {
     setEditingExpense(expense);
+    setExpenseFormKey((k) => k + 1);
     setExpenseModalVisible(true);
   }
 
@@ -89,11 +92,13 @@ export default function GastosScreen() {
 
   function openAddCategory() {
     setEditingCategory(null);
+    setCategoryFormKey((k) => k + 1);
     setCategoryModalVisible(true);
   }
 
   function openEditCategory(category: Category) {
     setEditingCategory(category);
+    setCategoryFormKey((k) => k + 1);
     setCategoryModalVisible(true);
   }
 
@@ -208,6 +213,7 @@ export default function GastosScreen() {
       </ScrollView>
 
       <ExpenseForm
+        key={expenseFormKey}
         visible={expenseModalVisible}
         expense={editingExpense}
         categories={categories}
@@ -217,6 +223,7 @@ export default function GastosScreen() {
       />
 
       <CategoryManager
+        key={categoryFormKey}
         visible={categoryModalVisible}
         categories={categories}
         editingCategory={editingCategory}
