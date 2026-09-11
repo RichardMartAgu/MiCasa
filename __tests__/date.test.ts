@@ -3,6 +3,7 @@ import {
   addMonths,
   daysBetween,
   formatDate,
+  formatDateTime,
   fromISODate,
   monthKey,
   startOfDay,
@@ -31,6 +32,22 @@ describe('addDays / addMonths', () => {
 
   it('suma meses', () => {
     expect(toISODate(addMonths(new Date(2026, 7, 3), 1))).toBe('2026-09-03');
+  });
+
+  it('clampa fin de mes sin desbordar al mes siguiente', () => {
+    expect(toISODate(addMonths(new Date(2026, 0, 31), 1))).toBe('2026-02-28');
+    expect(toISODate(addMonths(new Date(2024, 0, 31), 1))).toBe('2024-02-29');
+    expect(toISODate(addMonths(new Date(2026, 0, 31), 2))).toBe('2026-03-31');
+    expect(toISODate(addMonths(new Date(2026, 1, 28), 1))).toBe('2026-03-28');
+  });
+
+  it('clampa al restar meses', () => {
+    expect(toISODate(addMonths(new Date(2026, 2, 31), -1))).toBe('2026-02-28');
+  });
+
+  it('conserva el día cuando el mes destino tiene ese día', () => {
+    expect(toISODate(addMonths(new Date(2026, 3, 30), 1))).toBe('2026-05-30');
+    expect(toISODate(addMonths(new Date(2026, 7, 3), 0))).toBe('2026-08-03');
   });
 });
 
@@ -74,6 +91,29 @@ describe('formatDate', () => {
   it('formatea fechas en español', () => {
     const result = formatDate('2026-08-03T10:00:00');
     expect(result).toContain('3 de agosto');
+    expect(result).toContain('2026');
+  });
+
+  it('interpreta fecha date-only en hora local sin desfase de día', () => {
+    expect(formatDate('2026-08-03')).toContain('3 de agosto');
+  });
+});
+
+describe('formatDateTime', () => {
+  it('devuelve una cadena vacía si la fecha no es válida', () => {
+    expect(formatDateTime('no-es-fecha')).toBe('');
+  });
+
+  it('formatea fecha y hora en español', () => {
+    const result = formatDateTime('2026-08-03T10:30:00');
+    expect(result).toContain('3 ago');
+    expect(result).toContain('2026');
+    expect(result).toContain('10:30');
+  });
+
+  it('interpreta fecha date-only en hora local sin desfase de día', () => {
+    const result = formatDateTime('2026-08-03');
+    expect(result).toContain('3 ago');
     expect(result).toContain('2026');
   });
 });
