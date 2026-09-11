@@ -1,0 +1,175 @@
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { Alert } from 'react-native';
+
+import GastosScreen from '@/app/(tabs)/gastos';
+import type { Category, Expense } from '@/lib/types';
+
+jest.mock('@react-native-community/datetimepicker', () => {
+  const { View } = require('react-native');
+  return function MockPicker() {
+    return <View testID="date-picker" />;
+  };
+});
+
+jest.mock('@expo/vector-icons', () => {
+  const { Text } = require('react-native');
+  return {
+    Ionicons: ({ name }: { name: string }) => <Text>{name}</Text>,
+  };
+});
+
+const mockUseAuth = jest.fn();
+jest.mock('@/context/auth-context', () => ({
+  useAuth: () => mockUseAuth(),
+}));
+
+const mockUseCasa = jest.fn();
+jest.mock('@/context/casa-context', () => ({
+  useCasa: () => mockUseCasa(),
+}));
+
+const mockUseRealtimeCollection = jest.fn();
+jest.mock('@/hooks/use-realtime-collection', () => ({
+  useRealtimeCollection: (...args: unknown[]) => mockUseRealtimeCollection(...args),
+}));
+
+const mockAddExpense = jest.fn();
+const mockAddCategory = jest.fn();
+jest.mock('@/lib/api', () => ({
+  addCategory: (...args: unknown[]) => mockAddCategory(...args),
+  addExpense: (...args: unknown[]) => mockAddExpense(...args),
+  fetchCategories: jest.fn(),
+  fetchExpenses: jest.fn(),
+  removeCategory: jest.fn().mockResolvedValue(null),
+  removeExpense: jest.fn().mockResolvedValue(null),
+  updateCategory: jest.fn().mockResolvedValue(null),
+  updateExpense: jest.fn().mockResolvedValue(null),
+}));
+
+const casa = { id: 'c1', name: 'Mi Hogar', invite_code: 'ABCD1234' };
+const user = { id: 'u1' };
+const category: Category = {
+  id: 'cat1',
+  casa_id: 'c1',
+  name: 'Comida',
+  color: '#10b981',
+  icon: 'pricetag',
+  budget: 200,
+  created_at: '2026-01-01',
+};
+const expense: Expense = {
+  id: 'e1',
+  casa_id: 'c1',
+  user_id: 'u1',
+  category_id: 'cat1',
+  title: 'Supermercado',
+  amount: 45.5,
+  spent_at: '2026-09-01T10:00:00',
+  note: null,
+  created_at: '2026-09-01T10:00:00',
+};
+
+function setup(
+  expenses: Expense[] = [],
+  categories: Category[] = [],
+  currentCasa = casa,
+) {
+  mockUseAuth.mockReturnValue({ user });
+  mockUseCasa.mockReturnValue({ currentCasa });
+  mockUseRealtimeCollection.mockImplementation((_fetchFn: unknown, table: string) =>
+    table === 'expenses'
+      ? { data: expenses, loading: false, error: null, reload: jest.fn() }
+      : { data: categories, loading: false, error: null, reload: jest.fn() },
+  );
+  return render(<GastosScreen />);
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockAddExpense.mockResolvedValue(null);
+  mockAddCategory.mockResolvedValue(null);
+});
+
+describe('GastosScreen', () => {
+  it('renderiza título y total del mes', () => {
+    const { getByText } = setup([expense], [category]);
+    expect(getByText('Gastos')).toBeTruthy();
+  });
+
+  it('muestra EmptyState sin gastos', () => {
+    const { getByText } = setup([], []);
+    expect(getByText('Sin gastos registrados')).toBeTruthy();
+  });
+
+  it('muestra categorías con totales', () => {
+    const { getByText } = setup([expense], [category]);
+    expect(getByText('Comida')).toBeTruthy();
+  });
+
+  it('abre modal y guarda gasto nuevo', async () => {
+    const { getByText, getAllByDisplayValue } = setup([], [category]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => {
+      expect(getByText('Nuevo gasto')).toBeTruthy();
+    });
+
+    const [titleInput, amountInput] = getAllByDisplayValue('');
+    fireEvent.changeText(titleInput, 'Pan');
+    fireEvent.changeText(amountInput, '2.50');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockAddExpense).toHaveBeenCalledWith(
+        expect.objectContaining({
+          casa_id: 'c1',
+          user_id: 'u1',
+          title: 'Pan',
+          amount: 2.5,
+        }),
+      );
+    });
+  });
+
+  it('muestra Alert si addExpense falla', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockAddExpense.mockResolvedValue({ message: 'Problema de conexión. Inténtalo de nuevo.' });
+    const { getByText, getAllByDisplayValue } = setup([], [category]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nuevo gasto')).toBeTruthy());
+
+    const [titleInput, amountInput] = getAllByDisplayValue('');
+    fireEvent.changeText(titleInput, 'Pan');
+    fireEvent.changeText(amountInput, '2.50');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Error',
+        'Problema de conexión. Inténtalo de nuevo.',
+      );
+    });
+    alertSpy.mockRestore();
+  });
+
+  it('muestra modal de secciones y añade categoría', async () => {
+    const { getByText, getAllByDisplayValue } = setup([], []);
+
+    fireEvent.press(getByText('layers-outline'));
+    await waitFor(() => {
+      expect(getByText('Secciones de gasto')).toBeTruthy();
+    });
+
+    const [nameInput, budgetInput] = getAllByDisplayValue('');
+    fireEvent.changeText(nameInput, 'Bebé');
+    fireEvent.changeText(budgetInput, '150');
+    fireEvent.press(getByText('Añadir sección'));
+
+    await waitFor(() => {
+      expect(mockAddCategory).toHaveBeenCalledWith(
+        expect.objectContaining({ casa_id: 'c1', name: 'Bebé', budget: 150 }),
+      );
+    });
+  });
+});
