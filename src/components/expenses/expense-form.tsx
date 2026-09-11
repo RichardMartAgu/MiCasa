@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   Modal,
@@ -41,23 +41,12 @@ export function ExpenseForm({
   onClose,
   onSave,
 }: ExpenseFormProps) {
-  const [title, setTitle] = useState('');
-  const [amount, setAmount] = useState('');
-  const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [date, setDate] = useState(new Date());
+  const [title, setTitle] = useState(expense?.title ?? '');
+  const [amount, setAmount] = useState(expense ? String(expense.amount) : '');
+  const [categoryId, setCategoryId] = useState<string | null>(expense?.category_id ?? null);
+  const [date, setDate] = useState(expense ? new Date(expense.spent_at) : new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [errors, setErrors] = useState<{ title?: string; amount?: string }>({});
-
-  useEffect(() => {
-    if (visible) {
-      setTitle(expense?.title ?? '');
-      setAmount(expense ? String(expense.amount) : '');
-      setCategoryId(expense?.category_id ?? null);
-      setDate(expense ? new Date(expense.spent_at) : new Date());
-      setShowDatePicker(false);
-      setErrors({});
-    }
-  }, [visible, expense]);
 
   function handleSave() {
     const titleCheck = validateTitle(title);
