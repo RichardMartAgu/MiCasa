@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { TextField } from '@/components/ui/text-field';
-import { Spacing } from '@/constants/theme';
+import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
@@ -50,10 +50,9 @@ export default function ListasScreen() {
   const [saving, setSaving] = useState(false);
 
   const { data: items } = useRealtimeCollection<ShoppingItem>(
-    () =>
-      expandedId ? fetchShoppingItems(expandedId) : Promise.resolve([]),
+    () => (expandedId ? fetchShoppingItems(expandedId) : Promise.resolve([])),
     'shopping_items',
-    currentCasa?.id ?? null,
+    expandedId,
     expandedId ? `list_id=eq.${expandedId}` : undefined,
   );
 
@@ -113,7 +112,7 @@ export default function ListasScreen() {
           </Text>
         </View>
         <Pressable style={styles.fab} onPress={() => setModalVisible(true)}>
-          <Ionicons name="add" size={28} color="#ffffff" />
+          <Ionicons name="add" size={28} color={Palette.onPrimary} />
         </Pressable>
       </View>
 
@@ -151,11 +150,11 @@ export default function ListasScreen() {
                       <Ionicons
                         name={list.done ? 'checkmark-circle' : 'ellipse-outline'}
                         size={24}
-                        color={list.done ? '#10b981' : '#9ca3af'}
+                        color={list.done ? Palette.success : Palette.textMuted}
                       />
                     </Pressable>
                     <Pressable onPress={() => handleDeleteList(list.id)} hitSlop={10}>
-                      <Ionicons name="trash-outline" size={20} color="#dc2626" />
+                      <Ionicons name="trash-outline" size={20} color={Palette.danger} />
                     </Pressable>
                   </View>
                 </View>
@@ -170,7 +169,7 @@ export default function ListasScreen() {
                           <Ionicons
                             name={item.done ? 'checkbox' : 'square-outline'}
                             size={22}
-                            color={item.done ? '#10b981' : '#9ca3af'}
+                            color={item.done ? Palette.success : Palette.textMuted}
                           />
                         </Pressable>
                         <Text style={[styles.itemName, item.done && styles.textMuted]}>
@@ -182,7 +181,7 @@ export default function ListasScreen() {
                             await removeShoppingItem(item.id);
                           }}
                           hitSlop={10}>
-                          <Ionicons name="close-circle-outline" size={20} color="#9ca3af" />
+                          <Ionicons name="close-circle-outline" size={20} color={Palette.textMuted} />
                         </Pressable>
                       </View>
                     ))}
@@ -191,7 +190,7 @@ export default function ListasScreen() {
                       <TextInput
                         style={styles.itemInput}
                         placeholder="Nuevo artículo"
-                        placeholderTextColor="#9ca3af"
+                        placeholderTextColor={Palette.textMuted}
                         value={newItemName}
                         onChangeText={setNewItemName}
                         onSubmitEditing={() => handleAddItem(list.id)}
@@ -200,7 +199,7 @@ export default function ListasScreen() {
                       <TextInput
                         style={[styles.itemInput, styles.qtyInput]}
                         placeholder="Cant."
-                        placeholderTextColor="#9ca3af"
+                        placeholderTextColor={Palette.textMuted}
                         value={newItemQty}
                         onChangeText={setNewItemQty}
                         keyboardType="decimal-pad"
@@ -208,7 +207,7 @@ export default function ListasScreen() {
                       <Pressable
                         style={styles.addItemButton}
                         onPress={() => handleAddItem(list.id)}>
-                        <Ionicons name="add" size={22} color="#ffffff" />
+                        <Ionicons name="add" size={22} color={Palette.onPrimary} />
                       </Pressable>
                     </View>
                   </View>
@@ -246,7 +245,7 @@ export default function ListasScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
+  container: { flex: 1, backgroundColor: Palette.background },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -255,56 +254,63 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.three,
   },
   headerText: { gap: Spacing.one },
-  title: { fontSize: 28, fontWeight: '700', color: '#111827' },
-  subtitle: { fontSize: 14, color: '#6b7280' },
+  title: { fontSize: 28, fontWeight: '800', color: Palette.text },
+  subtitle: { fontSize: 14, color: Palette.textSecondary },
   fab: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: '#3c87f7',
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    ...Shadow.fab,
   },
   content: { paddingHorizontal: Spacing.four, gap: Spacing.three, paddingBottom: Spacing.six },
   listCard: { gap: Spacing.three },
   listDone: { opacity: 0.6 },
   listRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   listBody: { flex: 1, gap: Spacing.one },
-  listTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  listTitle: { fontSize: 16, fontWeight: '700', color: Palette.text },
   listActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
-  cardMeta: { fontSize: 13, color: '#6b7280' },
-  textMuted: { textDecorationLine: 'line-through', color: '#9ca3af' },
-  itemSection: { gap: Spacing.two, borderTopWidth: 1, borderTopColor: '#f3f4f6', paddingTop: Spacing.three },
+  cardMeta: { fontSize: 13, color: Palette.textSecondary },
+  textMuted: { textDecorationLine: 'line-through', color: Palette.textMuted },
+  itemSection: {
+    gap: Spacing.two,
+    borderTopWidth: 1,
+    borderTopColor: Palette.border,
+    paddingTop: Spacing.three,
+  },
   itemRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
-  itemName: { flex: 1, fontSize: 15, color: '#374151' },
+  itemName: { flex: 1, fontSize: 15, color: Palette.textStrong },
   addItemRow: { flexDirection: 'row', gap: Spacing.two, alignItems: 'center', marginTop: Spacing.two },
   itemInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: Spacing.two,
+    borderColor: Palette.border,
+    borderRadius: Radius.md,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     fontSize: 15,
-    color: '#111827',
+    color: Palette.text,
+    backgroundColor: Palette.surface,
   },
   qtyInput: { flex: 0.4 },
   addItemButton: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: '#3c87f7',
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  modalOverlay: { flex: 1, backgroundColor: Palette.overlay, justifyContent: 'flex-end' },
   modal: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: Spacing.four,
-    borderTopRightRadius: Spacing.four,
+    backgroundColor: Palette.surface,
+    borderTopLeftRadius: Radius.xl,
+    borderTopRightRadius: Radius.xl,
     padding: Spacing.four,
     gap: Spacing.three,
   },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#111827' },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: Palette.text },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
 });

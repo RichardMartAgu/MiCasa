@@ -1,6 +1,6 @@
 import { StyleSheet, View, type ViewProps } from 'react-native';
 
-import { Spacing } from '@/constants/theme';
+import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 
 export function Card({ style, ...rest }: ViewProps) {
   return <View style={[styles.card, style]} {...rest} />;
@@ -8,11 +8,12 @@ export function Card({ style, ...rest }: ViewProps) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#f9fafb',
-    borderRadius: Spacing.three,
+    backgroundColor: Palette.surface,
+    borderRadius: Radius.xl,
     padding: Spacing.four,
     borderWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: Palette.border,
     gap: Spacing.two,
+    ...Shadow.card,
   },
 });

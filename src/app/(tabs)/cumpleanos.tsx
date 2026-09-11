@@ -16,13 +16,18 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { TextField } from '@/components/ui/text-field';
-import { Spacing } from '@/constants/theme';
+import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
-import { addContact, fetchContacts, removeContact } from '@/lib/api';
+import {
+  addContact,
+  fetchContacts,
+  removeContact,
+  updateContact,
+} from '@/lib/api';
 import { birthdayLabel, upcomingBirthdays } from '@/lib/birthdays';
-import { toISODate } from '@/lib/date';
+import { fromISODate, toISODate } from '@/lib/date';
 import type { Contact } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
@@ -36,6 +41,7 @@ export default function CumpleanosScreen() {
   );
 
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingContactId, setEditingContactId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [birthDate, setBirthDate] = useState(new Date());
   const [relationship, setRelationship] = useState('');
@@ -53,6 +59,26 @@ export default function CumpleanosScreen() {
   const upcoming = upcomingBirthdays(contacts, now, 30);
   const upcomingIds = new Set(upcoming.map((u) => u.contact.id));
   const rest = contacts.filter((c) => !upcomingIds.has(c.id));
+
+  function openAdd() {
+    setEditingContactId(null);
+    setName('');
+    setBirthDate(new Date());
+    setRelationship('');
+    setPhone('');
+    setErrors({});
+    setModalVisible(true);
+  }
+
+  function openEdit(contact: Contact) {
+    setEditingContactId(contact.id);
+    setName(contact.name);
+    setBirthDate(fromISODate(contact.birth_date));
+    setRelationship(contact.relationship ?? '');
+    setPhone(contact.phone ?? '');
+    setErrors({});
+    setModalVisible(true);
+  }
 
   async function handleSave() {
     const nameCheck = validateTitle(name);
@@ -76,14 +102,15 @@ export default function CumpleanosScreen() {
       return;
 
     setSaving(true);
-    const error = await addContact({
-      casa_id: currentCasa.id,
-      user_id: user.id,
+    const input = {
       name,
       birth_date: toISODate(birthDate),
       relationship: relationship.trim() || null,
       phone: phone.trim() || null,
-    });
+    };
+    const error = editingContactId
+      ? await updateContact(editingContactId, input)
+      : await addContact({ ...input, casa_id: currentCasa.id, user_id: user.id });
     setSaving(false);
     if (error) {
       Alert.alert('Error', error.message);
@@ -92,6 +119,7 @@ export default function CumpleanosScreen() {
     setName('');
     setRelationship('');
     setPhone('');
+    setEditingContactId(null);
     setModalVisible(false);
   }
 
@@ -114,7 +142,7 @@ export default function CumpleanosScreen() {
     return (
       <Card key={contact.id} style={styles.contactCard}>
         <View style={styles.avatar}>
-          <Ionicons name="person" size={20} color="#3c87f7" />
+          <Ionicons name="person" size={20} color={Palette.primary} />
         </View>
         <View style={styles.contactInfo}>
           <Text style={styles.contactName}>{contact.name}</Text>
@@ -133,9 +161,14 @@ export default function CumpleanosScreen() {
               {birthdayLabel(daysUntil)}
             </Text>
           ) : null}
-          <Pressable onPress={() => handleDelete(contact.id)} hitSlop={10}>
-            <Ionicons name="trash-outline" size={18} color="#dc2626" />
-          </Pressable>
+          <View style={styles.contactActions}>
+            <Pressable onPress={() => openEdit(contact)} hitSlop={10}>
+              <Ionicons name="pencil-outline" size={18} color={Palette.textSecondary} />
+            </Pressable>
+            <Pressable onPress={() => handleDelete(contact.id)} hitSlop={10}>
+              <Ionicons name="trash-outline" size={18} color={Palette.danger} />
+            </Pressable>
+          </View>
         </View>
       </Card>
     );
@@ -148,8 +181,8 @@ export default function CumpleanosScreen() {
           <Text style={styles.title}>Cumpleaños</Text>
           <Text style={styles.subtitle}>Nunca más olvides una fecha</Text>
         </View>
-        <Pressable style={styles.fab} onPress={() => setModalVisible(true)}>
-          <Ionicons name="add" size={28} color="#ffffff" />
+        <Pressable style={styles.fab} onPress={openAdd}>
+          <Ionicons name="add" size={28} color={Palette.onPrimary} />
         </Pressable>
       </View>
 
@@ -180,7 +213,9 @@ export default function CumpleanosScreen() {
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
-            <Text style={styles.modalTitle}>Nuevo contacto</Text>
+            <Text style={styles.modalTitle}>
+              {editingContactId ? 'Editar contacto' : 'Nuevo contacto'}
+            </Text>
             <View style={styles.form}>
               <TextField label="Nombre" value={name} onChangeText={setName} error={errors.name} />
               <Pressable style={styles.dateButton} onPress={() => setShowDatePicker(true)}>
@@ -215,7 +250,11 @@ export default function CumpleanosScreen() {
               />
               <View style={styles.modalActions}>
                 <Button title="Cancelar" variant="secondary" onPress={() => setModalVisible(false)} />
-                <Button title="Guardar" onPress={handleSave} loading={saving} />
+                <Button
+                  title={editingContactId ? 'Guardar cambios' : 'Guardar'}
+                  onPress={handleSave}
+                  loading={saving}
+                />
               </View>
             </View>
           </View>
@@ -226,7 +265,7 @@ export default function CumpleanosScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
+  container: { flex: 1, backgroundColor: Palette.background },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -235,60 +274,62 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.three,
   },
   headerText: { gap: Spacing.one },
-  title: { fontSize: 28, fontWeight: '700', color: '#111827' },
-  subtitle: { fontSize: 14, color: '#6b7280' },
+  title: { fontSize: 28, fontWeight: '800', color: Palette.text },
+  subtitle: { fontSize: 14, color: Palette.textSecondary },
   fab: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: '#3c87f7',
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    ...Shadow.fab,
   },
   content: { paddingHorizontal: Spacing.four, gap: Spacing.three, paddingBottom: Spacing.six },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#111827', marginTop: Spacing.two },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: Palette.text, marginTop: Spacing.two },
   contactCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   avatar: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: '#e8f0fe',
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
   contactInfo: { flex: 1, gap: 2 },
-  contactName: { fontSize: 16, fontWeight: '700', color: '#111827' },
-  cardMeta: { fontSize: 13, color: '#6b7280' },
+  contactName: { fontSize: 16, fontWeight: '700', color: Palette.text },
+  cardMeta: { fontSize: 13, color: Palette.textSecondary },
   contactRight: { alignItems: 'flex-end', gap: Spacing.two },
+  contactActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   days: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#3c87f7',
-    backgroundColor: '#e8f0fe',
+    color: Palette.primary,
+    backgroundColor: Palette.primarySoft,
     paddingHorizontal: Spacing.two,
     paddingVertical: 2,
-    borderRadius: 999,
+    borderRadius: Radius.pill,
     overflow: 'hidden',
   },
-  daysSoon: { color: '#dc2626', backgroundColor: '#fee2e2' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  daysSoon: { color: Palette.danger, backgroundColor: Palette.dangerSoft },
+  modalOverlay: { flex: 1, backgroundColor: Palette.overlay, justifyContent: 'flex-end' },
   modal: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: Spacing.four,
-    borderTopRightRadius: Spacing.four,
+    backgroundColor: Palette.surface,
+    borderTopLeftRadius: Radius.xl,
+    borderTopRightRadius: Radius.xl,
     padding: Spacing.four,
   },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: Spacing.three },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: Palette.text, marginBottom: Spacing.three },
   form: { gap: Spacing.three },
   dateButton: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: Spacing.three,
+    borderColor: Palette.border,
+    borderRadius: Radius.md,
     paddingVertical: Spacing.three,
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: Palette.surface,
   },
-  dateButtonLabel: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  error: { color: '#dc2626', fontSize: 13 },
+  dateButtonLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  error: { color: Palette.danger, fontSize: 13 },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
 });

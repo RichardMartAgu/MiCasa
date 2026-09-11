@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { TextField } from '@/components/ui/text-field';
-import { Spacing } from '@/constants/theme';
+import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
@@ -27,8 +27,10 @@ import {
   fetchExpenses,
   removeCategory,
   removeExpense,
+  updateCategory,
+  updateExpense,
 } from '@/lib/api';
-import { toISODate } from '@/lib/date';
+import { monthKey, toISODate } from '@/lib/date';
 import { totalsByCategory } from '@/lib/finance';
 import { formatCurrency } from '@/lib/format';
 import type { Category, Expense } from '@/lib/types';
@@ -50,6 +52,8 @@ export default function GastosScreen() {
 
   const [expenseModal, setExpenseModal] = useState(false);
   const [categoryModal, setCategoryModal] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [categoryId, setCategoryId] = useState<string | null>(null);
@@ -60,16 +64,40 @@ export default function GastosScreen() {
 
   const [catName, setCatName] = useState('');
   const [catBudget, setCatBudget] = useState('');
-  const [catColor, setCatColor] = useState('#3c87f7');
+  const [catColor, setCatColor] = useState<string>(Palette.primary);
   const [catErrors, setCatErrors] = useState<{ name?: string; budget?: string }>({});
 
-  const totals = useMemo(
-    () => totalsByCategory(expenses, categories),
-    [expenses, categories],
-  );
-
   const now = useMemo(() => new Date(), []);
+  const thisMonth = monthKey(now);
+  const totals = useMemo(
+    () =>
+      totalsByCategory(
+        expenses.filter((e) => monthKey(new Date(e.spent_at)) === thisMonth),
+        categories,
+      ),
+    [expenses, categories, thisMonth],
+  );
   const monthTotal = totals.reduce((sum, t) => sum + t.total, 0);
+
+  function openAddExpense() {
+    setEditingExpenseId(null);
+    setTitle('');
+    setAmount('');
+    setCategoryId(null);
+    setDate(new Date());
+    setErrors({});
+    setExpenseModal(true);
+  }
+
+  function openEditExpense(expense: Expense) {
+    setEditingExpenseId(expense.id);
+    setTitle(expense.title);
+    setAmount(String(expense.amount));
+    setCategoryId(expense.category_id);
+    setDate(new Date(expense.spent_at));
+    setErrors({});
+    setExpenseModal(true);
+  }
 
   async function handleAddExpense() {
     const titleCheck = validateTitle(title);
@@ -81,14 +109,15 @@ export default function GastosScreen() {
     if (!titleCheck.valid || !amountCheck.valid || !currentCasa || !user) return;
 
     setSaving(true);
-    const error = await addExpense({
-      casa_id: currentCasa.id,
-      user_id: user.id,
+    const input = {
       category_id: categoryId,
       title,
       amount: Number(amount),
       spent_at: date.toISOString(),
-    });
+    };
+    const error = editingExpenseId
+      ? await updateExpense(editingExpenseId, input)
+      : await addExpense({ ...input, casa_id: currentCasa.id, user_id: user.id });
     setSaving(false);
     if (error) {
       Alert.alert('Error', error.message);
@@ -97,7 +126,26 @@ export default function GastosScreen() {
     setTitle('');
     setAmount('');
     setCategoryId(null);
+    setEditingExpenseId(null);
     setExpenseModal(false);
+  }
+
+  function openAddCategory() {
+    setEditingCategoryId(null);
+    setCatName('');
+    setCatBudget('');
+    setCatColor(Palette.primary);
+    setCatErrors({});
+    setCategoryModal(true);
+  }
+
+  function openEditCategory(category: Category) {
+    setEditingCategoryId(category.id);
+    setCatName(category.name);
+    setCatBudget(category.budget != null ? String(category.budget) : '');
+    setCatColor(category.color);
+    setCatErrors({});
+    setCategoryModal(true);
   }
 
   async function handleAddCategory() {
@@ -110,13 +158,15 @@ export default function GastosScreen() {
     if (!nameCheck.valid || !budgetCheck.valid || !currentCasa) return;
 
     setSaving(true);
-    const error = await addCategory({
-      casa_id: currentCasa.id,
+    const input = {
       name: catName,
       color: catColor,
       icon: 'pricetag',
       budget: catBudget ? Number(catBudget) : null,
-    });
+    };
+    const error = editingCategoryId
+      ? await updateCategory(editingCategoryId, input)
+      : await addCategory({ ...input, casa_id: currentCasa.id });
     setSaving(false);
     if (error) {
       Alert.alert('Error', error.message);
@@ -124,6 +174,7 @@ export default function GastosScreen() {
     }
     setCatName('');
     setCatBudget('');
+    setEditingCategoryId(null);
     setCategoryModal(false);
   }
 
@@ -155,7 +206,7 @@ export default function GastosScreen() {
     ]);
   }
 
-  const monthExpenses = expenses.filter(
+  const todayExpenses = expenses.filter(
     (e) => toISODate(new Date(e.spent_at)) === toISODate(now),
   );
 
@@ -165,15 +216,15 @@ export default function GastosScreen() {
         <View style={styles.headerText}>
           <Text style={styles.title}>Gastos</Text>
           <Text style={styles.subtitle}>
-            Total hoy: {formatCurrency(monthExpenses.reduce((s, e) => s + e.amount, 0))}
+            Total hoy: {formatCurrency(todayExpenses.reduce((s, e) => s + e.amount, 0))}
           </Text>
         </View>
         <View style={styles.headerActions}>
-          <Pressable style={styles.iconButton} onPress={() => setCategoryModal(true)}>
-            <Ionicons name="layers-outline" size={22} color="#3c87f7" />
+          <Pressable style={styles.iconButton} onPress={openAddCategory}>
+            <Ionicons name="layers-outline" size={22} color={Palette.primary} />
           </Pressable>
-          <Pressable style={styles.fab} onPress={() => setExpenseModal(true)}>
-            <Ionicons name="add" size={26} color="#ffffff" />
+          <Pressable style={styles.fab} onPress={openAddExpense}>
+            <Ionicons name="add" size={26} color={Palette.onPrimary} />
           </Pressable>
         </View>
       </View>
@@ -206,7 +257,7 @@ export default function GastosScreen() {
                           styles.progressFill,
                           {
                             width: `${Math.min(100, (t.total / t.budget) * 100)}%`,
-                            backgroundColor: t.overBudget ? '#dc2626' : '#3c87f7',
+                            backgroundColor: t.overBudget ? Palette.danger : Palette.primary,
                           },
                         ]}
                       />
@@ -230,7 +281,7 @@ export default function GastosScreen() {
             const category = categories.find((c) => c.id === e.category_id);
             return (
               <Card key={e.id} style={styles.expenseRow}>
-                <View style={[styles.colorDot, { backgroundColor: category?.color ?? '#9ca3af' }]} />
+                <View style={[styles.colorDot, { backgroundColor: category?.color ?? Palette.textMuted }]} />
                 <View style={styles.categoryInfo}>
                   <Text style={styles.categoryName}>{e.title}</Text>
                   <Text style={styles.cardMeta}>
@@ -240,9 +291,14 @@ export default function GastosScreen() {
                 </View>
                 <View style={styles.expenseRight}>
                   <Text style={styles.expenseAmount}>{formatCurrency(e.amount)}</Text>
-                  <Pressable onPress={() => handleDeleteExpense(e.id)} hitSlop={10}>
-                    <Ionicons name="trash-outline" size={18} color="#dc2626" />
-                  </Pressable>
+                  <View style={styles.rowActions}>
+                    <Pressable onPress={() => openEditExpense(e)} hitSlop={10}>
+                      <Ionicons name="pencil-outline" size={18} color={Palette.textSecondary} />
+                    </Pressable>
+                    <Pressable onPress={() => handleDeleteExpense(e.id)} hitSlop={10}>
+                      <Ionicons name="trash-outline" size={18} color={Palette.danger} />
+                    </Pressable>
+                  </View>
                 </View>
               </Card>
             );
@@ -258,7 +314,9 @@ export default function GastosScreen() {
         onRequestClose={() => setExpenseModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
-            <Text style={styles.modalTitle}>Nuevo gasto</Text>
+            <Text style={styles.modalTitle}>
+              {editingExpenseId ? 'Editar gasto' : 'Nuevo gasto'}
+            </Text>
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
               <TextField label="Concepto" value={title} onChangeText={setTitle} error={errors.title} />
               <TextField
@@ -311,7 +369,11 @@ export default function GastosScreen() {
 
               <View style={styles.modalActions}>
                 <Button title="Cancelar" variant="secondary" onPress={() => setExpenseModal(false)} />
-                <Button title="Guardar" onPress={handleAddExpense} loading={saving} />
+                <Button
+                  title={editingExpenseId ? 'Guardar cambios' : 'Guardar'}
+                  onPress={handleAddExpense}
+                  loading={saving}
+                />
               </View>
             </ScrollView>
           </View>
@@ -326,7 +388,9 @@ export default function GastosScreen() {
         onRequestClose={() => setCategoryModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
-            <Text style={styles.modalTitle}>Secciones de gasto</Text>
+            <Text style={styles.modalTitle}>
+              {editingCategoryId ? 'Editar sección' : 'Secciones de gasto'}
+            </Text>
             <ScrollView contentContainerStyle={styles.form}>
               <TextField
                 label="Nombre de la sección"
@@ -345,7 +409,7 @@ export default function GastosScreen() {
               />
 
               <View style={styles.colorRow}>
-                {['#3c87f7', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'].map((c) => (
+                {['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'].map((c) => (
                   <Pressable
                     key={c}
                     style={[styles.colorOption, { backgroundColor: c }, catColor === c && styles.colorSelected]}
@@ -354,15 +418,24 @@ export default function GastosScreen() {
                 ))}
               </View>
 
-              <Button title="Añadir sección" onPress={handleAddCategory} loading={saving} />
+              <Button
+                title={editingCategoryId ? 'Guardar cambios' : 'Añadir sección'}
+                onPress={handleAddCategory}
+                loading={saving}
+              />
 
               {categories.map((c) => (
                 <View key={c.id} style={styles.categoryManageRow}>
                   <View style={[styles.colorDot, { backgroundColor: c.color }]} />
                   <Text style={styles.categoryName}>{c.name}</Text>
-                  <Pressable onPress={() => handleDeleteCategory(c.id)} hitSlop={10}>
-                    <Ionicons name="trash-outline" size={18} color="#dc2626" />
-                  </Pressable>
+                  <View style={styles.rowActions}>
+                      <Pressable onPress={() => openEditCategory(c)} hitSlop={10}>
+                        <Ionicons name="pencil-outline" size={18} color={Palette.textSecondary} />
+                      </Pressable>
+                      <Pressable onPress={() => handleDeleteCategory(c.id)} hitSlop={10}>
+                        <Ionicons name="trash-outline" size={18} color={Palette.danger} />
+                      </Pressable>
+                  </View>
                 </View>
               ))}
             </ScrollView>
@@ -374,7 +447,7 @@ export default function GastosScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
+  container: { flex: 1, backgroundColor: Palette.background },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -383,30 +456,32 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.three,
   },
   headerText: { gap: Spacing.one },
-  title: { fontSize: 28, fontWeight: '700', color: '#111827' },
-  subtitle: { fontSize: 14, color: '#6b7280' },
+  title: { fontSize: 28, fontWeight: '800', color: Palette.text },
+  subtitle: { fontSize: 14, color: Palette.textSecondary },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   iconButton: {
     width: 44,
     height: 44,
-    borderRadius: 22,
+    borderRadius: Radius.pill,
     borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderColor: Palette.border,
+    backgroundColor: Palette.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
   fab: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: '#3c87f7',
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    ...Shadow.fab,
   },
   content: { paddingHorizontal: Spacing.four, gap: Spacing.three, paddingBottom: Spacing.six },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#111827', marginTop: Spacing.two },
-  total: { fontSize: 32, fontWeight: '800', color: '#111827' },
-  empty: { fontSize: 14, color: '#9ca3af' },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: Palette.text, marginTop: Spacing.two },
+  total: { fontSize: 32, fontWeight: '800', color: Palette.primary },
+  empty: { fontSize: 14, color: Palette.textMuted },
   categoryRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   colorDot: { width: 12, height: 12, borderRadius: 6 },
   categoryInfo: { flex: 1, gap: Spacing.one },
@@ -415,11 +490,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  categoryName: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  categoryAmount: { fontSize: 14, fontWeight: '600', color: '#111827' },
-  progressTrack: { height: 6, borderRadius: 3, backgroundColor: '#e5e7eb', overflow: 'hidden' },
-  progressFill: { height: 6, borderRadius: 3 },
-  cardMeta: { fontSize: 13, color: '#6b7280' },
+  categoryName: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  categoryAmount: { fontSize: 14, fontWeight: '600', color: Palette.text },
+  progressTrack: {
+    height: 6,
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.surfaceMuted,
+    overflow: 'hidden',
+  },
+  progressFill: { height: 6, borderRadius: Radius.pill },
+  cardMeta: { fontSize: 13, color: Palette.textSecondary },
   expenseRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -427,50 +507,51 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.three,
   },
   expenseRight: { alignItems: 'flex-end', gap: Spacing.one },
-  expenseAmount: { fontSize: 15, fontWeight: '700', color: '#111827' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  rowActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  expenseAmount: { fontSize: 15, fontWeight: '700', color: Palette.text },
+  modalOverlay: { flex: 1, backgroundColor: Palette.overlay, justifyContent: 'flex-end' },
   modal: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: Spacing.four,
-    borderTopRightRadius: Spacing.four,
+    backgroundColor: Palette.surface,
+    borderTopLeftRadius: Radius.xl,
+    borderTopRightRadius: Radius.xl,
     padding: Spacing.four,
     maxHeight: '92%',
   },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: Spacing.three },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: Palette.text, marginBottom: Spacing.three },
   form: { gap: Spacing.three },
-  label: { fontSize: 14, fontWeight: '600', color: '#4b5563' },
+  label: { fontSize: 14, fontWeight: '600', color: Palette.textStrong },
   chipWrap: { gap: Spacing.two },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
   chip: {
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
-    borderRadius: 999,
+    borderRadius: Radius.pill,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    backgroundColor: '#fff',
+    borderColor: Palette.border,
+    backgroundColor: Palette.surface,
   },
-  chipSelected: { backgroundColor: '#3c87f7', borderColor: '#3c87f7' },
-  chipText: { fontSize: 13, fontWeight: '600', color: '#6b7280' },
-  chipTextSelected: { color: '#fff' },
+  chipSelected: { backgroundColor: Palette.primary, borderColor: Palette.primary },
+  chipText: { fontSize: 13, fontWeight: '600', color: Palette.textSecondary },
+  chipTextSelected: { color: Palette.onPrimary },
   dateButton: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: Spacing.three,
+    borderColor: Palette.border,
+    borderRadius: Radius.md,
     paddingVertical: Spacing.three,
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: Palette.surface,
   },
-  dateButtonLabel: { fontSize: 15, fontWeight: '600', color: '#374151' },
+  dateButtonLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
-  colorRow: { flexDirection: 'row', gap: Spacing.two },
-  colorOption: { width: 36, height: 36, borderRadius: 18 },
-  colorSelected: { borderWidth: 3, borderColor: '#111827' },
+  colorRow: { flexDirection: 'row', gap: Spacing.two, flexWrap: 'wrap' },
+  colorOption: { width: 36, height: 36, borderRadius: Radius.pill },
+  colorSelected: { borderWidth: 3, borderColor: Palette.text },
   categoryManageRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    borderTopColor: Palette.border,
     paddingVertical: Spacing.three,
   },
 });

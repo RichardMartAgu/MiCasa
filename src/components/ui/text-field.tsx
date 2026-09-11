@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 
-import { Spacing } from '@/constants/theme';
+import { Palette, Radius, Spacing } from '@/constants/theme';
 
 export type TextFieldProps = TextInputProps & {
   label: string;
@@ -8,12 +9,20 @@ export type TextFieldProps = TextInputProps & {
 };
 
 export function TextField({ label, error, style, ...rest }: TextFieldProps) {
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.container}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
-        placeholderTextColor="#9ca3af"
-        style={[styles.input, error && styles.inputError, style]}
+        placeholderTextColor={Palette.textMuted}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={[
+          styles.input,
+          style,
+          focused && styles.inputFocused,
+          error && styles.inputError,
+        ]}
         {...rest}
       />
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -28,24 +37,31 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#4b5563',
+    color: Palette.textStrong,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: Spacing.three,
+    borderColor: Palette.border,
+    borderRadius: Radius.md,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.three,
     fontSize: 16,
-    color: '#111827',
-    backgroundColor: '#ffffff',
+    color: Palette.text,
+    backgroundColor: Palette.surface,
     minHeight: 48,
   },
+  inputFocused: {
+    borderColor: Palette.primary,
+    borderWidth: 2,
+    paddingVertical: Spacing.three - 1,
+  },
   inputError: {
-    borderColor: '#dc2626',
+    borderColor: Palette.danger,
+    borderWidth: 2,
+    paddingVertical: Spacing.three - 1,
   },
   error: {
     fontSize: 13,
-    color: '#dc2626',
+    color: Palette.danger,
   },
 });

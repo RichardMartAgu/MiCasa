@@ -38,6 +38,14 @@ export async function addCategory(input: {
   return toError(error);
 }
 
+export async function updateCategory(
+  id: string,
+  input: { name: string; color: string; icon: string; budget: number | null },
+): Promise<ApiError | null> {
+  const { error } = await supabase.from('categories').update(input).eq('id', id);
+  return toError(error);
+}
+
 export async function removeCategory(id: string): Promise<ApiError | null> {
   const { error } = await supabase.from('categories').delete().eq('id', id);
   return toError(error);
@@ -64,6 +72,20 @@ export async function addExpense(input: {
   note?: string | null;
 }): Promise<ApiError | null> {
   const { error } = await supabase.from('expenses').insert(input);
+  return toError(error);
+}
+
+export async function updateExpense(
+  id: string,
+  input: {
+    category_id: string | null;
+    title: string;
+    amount: number;
+    spent_at: string;
+    note?: string | null;
+  },
+): Promise<ApiError | null> {
+  const { error } = await supabase.from('expenses').update(input).eq('id', id);
   return toError(error);
 }
 
@@ -95,6 +117,22 @@ export async function addAppointment(input: {
   reminder_at?: string | null;
 }): Promise<ApiError | null> {
   const { error } = await supabase.from('appointments').insert(input);
+  return toError(error);
+}
+
+export async function updateAppointment(
+  id: string,
+  input: {
+    title: string;
+    description?: string | null;
+    person?: string | null;
+    location?: string | null;
+    kind: AppointmentKind;
+    starts_at: string;
+    reminder_at?: string | null;
+  },
+): Promise<ApiError | null> {
+  const { error } = await supabase.from('appointments').update(input).eq('id', id);
   return toError(error);
 }
 
@@ -184,6 +222,19 @@ export async function addContact(input: {
   phone?: string | null;
 }): Promise<ApiError | null> {
   const { error } = await supabase.from('contacts').insert(input);
+  return toError(error);
+}
+
+export async function updateContact(
+  id: string,
+  input: {
+    name: string;
+    birth_date: string;
+    relationship?: string | null;
+    phone?: string | null;
+  },
+): Promise<ApiError | null> {
+  const { error } = await supabase.from('contacts').update(input).eq('id', id);
   return toError(error);
 }
 

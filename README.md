@@ -54,7 +54,7 @@ npm run android  # emulador Android
 ## 🧪 Calidad
 
 ```bash
-npm test          # 50 tests unitarios (Jest)
+npm test          # 52 tests unitarios (Jest)
 npm run typecheck # TypeScript estricto
 npm run lint      # ESLint (config de Expo)
 ```

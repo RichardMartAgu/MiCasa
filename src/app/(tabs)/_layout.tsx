@@ -1,7 +1,8 @@
 import { Redirect, Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import type { ColorValue } from 'react-native';
+import { Platform, StyleSheet, type ColorValue } from 'react-native';
 
+import { Palette, Radius, Shadow } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 
 function icon(name: keyof typeof Ionicons.glyphMap) {
@@ -19,9 +20,11 @@ export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: '#3c87f7',
-        tabBarInactiveTintColor: '#9ca3af',
+        tabBarActiveTintColor: Palette.primary,
+        tabBarInactiveTintColor: Palette.textMuted,
         headerShown: false,
+        tabBarStyle: styles.tabBar,
+        tabBarItemStyle: styles.tabBarItem,
       }}>
       <Tabs.Screen name="index" options={{ title: 'Inicio', tabBarIcon: icon('home-outline') }} />
       <Tabs.Screen name="citas" options={{ title: 'Citas', tabBarIcon: icon('calendar-outline') }} />
@@ -35,3 +38,17 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  tabBar: {
+    backgroundColor: Palette.surface,
+    borderTopColor: Palette.border,
+    borderTopWidth: 1,
+    height: Platform.OS === 'web' ? 64 : 60,
+    paddingTop: 6,
+    ...Shadow.card,
+  },
+  tabBarItem: {
+    borderRadius: Radius.md,
+  },
+});

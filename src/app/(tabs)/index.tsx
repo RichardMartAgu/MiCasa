@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/ui/card';
-import { Spacing } from '@/constants/theme';
+import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
@@ -148,32 +148,37 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
+  container: { flex: 1, backgroundColor: Palette.background },
   content: { padding: Spacing.four, gap: Spacing.four, paddingBottom: Spacing.six },
   header: { gap: Spacing.two },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  casaName: { fontSize: 28, fontWeight: '700', color: '#111827' },
-  greeting: { fontSize: 16, color: '#6b7280' },
+  casaName: { fontSize: 28, fontWeight: '800', color: Palette.text },
+  greeting: { fontSize: 16, color: Palette.textSecondary },
   avatar: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: '#3c87f7',
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  memberCount: { fontSize: 13, color: '#6b7280' },
-  code: { fontFamily: 'monospace', fontWeight: '700', color: '#111827' },
+  avatarText: { color: Palette.onPrimary, fontSize: 18, fontWeight: '700' },
+  memberCount: { fontSize: 13, color: Palette.textSecondary },
+  code: { fontFamily: 'monospace', fontWeight: '700', color: Palette.primary },
   statsRow: { flexDirection: 'row', gap: Spacing.three },
-  statCard: { flex: 1, alignItems: 'center' },
-  statValue: { fontSize: 24, fontWeight: '700', color: '#111827' },
-  statLabel: { fontSize: 13, color: '#6b7280', textAlign: 'center' },
+  statCard: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: Palette.primarySoft,
+    borderColor: 'transparent',
+  },
+  statValue: { fontSize: 24, fontWeight: '800', color: Palette.primary },
+  statLabel: { fontSize: 13, color: Palette.textSecondary, textAlign: 'center' },
   section: { gap: Spacing.three },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: Palette.text },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  rowTitle: { fontSize: 15, fontWeight: '600', color: '#374151', flexShrink: 1 },
-  rowMeta: { fontSize: 13, color: '#6b7280' },
-  soon: { color: '#dc2626', fontWeight: '700' },
-  empty: { fontSize: 14, color: '#9ca3af' },
+  rowTitle: { fontSize: 15, fontWeight: '600', color: Palette.textStrong, flexShrink: 1 },
+  rowMeta: { fontSize: 13, color: Palette.textSecondary },
+  soon: { color: Palette.danger, fontWeight: '700' },
+  empty: { fontSize: 14, color: Palette.textMuted },
 });
