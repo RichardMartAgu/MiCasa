@@ -152,14 +152,14 @@ export async function fetchShoppingLists(casaId: string): Promise<ShoppingList[]
   return (data ?? []) as ShoppingList[];
 }
 
-export async function addShoppingList(
-  casaId: string,
-  userId: string,
-  title: string,
-): Promise<ApiError | null> {
+export async function addShoppingList(input: {
+  casa_id: string;
+  user_id: string;
+  title: string;
+}): Promise<ApiError | null> {
   const { error } = await supabase
     .from('shopping_lists')
-    .insert({ casa_id: casaId, user_id: userId, title });
+    .insert({ casa_id: input.casa_id, user_id: input.user_id, title: input.title });
   return toError(error);
 }
 

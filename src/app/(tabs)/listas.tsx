@@ -65,7 +65,11 @@ export default function ListasScreen() {
     }
     if (!currentCasa || !user) return;
     setSaving(true);
-    const err = await addShoppingList(currentCasa.id, user.id, listTitle);
+    const err = await addShoppingList({
+      casa_id: currentCasa.id,
+      user_id: user.id,
+      title: listTitle,
+    });
     setSaving(false);
     if (err) {
       Alert.alert('Error', err.message);
