@@ -50,3 +50,4 @@ example
 /android
 .vercel
 .env*
+!.env.example
