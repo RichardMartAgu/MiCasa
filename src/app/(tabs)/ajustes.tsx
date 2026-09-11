@@ -115,6 +115,8 @@ export default function AjustesScreen() {
           <Pressable
             key={casa.id}
             style={styles.casaRow}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: casa.id === currentCasa?.id }}
             onPress={() => {
               setCurrentCasa(casa);
               Alert.alert('Casa seleccionada', `Ahora estás gestionando «${casa.name}».`);
@@ -142,6 +144,7 @@ export default function AjustesScreen() {
         visible={createModal}
         animationType="slide"
         transparent
+        accessibilityViewIsModal
         onRequestClose={() => setCreateModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
@@ -165,6 +168,7 @@ export default function AjustesScreen() {
         visible={joinModal}
         animationType="slide"
         transparent
+        accessibilityViewIsModal
         onRequestClose={() => setJoinModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
@@ -174,7 +178,7 @@ export default function AjustesScreen() {
               value={inviteCode}
               onChangeText={setInviteCode}
               autoCapitalize="characters"
-              placeholder="8AB3D4EF"
+              placeholder="ABCDEF0123456789"
               error={error}
             />
             <View style={styles.modalActions}>
@@ -228,6 +232,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
+    minHeight: 44,
     paddingVertical: Spacing.two,
   },
   casaRowName: { flex: 1, fontSize: 15, color: Palette.textStrong },

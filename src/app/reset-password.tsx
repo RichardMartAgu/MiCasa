@@ -116,7 +116,9 @@ export default function ResetPasswordScreen() {
   if (phase === 'error') {
     return (
       <View style={styles.center}>
-        <Text style={styles.errorText}>Enlace no válido o expirado.</Text>
+        <Text style={styles.errorText} accessibilityRole="alert">
+          Enlace no válido o expirado.
+        </Text>
         <Link href="/recuperar" style={styles.link}>
           Solicitar nuevo enlace
         </Link>
@@ -159,7 +161,11 @@ export default function ResetPasswordScreen() {
               error={errors.confirm}
             />
 
-            {errors.form ? <Text style={styles.formError}>{errors.form}</Text> : null}
+            {errors.form ? (
+              <Text style={styles.formError} accessibilityRole="alert">
+                {errors.form}
+              </Text>
+            ) : null}
 
             <Button title="Guardar contraseña" onPress={handleSubmit} loading={loading} />
           </View>

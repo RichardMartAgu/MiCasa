@@ -62,7 +62,11 @@ export default function LoginScreen() {
             error={errors.password}
           />
 
-          {errors.form ? <Text style={styles.formError}>{errors.form}</Text> : null}
+          {errors.form ? (
+            <Text style={styles.formError} accessibilityRole="alert">
+              {errors.form}
+            </Text>
+          ) : null}
 
           <Button title="Entrar" onPress={handleSubmit} loading={loading} />
 

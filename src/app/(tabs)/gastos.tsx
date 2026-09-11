@@ -154,10 +154,18 @@ export default function GastosScreen() {
           </Text>
         </View>
         <View style={styles.headerActions}>
-          <Pressable style={styles.iconButton} onPress={openAddCategory}>
+          <Pressable
+            style={styles.iconButton}
+            accessibilityRole="button"
+            accessibilityLabel="Gestionar secciones"
+            onPress={openAddCategory}>
             <Ionicons name="layers-outline" size={22} color={Palette.primary} />
           </Pressable>
-          <Pressable style={styles.fab} onPress={openAddExpense}>
+          <Pressable
+            style={styles.fab}
+            accessibilityRole="button"
+            accessibilityLabel="Nuevo gasto"
+            onPress={openAddExpense}>
             <Ionicons name="add" size={26} color={Palette.onPrimary} />
           </Pressable>
         </View>

@@ -24,6 +24,7 @@ export function TextField({ label, error, leftIcon, rightIcon, style, ...rest }:
         {leftIcon ? <View style={styles.icon}>{leftIcon}</View> : null}
         <TextInput
           accessibilityLabel={label}
+          aria-invalid={error != null}
           placeholderTextColor={Palette.textMuted}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
@@ -32,7 +33,11 @@ export function TextField({ label, error, leftIcon, rightIcon, style, ...rest }:
         />
         {rightIcon ? <View style={styles.icon}>{rightIcon}</View> : null}
       </View>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? (
+        <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">
+          {error}
+        </Text>
+      ) : null}
     </View>
   );
 }
