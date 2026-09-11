@@ -162,10 +162,18 @@ export default function CumpleanosScreen() {
             </Text>
           ) : null}
           <View style={styles.contactActions}>
-            <Pressable onPress={() => openEdit(contact)} hitSlop={10}>
+            <Pressable
+              onPress={() => openEdit(contact)}
+              hitSlop={14}
+              accessibilityRole="button"
+              accessibilityLabel={`Editar contacto ${contact.name}`}>
               <Ionicons name="pencil-outline" size={18} color={Palette.textSecondary} />
             </Pressable>
-            <Pressable onPress={() => handleDelete(contact.id)} hitSlop={10}>
+            <Pressable
+              onPress={() => handleDelete(contact.id)}
+              hitSlop={14}
+              accessibilityRole="button"
+              accessibilityLabel={`Eliminar contacto ${contact.name}`}>
               <Ionicons name="trash-outline" size={18} color={Palette.danger} />
             </Pressable>
           </View>
@@ -181,7 +189,11 @@ export default function CumpleanosScreen() {
           <Text style={styles.title}>Cumpleaños</Text>
           <Text style={styles.subtitle}>Nunca más olvides una fecha</Text>
         </View>
-        <Pressable style={styles.fab} onPress={openAdd}>
+        <Pressable
+          style={styles.fab}
+          accessibilityRole="button"
+          accessibilityLabel="Nuevo contacto"
+          onPress={openAdd}>
           <Ionicons name="add" size={28} color={Palette.onPrimary} />
         </Pressable>
       </View>
@@ -210,6 +222,7 @@ export default function CumpleanosScreen() {
         visible={modalVisible}
         animationType="slide"
         transparent
+        accessibilityViewIsModal
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
@@ -218,10 +231,18 @@ export default function CumpleanosScreen() {
             </Text>
             <View style={styles.form}>
               <TextField label="Nombre" value={name} onChangeText={setName} error={errors.name} />
-              <Pressable style={styles.dateButton} onPress={() => setShowDatePicker(true)}>
+              <Pressable
+                style={styles.dateButton}
+                accessibilityRole="button"
+                accessibilityLabel={`Cambiar fecha de nacimiento: ${toISODate(birthDate)}`}
+                onPress={() => setShowDatePicker(true)}>
                 <Text style={styles.dateButtonLabel}>🎂 {toISODate(birthDate)}</Text>
               </Pressable>
-              {errors.date ? <Text style={styles.error}>{errors.date}</Text> : null}
+              {errors.date ? (
+                <Text style={styles.error} accessibilityRole="alert">
+                  {errors.date}
+                </Text>
+              ) : null}
               {showDatePicker && (
                 <DateTimePicker
                   value={birthDate}

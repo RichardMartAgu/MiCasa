@@ -3,11 +3,11 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Palette, Radius } from '@/constants/theme';
 
 const COLORS = {
-  primary: { bg: Palette.primarySoft, fg: Palette.primary },
-  success: { bg: Palette.successSoft, fg: Palette.success },
-  warning: { bg: Palette.warningSoft, fg: Palette.warning },
-  danger: { bg: Palette.dangerSoft, fg: Palette.danger },
-  gray: { bg: Palette.surfaceMuted, fg: Palette.textSecondary },
+  primary: { bg: Palette.primarySoft, fg: '#4338ca' },
+  success: { bg: Palette.successSoft, fg: '#047857' },
+  warning: { bg: Palette.warningSoft, fg: '#b45309' },
+  danger: { bg: Palette.dangerSoft, fg: '#b91c1c' },
+  gray: { bg: Palette.surfaceMuted, fg: '#475569' },
 } as const;
 
 export function Badge({

@@ -89,7 +89,11 @@ export default function RecuperarScreen() {
               error={errors.email}
             />
 
-            {errors.form ? <Text style={styles.formError}>{errors.form}</Text> : null}
+            {errors.form ? (
+              <Text style={styles.formError} accessibilityRole="alert">
+                {errors.form}
+              </Text>
+            ) : null}
 
             <Button title="Enviar enlace" onPress={handleSubmit} loading={loading} />
 

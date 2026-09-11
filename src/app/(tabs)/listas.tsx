@@ -116,7 +116,11 @@ export default function ListasScreen() {
             {lists.filter((l) => !l.done).length} listas abiertas
           </Text>
         </View>
-        <Pressable style={styles.fab} onPress={() => setModalVisible(true)}>
+        <Pressable
+          style={styles.fab}
+          accessibilityRole="button"
+          accessibilityLabel="Nueva lista de la compra"
+          onPress={() => setModalVisible(true)}>
           <Ionicons name="add" size={28} color={Palette.onPrimary} />
         </Pressable>
       </View>
@@ -138,6 +142,7 @@ export default function ListasScreen() {
                 <View style={styles.listRow}>
                   <Pressable
                     style={styles.listBody}
+                    accessibilityRole="button"
                     onPress={() => setExpandedId(isExpanded ? null : list.id)}>
                     <Text style={[styles.listTitle, list.done && styles.textMuted]}>
                       {list.title}
@@ -151,14 +156,21 @@ export default function ListasScreen() {
                   <View style={styles.listActions}>
                     <Pressable
                       onPress={() => toggleShoppingList(list.id, !list.done)}
-                      hitSlop={10}>
+                      hitSlop={14}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: list.done }}
+                      accessibilityLabel={`Marcar lista ${list.title} como ${list.done ? 'pendiente' : 'completada'}`}>
                       <Ionicons
                         name={list.done ? 'checkmark-circle' : 'ellipse-outline'}
                         size={24}
                         color={list.done ? Palette.success : Palette.textMuted}
                       />
                     </Pressable>
-                    <Pressable onPress={() => handleDeleteList(list.id)} hitSlop={10}>
+                    <Pressable
+                      onPress={() => handleDeleteList(list.id)}
+                      hitSlop={14}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Eliminar lista ${list.title}`}>
                       <Ionicons name="trash-outline" size={20} color={Palette.danger} />
                     </Pressable>
                   </View>
@@ -170,7 +182,10 @@ export default function ListasScreen() {
                       <View key={item.id} style={styles.itemRow}>
                         <Pressable
                           onPress={() => toggleShoppingItem(item.id, !item.done)}
-                          hitSlop={10}>
+                          hitSlop={14}
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked: item.done }}
+                          accessibilityLabel={`Marcar artículo ${item.name} como ${item.done ? 'pendiente' : 'comprado'}`}>
                           <Ionicons
                             name={item.done ? 'checkbox' : 'square-outline'}
                             size={22}
@@ -185,7 +200,9 @@ export default function ListasScreen() {
                           onPress={async () => {
                             await removeShoppingItem(item.id);
                           }}
-                          hitSlop={10}>
+                          hitSlop={14}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Quitar artículo ${item.name}`}>
                           <Ionicons name="close-circle-outline" size={20} color={Palette.textMuted} />
                         </Pressable>
                       </View>
@@ -196,6 +213,7 @@ export default function ListasScreen() {
                         style={styles.itemInput}
                         placeholder="Nuevo artículo"
                         placeholderTextColor={Palette.textMuted}
+                        accessibilityLabel="Nuevo artículo"
                         value={newItemName}
                         onChangeText={setNewItemName}
                         onSubmitEditing={() => handleAddItem(list.id)}
@@ -205,12 +223,15 @@ export default function ListasScreen() {
                         style={[styles.itemInput, styles.qtyInput]}
                         placeholder="Cant."
                         placeholderTextColor={Palette.textMuted}
+                        accessibilityLabel="Cantidad"
                         value={newItemQty}
                         onChangeText={setNewItemQty}
                         keyboardType="decimal-pad"
                       />
                       <Pressable
                         style={styles.addItemButton}
+                        accessibilityRole="button"
+                        accessibilityLabel="Añadir artículo"
                         onPress={() => handleAddItem(list.id)}>
                         <Ionicons name="add" size={22} color={Palette.onPrimary} />
                       </Pressable>
@@ -227,6 +248,7 @@ export default function ListasScreen() {
         visible={modalVisible}
         animationType="slide"
         transparent
+        accessibilityViewIsModal
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
@@ -301,8 +323,8 @@ const styles = StyleSheet.create({
   },
   qtyInput: { flex: 0.4 },
   addItemButton: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     borderRadius: Radius.pill,
     backgroundColor: Palette.primary,
     alignItems: 'center',
