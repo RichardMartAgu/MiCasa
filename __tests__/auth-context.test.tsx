@@ -58,6 +58,14 @@ describe('AuthProvider', () => {
     expect(result.current.session).toEqual(session);
   });
 
+  it('getSession rechazada deja loading false sin sesión', async () => {
+    mockGetSession.mockRejectedValue(new Error('network'));
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.session).toBeNull();
+  });
+
   it('signIn devuelve null con credenciales válidas', async () => {
     const { result } = renderHook(() => useAuth(), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
