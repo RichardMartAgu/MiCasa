@@ -34,6 +34,11 @@ describe('Button', () => {
     expect(onPress).not.toHaveBeenCalled();
   });
 
+  it('renderiza variante secundaria', () => {
+    const { getByText } = render(<Button title="Cancelar" variant="secondary" />);
+    expect(getByText('Cancelar')).toBeTruthy();
+  });
+
   it('no llama onPress cuando disabled', () => {
     const onPress = jest.fn();
     const { getByRole } = render(<Button title="Entrar" disabled onPress={onPress} />);

@@ -3,6 +3,13 @@ import { fireEvent, render } from '@testing-library/react-native';
 import { TextField } from '@/components/ui/text-field';
 
 describe('TextField', () => {
+  it('expone el label como accessibilityLabel del input', () => {
+    const { getByLabelText } = render(
+      <TextField label="Correo" value="" onChangeText={jest.fn()} />,
+    );
+    expect(getByLabelText('Correo')).toBeTruthy();
+  });
+
   it('renderiza label y valor', () => {
     const { getByText, getByDisplayValue } = render(
       <TextField label="Correo" value="ana@casa.com" onChangeText={jest.fn()} />,

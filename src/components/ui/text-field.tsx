@@ -14,6 +14,7 @@ export function TextField({ label, error, style, ...rest }: TextFieldProps) {
     <View style={styles.container}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
+        accessibilityLabel={label}
         placeholderTextColor={Palette.textMuted}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}

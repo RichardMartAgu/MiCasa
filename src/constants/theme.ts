@@ -22,6 +22,7 @@ export const Palette = {
   background: '#f6f7fb',
   surface: '#ffffff',
   surfaceMuted: '#f8fafc',
+  surfacePressed: '#f1f5f9',
   border: '#e2e8f0',
   borderStrong: '#cbd5e1',
   text: '#0f172a',

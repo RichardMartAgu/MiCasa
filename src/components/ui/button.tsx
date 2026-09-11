@@ -25,7 +25,7 @@ const BACKGROUND = {
 
 const BACKGROUND_PRESSED = {
   primary: Palette.primaryPressed,
-  secondary: '#f1f5f9',
+  secondary: Palette.surfacePressed,
   danger: Palette.dangerPressed,
 } as const;
 
