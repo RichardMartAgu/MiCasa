@@ -17,7 +17,10 @@ export function addDays(date: Date, days: number): Date {
 
 export function addMonths(date: Date, months: number): Date {
   const copy = new Date(date);
-  copy.setMonth(copy.getMonth() + months);
+  const day = copy.getDate();
+  copy.setMonth(copy.getMonth() + months, 1);
+  const lastDay = new Date(copy.getFullYear(), copy.getMonth() + 1, 0).getDate();
+  copy.setDate(Math.min(day, lastDay));
   return copy;
 }
 
@@ -41,8 +44,15 @@ export function fromISODate(iso: string): Date {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
+function parseISO(iso: string): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    return fromISODate(iso);
+  }
+  return new Date(iso);
+}
+
 export function formatDate(iso: string, locale = 'es-ES'): string {
-  const date = new Date(iso);
+  const date = parseISO(iso);
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat(locale, {
     day: 'numeric',
@@ -52,7 +62,7 @@ export function formatDate(iso: string, locale = 'es-ES'): string {
 }
 
 export function formatDateTime(iso: string, locale = 'es-ES'): string {
-  const date = new Date(iso);
+  const date = parseISO(iso);
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat(locale, {
     day: 'numeric',

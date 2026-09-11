@@ -8,7 +8,6 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "9.1.0",
     "@supabase/supabase-js": "^2.109.0",
-    "@types/jest": "29.5.14",
     "expo": "~57.0.9",
     "expo-constants": "~57.0.8",
     "expo-device": "~57.0.1",
@@ -22,8 +21,6 @@
     "expo-symbols": "~57.0.1",
     "expo-system-ui": "~57.0.2",
     "expo-web-browser": "~57.0.2",
-    "jest": "~29.7.0",
-    "jest-expo": "~57.0.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
@@ -38,10 +35,13 @@
   "devDependencies": {
     "@react-native/jest-preset": "^0.86.2",
     "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "29.5.14",
     "@types/react": "~19.2.2",
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.1",
-    "react-test-renderer": "^19.2.8",
+    "jest": "~29.7.0",
+    "jest-expo": "~57.0.3",
+    "react-test-renderer": "^19.2.3",
     "typescript": "~6.0.3"
   },
   "scripts": {

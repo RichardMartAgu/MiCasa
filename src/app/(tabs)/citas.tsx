@@ -16,11 +16,16 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { TextField } from '@/components/ui/text-field';
-import { Spacing } from '@/constants/theme';
+import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
-import { addAppointment, fetchAppointments, removeAppointment } from '@/lib/api';
+import {
+  addAppointment,
+  fetchAppointments,
+  removeAppointment,
+  updateAppointment,
+} from '@/lib/api';
 import { formatDateTime } from '@/lib/date';
 import type { Appointment, AppointmentKind } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
@@ -48,6 +53,7 @@ export default function CitasScreen() {
   );
 
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingAppointmentId, setEditingAppointmentId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [kind, setKind] = useState<AppointmentKind>('medico');
   const [person, setPerson] = useState('');
@@ -71,6 +77,35 @@ export default function CitasScreen() {
   const past = appointments
     .filter((a) => new Date(a.starts_at) < now)
     .sort((a, b) => new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime());
+
+  function openAdd() {
+    setEditingAppointmentId(null);
+    setTitle('');
+    setKind('medico');
+    setPerson('');
+    setLocation('');
+    setDate(new Date());
+    setTime(new Date());
+    setErrors({});
+    setModalVisible(true);
+  }
+
+  function openEdit(appointment: Appointment) {
+    setEditingAppointmentId(appointment.id);
+    setTitle(appointment.title);
+    setKind(appointment.kind);
+    setPerson(appointment.person ?? '');
+    setLocation(appointment.location ?? '');
+    const parsed = new Date(appointment.starts_at);
+    if (!Number.isNaN(parsed.getTime())) {
+      setDate(new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+      setTime(
+        new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), parsed.getHours(), parsed.getMinutes()),
+      );
+    }
+    setErrors({});
+    setModalVisible(true);
+  }
 
   async function handleSave() {
     const startsAt = toISOLocal(
@@ -103,15 +138,16 @@ export default function CitasScreen() {
       return;
 
     setSaving(true);
-    const error = await addAppointment({
-      casa_id: currentCasa.id,
-      user_id: user.id,
+    const input = {
       title,
       kind,
       person: person.trim() || null,
       location: location.trim() || null,
       starts_at: startsAt,
-    });
+    };
+    const error = editingAppointmentId
+      ? await updateAppointment(editingAppointmentId, input)
+      : await addAppointment({ ...input, casa_id: currentCasa.id, user_id: user.id });
     setSaving(false);
     if (error) {
       Alert.alert('Error', error.message);
@@ -120,6 +156,7 @@ export default function CitasScreen() {
     setTitle('');
     setPerson('');
     setLocation('');
+    setEditingAppointmentId(null);
     setModalVisible(false);
   }
 
@@ -145,8 +182,8 @@ export default function CitasScreen() {
           <Text style={styles.title}>Citas</Text>
           <Text style={styles.subtitle}>Médico, escuela, mascotas y más</Text>
         </View>
-        <Pressable style={styles.fab} onPress={() => setModalVisible(true)}>
-          <Ionicons name="add" size={28} color="#ffffff" />
+        <Pressable style={styles.fab} onPress={openAdd}>
+          <Ionicons name="add" size={28} color={Palette.onPrimary} />
         </Pressable>
       </View>
 
@@ -168,9 +205,14 @@ export default function CitasScreen() {
                   {a.person ? <Text style={styles.cardMeta}>👤 {a.person}</Text> : null}
                   {a.location ? <Text style={styles.cardMeta}>📍 {a.location}</Text> : null}
                 </View>
-                <Pressable onPress={() => handleDelete(a.id)} hitSlop={12}>
-                  <Ionicons name="trash-outline" size={20} color="#dc2626" />
-                </Pressable>
+                <View style={styles.cardActions}>
+                  <Pressable onPress={() => openEdit(a)} hitSlop={12}>
+                    <Ionicons name="pencil-outline" size={20} color={Palette.textSecondary} />
+                  </Pressable>
+                  <Pressable onPress={() => handleDelete(a.id)} hitSlop={12}>
+                    <Ionicons name="trash-outline" size={20} color={Palette.danger} />
+                  </Pressable>
+                </View>
               </View>
             </Card>
           ))
@@ -196,7 +238,9 @@ export default function CitasScreen() {
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
-            <Text style={styles.modalTitle}>Nueva cita</Text>
+            <Text style={styles.modalTitle}>
+              {editingAppointmentId ? 'Editar cita' : 'Nueva cita'}
+            </Text>
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
               <TextField
                 label="Título"
@@ -215,7 +259,7 @@ export default function CitasScreen() {
                     <Ionicons
                       name={k.icon}
                       size={16}
-                      color={kind === k.value ? '#fff' : '#6b7280'}
+                      color={kind === k.value ? Palette.onPrimary : Palette.textSecondary}
                     />
                     <Text style={[styles.chipText, kind === k.value && styles.chipTextSelected]}>
                       {k.label}
@@ -282,7 +326,11 @@ export default function CitasScreen() {
                   variant="secondary"
                   onPress={() => setModalVisible(false)}
                 />
-                <Button title="Guardar" onPress={handleSave} loading={saving} />
+                <Button
+                  title={editingAppointmentId ? 'Guardar cambios' : 'Guardar'}
+                  onPress={handleSave}
+                  loading={saving}
+                />
               </View>
             </ScrollView>
           </View>
@@ -293,7 +341,7 @@ export default function CitasScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
+  container: { flex: 1, backgroundColor: Palette.background },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -302,37 +350,39 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.three,
   },
   headerText: { gap: Spacing.one },
-  title: { fontSize: 28, fontWeight: '700', color: '#111827' },
-  subtitle: { fontSize: 14, color: '#6b7280' },
+  title: { fontSize: 28, fontWeight: '800', color: Palette.text },
+  subtitle: { fontSize: 14, color: Palette.textSecondary },
   fab: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: '#3c87f7',
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    ...Shadow.fab,
   },
   content: { paddingHorizontal: Spacing.four, gap: Spacing.three, paddingBottom: Spacing.six },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#111827', marginTop: Spacing.two },
-  pastTitle: { fontSize: 14, color: '#6b7280' },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: Palette.text, marginTop: Spacing.two },
+  pastTitle: { fontSize: 14, color: Palette.textSecondary },
   cardRow: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.three },
+  cardActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   cardBody: { gap: Spacing.one, flex: 1 },
-  cardTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
-  cardMeta: { fontSize: 13, color: '#6b7280' },
+  cardTitle: { fontSize: 16, fontWeight: '700', color: Palette.text },
+  cardMeta: { fontSize: 13, color: Palette.textSecondary },
   pastRow: { flexDirection: 'row', justifyContent: 'space-between' },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: Palette.overlay,
     justifyContent: 'flex-end',
   },
   modal: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: Spacing.four,
-    borderTopRightRadius: Spacing.four,
+    backgroundColor: Palette.surface,
+    borderTopLeftRadius: Radius.xl,
+    borderTopRightRadius: Radius.xl,
     padding: Spacing.four,
     maxHeight: '92%',
   },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: Spacing.three },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: Palette.text, marginBottom: Spacing.three },
   form: { gap: Spacing.three },
   kindRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
   chip: {
@@ -341,25 +391,25 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
-    borderRadius: 999,
+    borderRadius: Radius.pill,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    backgroundColor: '#fff',
+    borderColor: Palette.border,
+    backgroundColor: Palette.surface,
   },
-  chipSelected: { backgroundColor: '#3c87f7', borderColor: '#3c87f7' },
-  chipText: { fontSize: 13, fontWeight: '600', color: '#6b7280' },
-  chipTextSelected: { color: '#fff' },
+  chipSelected: { backgroundColor: Palette.primary, borderColor: Palette.primary },
+  chipText: { fontSize: 13, fontWeight: '600', color: Palette.textSecondary },
+  chipTextSelected: { color: Palette.onPrimary },
   dateRow: { flexDirection: 'row', gap: Spacing.two },
   dateButton: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: Spacing.three,
+    borderColor: Palette.border,
+    borderRadius: Radius.md,
     paddingVertical: Spacing.three,
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: Palette.surface,
   },
-  dateButtonLabel: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  error: { color: '#dc2626', fontSize: 13 },
+  dateButtonLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  error: { color: Palette.danger, fontSize: 13 },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
 });

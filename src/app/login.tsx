@@ -4,7 +4,7 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } fr
 
 import { Button } from '@/components/ui/button';
 import { TextField } from '@/components/ui/text-field';
-import { Spacing } from '@/constants/theme';
+import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { validateEmail, validatePassword } from '@/lib/validation';
 
@@ -79,7 +79,7 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: '#ffffff' },
+  flex: { flex: 1, backgroundColor: Palette.background },
   container: {
     flexGrow: 1,
     padding: Spacing.four,
@@ -87,11 +87,20 @@ const styles = StyleSheet.create({
     gap: Spacing.five,
   },
   header: { alignItems: 'center', gap: Spacing.two },
-  logo: { fontSize: 56 },
-  title: { fontSize: 36, fontWeight: '700', color: '#111827' },
-  subtitle: { fontSize: 16, color: '#6b7280', textAlign: 'center' },
+  logo: {
+    fontSize: 56,
+    backgroundColor: Palette.primarySoft,
+    width: 112,
+    height: 112,
+    borderRadius: Radius.pill,
+    textAlign: 'center',
+    lineHeight: 112,
+    overflow: 'hidden',
+  },
+  title: { fontSize: 36, fontWeight: '800', color: Palette.text },
+  subtitle: { fontSize: 16, color: Palette.textSecondary, textAlign: 'center' },
   form: { gap: Spacing.four },
-  formError: { color: '#dc2626', fontSize: 14, textAlign: 'center' },
-  footer: { textAlign: 'center', fontSize: 15, color: '#4b5563' },
-  link: { color: '#3c87f7', fontWeight: '600' },
+  formError: { color: Palette.danger, fontSize: 14, textAlign: 'center' },
+  footer: { textAlign: 'center', fontSize: 15, color: Palette.textStrong },
+  link: { color: Palette.primary, fontWeight: '700' },
 });

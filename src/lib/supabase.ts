@@ -6,7 +6,7 @@ const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn(
+  throw new Error(
     'Faltan las variables de entorno EXPO_PUBLIC_SUPABASE_URL y EXPO_PUBLIC_SUPABASE_ANON_KEY. Crea un proyecto en supabase.com y añádelas a un archivo .env',
   );
 }

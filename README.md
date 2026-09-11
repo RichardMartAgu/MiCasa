@@ -1,5 +1,7 @@
 # 🏠 MiCasa
 
+[![CI](https://github.com/RichardMartAgu/MiCasa/actions/workflows/ci.yml/badge.svg)](https://github.com/RichardMartAgu/MiCasa/actions/workflows/ci.yml)
+
 Aplicación móvil para gestionar tu hogar entre varias personas, con coste cero.
 
 MiCasa te permite llevar la **contabilidad de compras** por secciones (Bebé, Reformas, Comida…), gestionar **citas** (médico, escuela, mascotas…), crear **listas de la compra** y recordar los **cumpleaños** de la familia — todo con varios usuarios compartiendo la misma casa en tiempo real.
@@ -54,7 +56,7 @@ npm run android  # emulador Android
 ## 🧪 Calidad
 
 ```bash
-npm test          # 50 tests unitarios (Jest)
+npm test          # 196 tests unitarios (Jest)
 npm run typecheck # TypeScript estricto
 npm run lint      # ESLint (config de Expo)
 ```
@@ -70,7 +72,9 @@ src/
 │   ├── _layout.tsx      # Providers (Auth, Casa) + Stack
 │   ├── login.tsx
 │   └── register.tsx
-├── components/ui/       # Componentes reutilizables (Button, Card, TextField, EmptyState)
+├── components/
+│   ├── expenses/        # ExpenseForm, CategoryManager, ExpenseList
+│   └── ui/              # Button, Card, TextField, EmptyState
 ├── constants/theme.ts   # Colores y espaciados
 ├── context/             # AuthProvider y CasaProvider (casa actual, miembros)
 ├── hooks/               # useRealtimeCollection (fetch + suscripción Realtime)

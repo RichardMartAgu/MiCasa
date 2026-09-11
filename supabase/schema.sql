@@ -53,6 +53,11 @@ create table if not exists public.categories (
   created_at timestamptz not null default now()
 );
 
+-- Una casa no repite nombres de sección
+alter table public.categories drop constraint if exists categories_casa_id_name_key;
+alter table public.categories
+  add constraint categories_casa_id_name_key unique (casa_id, name);
+
 -- ----------------------------------------------------------------------------
 -- Gastos
 -- ----------------------------------------------------------------------------
@@ -418,8 +423,10 @@ returns trigger
 language plpgsql security definer set search_path = public
 as $$
 begin
-  insert into public.casa_members (casa_id, user_id, role)
-  values (new.id, new.created_by, 'owner');
+  if new.created_by is not null then
+    insert into public.casa_members (casa_id, user_id, role)
+    values (new.id, new.created_by, 'owner');
+  end if;
   return new;
 end;
 $$;

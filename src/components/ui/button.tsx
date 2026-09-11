@@ -8,7 +8,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { Spacing } from '@/constants/theme';
+import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 
 export type ButtonProps = Omit<PressableProps, 'style'> & {
   title: string;
@@ -18,15 +18,27 @@ export type ButtonProps = Omit<PressableProps, 'style'> & {
 };
 
 const BACKGROUND = {
-  primary: '#3c87f7',
-  secondary: '#e5e7eb',
-  danger: '#dc2626',
+  primary: Palette.primary,
+  secondary: Palette.surface,
+  danger: Palette.danger,
+} as const;
+
+const BACKGROUND_PRESSED = {
+  primary: Palette.primaryPressed,
+  secondary: Palette.surfacePressed,
+  danger: Palette.dangerPressed,
 } as const;
 
 const FOREGROUND = {
-  primary: '#ffffff',
-  secondary: '#111827',
-  danger: '#ffffff',
+  primary: Palette.onPrimary,
+  secondary: Palette.textStrong,
+  danger: Palette.onPrimary,
+} as const;
+
+const BORDER = {
+  primary: 'transparent',
+  secondary: Palette.border,
+  danger: 'transparent',
 } as const;
 
 export function Button({
@@ -43,8 +55,8 @@ export function Button({
       disabled={disabled || loading}
       style={({ pressed }) => [
         styles.base,
-        { backgroundColor: BACKGROUND[variant] },
-        pressed && styles.pressed,
+        { backgroundColor: BACKGROUND[variant], borderColor: BORDER[variant] },
+        pressed && { backgroundColor: BACKGROUND_PRESSED[variant] },
         (disabled || loading) && styles.disabled,
         style,
       ]}
@@ -60,19 +72,18 @@ export function Button({
 
 const styles = StyleSheet.create({
   base: {
-    borderRadius: Spacing.three,
+    borderRadius: Radius.md,
     paddingVertical: Spacing.three,
     paddingHorizontal: Spacing.four,
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 52,
+    borderWidth: 1,
+    ...Shadow.card,
   },
   label: {
     fontSize: 16,
     fontWeight: '700',
-  },
-  pressed: {
-    opacity: 0.85,
   },
   disabled: {
     opacity: 0.5,

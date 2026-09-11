@@ -5,7 +5,7 @@ import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'rea
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { TextField } from '@/components/ui/text-field';
-import { Spacing } from '@/constants/theme';
+import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { formatInviteCode, initials } from '@/lib/format';
@@ -119,7 +119,7 @@ export default function AjustesScreen() {
               setCurrentCasa(casa);
               Alert.alert('Casa seleccionada', `Ahora estás gestionando «${casa.name}».`);
             }}>
-            <Ionicons name="home-outline" size={20} color={casa.id === currentCasa?.id ? '#3c87f7' : '#9ca3af'} />
+            <Ionicons name="home-outline" size={20} color={casa.id === currentCasa?.id ? Palette.primary : Palette.textMuted} />
             <Text
               style={[
                 styles.casaRowName,
@@ -128,7 +128,7 @@ export default function AjustesScreen() {
               {casa.name}
             </Text>
             {casa.id === currentCasa?.id ? (
-              <Ionicons name="checkmark-circle" size={20} color="#10b981" />
+              <Ionicons name="checkmark-circle" size={20} color={Palette.success} />
             ) : null}
           </Pressable>
         ))}
@@ -189,58 +189,58 @@ export default function AjustesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
+  container: { flex: 1, backgroundColor: Palette.background },
   content: { padding: Spacing.four, gap: Spacing.four, paddingBottom: Spacing.six },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
-  cardMeta: { fontSize: 13, color: '#6b7280' },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: Palette.text },
+  cardMeta: { fontSize: 13, color: Palette.textSecondary },
   profileRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   avatar: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: '#3c87f7',
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  profileName: { fontSize: 17, fontWeight: '700', color: '#111827' },
-  casaName: { fontSize: 22, fontWeight: '700', color: '#111827' },
+  avatarText: { color: Palette.onPrimary, fontSize: 18, fontWeight: '700' },
+  profileName: { fontSize: 17, fontWeight: '700', color: Palette.text },
+  casaName: { fontSize: 22, fontWeight: '800', color: Palette.text },
   inviteRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   inviteCode: {
     fontFamily: 'monospace',
     fontSize: 18,
     fontWeight: '700',
-    color: '#3c87f7',
+    color: Palette.primary,
     letterSpacing: 2,
   },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   memberAvatar: {
     width: 36,
     height: 36,
-    borderRadius: 18,
-    backgroundColor: '#e8f0fe',
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  memberAvatarText: { fontSize: 14, fontWeight: '700', color: '#3c87f7' },
-  memberName: { flex: 1, fontSize: 15, fontWeight: '600', color: '#374151' },
+  memberAvatarText: { fontSize: 14, fontWeight: '700', color: Palette.primary },
+  memberName: { flex: 1, fontSize: 15, fontWeight: '600', color: Palette.textStrong },
   casaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
     paddingVertical: Spacing.two,
   },
-  casaRowName: { flex: 1, fontSize: 15, color: '#374151' },
-  casaRowActive: { fontWeight: '700', color: '#3c87f7' },
+  casaRowName: { flex: 1, fontSize: 15, color: Palette.textStrong },
+  casaRowActive: { fontWeight: '700', color: Palette.primary },
   casaActions: { gap: Spacing.two, marginTop: Spacing.two },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  modalOverlay: { flex: 1, backgroundColor: Palette.overlay, justifyContent: 'flex-end' },
   modal: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: Spacing.four,
-    borderTopRightRadius: Spacing.four,
+    backgroundColor: Palette.surface,
+    borderTopLeftRadius: Radius.xl,
+    borderTopRightRadius: Radius.xl,
     padding: Spacing.four,
     gap: Spacing.three,
   },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#111827' },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: Palette.text },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
 });
