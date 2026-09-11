@@ -1,20 +1,3 @@
-export const Colors = {
-  light: {
-    text: '#0f172a',
-    background: '#f6f7fb',
-    backgroundElement: '#ffffff',
-    backgroundSelected: '#eef2ff',
-    textSecondary: '#64748b',
-  },
-  dark: {
-    text: '#ffffff',
-    background: '#0b0f19',
-    backgroundElement: '#151a26',
-    backgroundSelected: '#1f2737',
-    textSecondary: '#94a3b8',
-  },
-} as const;
-
 export const Palette = {
   primary: '#6366f1',
   primaryPressed: '#4f46e5',
