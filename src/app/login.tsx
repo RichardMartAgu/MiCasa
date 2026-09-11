@@ -66,6 +66,12 @@ export default function LoginScreen() {
 
           <Button title="Entrar" onPress={handleSubmit} loading={loading} />
 
+          <Text style={styles.linkCenter}>
+            <Link href="/recuperar" style={styles.link}>
+              ¿Olvidaste tu contraseña?
+            </Link>
+          </Text>
+
           <Text style={styles.footer}>
             ¿No tienes cuenta?{' '}
             <Link href="/register" style={styles.link}>
@@ -101,6 +107,12 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 16, color: Palette.textSecondary, textAlign: 'center' },
   form: { gap: Spacing.four },
   formError: { color: Palette.danger, fontSize: 14, textAlign: 'center' },
+  linkCenter: {
+    color: Palette.primary,
+    fontWeight: '700',
+    fontSize: 15,
+    textAlign: 'center',
+  },
   footer: { textAlign: 'center', fontSize: 15, color: Palette.textStrong },
   link: { color: Palette.primary, fontWeight: '700' },
 });
