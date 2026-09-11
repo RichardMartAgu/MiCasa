@@ -1,4 +1,5 @@
 import { fireEvent, render } from '@testing-library/react-native';
+import { Text } from 'react-native';
 
 import { TextField } from '@/components/ui/text-field';
 
@@ -47,5 +48,19 @@ describe('TextField', () => {
       <TextField label="Contraseña" value="123" onChangeText={jest.fn()} secureTextEntry />,
     );
     expect(getByDisplayValue('123').props.secureTextEntry).toBe(true);
+  });
+
+  it('renderiza leftIcon y rightIcon', () => {
+    const { getByTestId } = render(
+      <TextField
+        label="Correo"
+        value=""
+        onChangeText={jest.fn()}
+        leftIcon={<Text testID="left-icon">L</Text>}
+        rightIcon={<Text testID="right-icon">R</Text>}
+      />,
+    );
+    expect(getByTestId('left-icon')).toBeTruthy();
+    expect(getByTestId('right-icon')).toBeTruthy();
   });
 });
