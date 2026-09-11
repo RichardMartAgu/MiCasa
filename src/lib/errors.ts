@@ -9,9 +9,11 @@ const RULES: { pattern: RegExp; message: string }[] = [
   { pattern: /new row violates check constraint|violates check constraint/i, message: 'Algún dato no cumple las reglas de la aplicación.' },
 ];
 
+const FALLBACK = 'Error desconocido. Inténtalo de nuevo.';
+
 export function friendlyError(raw: string): string {
   for (const rule of RULES) {
     if (rule.pattern.test(raw)) return rule.message;
   }
-  return raw;
+  return FALLBACK;
 }

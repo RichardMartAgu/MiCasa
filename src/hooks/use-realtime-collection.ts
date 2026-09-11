@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 interface CollectionResult<T> {
   data: T[];
   loading: boolean;
+  error: string | null;
   reload: () => Promise<void>;
 }
 
@@ -16,16 +17,32 @@ export function useRealtimeCollection<T>(
 ): CollectionResult<T> {
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const fetchRef = useRef(fetchFn);
 
   useEffect(() => {
     fetchRef.current = fetchFn;
   }, [fetchFn]);
 
-  const reload = useCallback(async () => {
-    const rows = await fetchRef.current();
-    setData(rows);
+  const runFetch = useCallback(async (active: () => boolean) => {
+    try {
+      const rows = await fetchRef.current();
+      if (active()) {
+        setData(rows);
+        setError(null);
+        setLoading(false);
+      }
+    } catch {
+      if (active()) {
+        setError('No se pudieron cargar los datos.');
+        setLoading(false);
+      }
+    }
   }, []);
+
+  const reload = useCallback(async () => {
+    await runFetch(() => true);
+  }, [runFetch]);
 
   useEffect(() => {
     if (!casaId) {
@@ -33,12 +50,8 @@ export function useRealtimeCollection<T>(
     }
 
     let active = true;
-    fetchRef.current().then((rows) => {
-      if (active) {
-        setData(rows);
-        setLoading(false);
-      }
-    });
+    const isActive = () => active;
+    runFetch(isActive);
 
     const channelFilter = filter ?? `casa_id=eq.${casaId}`;
     const channel = supabase
@@ -52,9 +65,7 @@ export function useRealtimeCollection<T>(
           filter: channelFilter,
         },
         () => {
-          fetchRef.current().then((rows) => {
-            if (active) setData(rows);
-          });
+          runFetch(isActive);
         },
       )
       .subscribe();
@@ -63,7 +74,7 @@ export function useRealtimeCollection<T>(
       active = false;
       supabase.removeChannel(channel);
     };
-  }, [casaId, table, filter]);
+  }, [casaId, table, filter, runFetch]);
 
-  return { data, loading, reload };
+  return { data, loading, error, reload };
 }
