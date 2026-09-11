@@ -2,6 +2,9 @@
   "name": "micasa",
   "main": "expo-router/entry",
   "version": "1.0.0",
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "dependencies": {
     "@expo/ui": "~57.0.8",
     "@expo/vector-icons": "^15.0.2",

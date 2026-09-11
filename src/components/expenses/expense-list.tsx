@@ -27,7 +27,7 @@ export function ExpenseList({ expenses, categories, onEdit, onDelete }: ExpenseL
 
   return (
     <>
-      {expenses.slice(0, 30).map((e) => {
+      {expenses.map((e) => {
         const category = categories.find((c) => c.id === e.category_id);
         return (
           <Card key={e.id} style={styles.expenseRow}>

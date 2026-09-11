@@ -152,7 +152,7 @@ create index if not exists idx_shopping_lists_user on public.shopping_lists (use
 -- ============================================================================
 create or replace function public.is_casa_member(casa uuid)
 returns boolean
-language sql stable security definer set search_path = public
+language sql stable security definer set search_path = ''
 as $$
   select exists (
     select 1 from public.casa_members cm
@@ -162,7 +162,7 @@ $$;
 
 create or replace function public.is_casa_owner(casa uuid)
 returns boolean
-language sql stable security definer set search_path = public
+language sql stable security definer set search_path = ''
 as $$
   select exists (
     select 1 from public.casa_members cm
@@ -170,22 +170,33 @@ as $$
   );
 $$;
 
--- Genera un código de invitación único (volatile: valor nuevo por evaluación)
+-- Genera un código de invitación único (volatile: valor nuevo por evaluación).
+-- 16 hex = 64 bits de entropía: inviable de enumerar por fuerza bruta.
 create or replace function public.generate_invite_code()
 returns text
-language sql volatile security definer set search_path = public
+language sql volatile security definer set search_path = ''
 as $$
-  select upper(substr(md5(gen_random_uuid()::text), 1, 8));
+  select upper(substr(md5(gen_random_uuid()::text), 1, 16));
 $$;
 
 -- El código de invitación se genera en la BD, no en el cliente
 alter table public.casas alter column invite_code set default public.generate_invite_code();
 
+-- Registro de intentos de join_casa (anti-enumeración).
+-- Solo lo toca el SECURITY DEFINER; sin policies -> RLS deniega todo al cliente.
+create table if not exists public.join_attempts (
+  user_id uuid not null,
+  attempted_at timestamptz not null default now()
+);
+create index if not exists idx_join_attempts_user on public.join_attempts (user_id, attempted_at);
+alter table public.join_attempts enable row level security;
+revoke all on public.join_attempts from public, anon, authenticated;
+
 -- Únete a una casa mediante su código de invitación.
 -- Es SECURITY DEFINER porque el nuevo miembro aún no tiene RLS sobre casas/casa_members.
 create or replace function public.join_casa(code text)
 returns public.casas
-language plpgsql security definer set search_path = public
+language plpgsql security definer set search_path = ''
 as $$
 declare
   target public.casas;
@@ -193,6 +204,17 @@ begin
   if auth.uid() is null then
     raise exception 'Debes iniciar sesión para unirte a una casa.';
   end if;
+
+  -- Rate limit: máx 10 intentos por hora por usuario.
+  delete from public.join_attempts
+  where user_id = auth.uid()
+    and attempted_at < now() - interval '1 hour';
+
+  if (select count(*) from public.join_attempts where user_id = auth.uid()) >= 10 then
+    raise exception 'Demasiados intentos. Espera un rato y vuelve a intentarlo.';
+  end if;
+
+  insert into public.join_attempts (user_id) values (auth.uid());
 
   select * into target
   from public.casas
@@ -215,13 +237,17 @@ grant execute on function public.join_casa(text) to authenticated;
 revoke all on function public.join_casa(text) from anon;
 
 -- Funciones SECURITY DEFINER: revocar de anon (y de authenticated solo donde no se necesitan).
--- authenticated conserva EXECUTE en is_casa_member/is_casa_owner (RLS),
--- generate_invite_code (default de columna) y join_casa (RPC del cliente).
+-- OJO: `revoke ... from public` quita EXECUTE a TODOS los roles (incluido authenticated),
+-- que solo tenían el permiso vía PUBLIC. Por eso se regrantea explícitamente a authenticated:
+-- is_casa_member/is_casa_owner (RLS), generate_invite_code (default de columna) y join_casa (RPC del cliente).
 revoke all on function public.generate_invite_code() from public, anon;
+grant execute on function public.generate_invite_code() to authenticated;
 revoke all on function public.handle_new_user() from public, anon, authenticated;
 revoke all on function public.handle_new_casa() from public, anon, authenticated;
 revoke all on function public.is_casa_member(uuid) from public, anon;
+grant execute on function public.is_casa_member(uuid) to authenticated;
 revoke all on function public.is_casa_owner(uuid) from public, anon;
+grant execute on function public.is_casa_owner(uuid) to authenticated;
 
 -- ============================================================================
 -- Row Level Security
@@ -402,7 +428,7 @@ create policy "contacts_delete_member" on public.contacts
 -- Crea el perfil al registrarse
 create or replace function public.handle_new_user()
 returns trigger
-language plpgsql security definer set search_path = public
+language plpgsql security definer set search_path = ''
 as $$
 begin
   insert into public.profiles (id, display_name)
@@ -420,7 +446,7 @@ create trigger on_auth_user_created
 -- Al crear una casa, su creador pasa a ser miembro owner
 create or replace function public.handle_new_casa()
 returns trigger
-language plpgsql security definer set search_path = public
+language plpgsql security definer set search_path = ''
 as $$
 begin
   if new.created_by is not null then
@@ -435,6 +461,62 @@ drop trigger if exists on_casa_created on public.casas;
 create trigger on_casa_created
   after insert on public.casas
   for each row execute procedure public.handle_new_casa();
+
+-- Invariante "mono-owner": una casa nunca puede quedarse sin owner.
+-- Bloquea cambiar el user_id de una membresía (rompería trazabilidad),
+-- degradar al último owner y borrar al último owner.
+create or replace function public.handle_casa_members_update()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  owner_count bigint;
+begin
+  if new.user_id <> old.user_id then
+    raise exception 'No se puede cambiar el usuario de una membresía.';
+  end if;
+
+  if old.role = 'owner' and new.role <> 'owner' then
+    select count(*) into owner_count
+    from public.casa_members
+    where casa_id = old.casa_id and role = 'owner';
+    if owner_count <= 1 then
+      raise exception 'Una casa debe tener al menos un owner.';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_casa_members_update on public.casa_members;
+create trigger on_casa_members_update
+  before update on public.casa_members
+  for each row execute procedure public.handle_casa_members_update();
+
+create or replace function public.handle_casa_members_delete()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  owner_count bigint;
+begin
+  if old.role = 'owner' then
+    select count(*) into owner_count
+    from public.casa_members
+    where casa_id = old.casa_id and role = 'owner';
+    if owner_count <= 1 then
+      raise exception 'Una casa debe tener al menos un owner.';
+    end if;
+  end if;
+  return old;
+end;
+$$;
+
+drop trigger if exists on_casa_members_delete on public.casa_members;
+create trigger on_casa_members_delete
+  before delete on public.casa_members
+  for each row execute procedure public.handle_casa_members_delete();
 
 -- ============================================================================
 -- Restricciones de integridad (longitudes máximas)

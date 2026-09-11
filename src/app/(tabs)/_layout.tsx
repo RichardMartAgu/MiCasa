@@ -13,8 +13,9 @@ function icon(name: keyof typeof Ionicons.glyphMap) {
 }
 
 export default function TabsLayout() {
-  const { session } = useAuth();
+  const { session, loading } = useAuth();
 
+  if (loading) return null;
   if (!session) return <Redirect href="/login" />;
 
   return (
