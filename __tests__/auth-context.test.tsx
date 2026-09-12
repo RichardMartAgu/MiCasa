@@ -119,7 +119,10 @@ describe('AuthProvider', () => {
     expect(mockSignUp).toHaveBeenCalledWith({
       email: 'ana@casa.com',
       password: '123456',
-      options: { data: { display_name: 'Ana García' } },
+      options: {
+        data: { display_name: 'Ana García' },
+        emailRedirectTo: 'micasa://verify',
+      },
     });
   });
 

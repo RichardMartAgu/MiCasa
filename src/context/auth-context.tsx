@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { Platform } from 'react-native';
 import type { Session, User } from '@supabase/supabase-js';
 
 import { supabase } from '@/lib/supabase';
@@ -58,7 +59,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { data: { display_name: displayName.trim() } },
+          options: {
+            data: { display_name: displayName.trim() },
+            emailRedirectTo:
+              Platform.OS === 'web' ? `${window.location.origin}/verify` : 'micasa://verify',
+          },
         });
         return error ? { message: friendlyError(error.message) } : null;
       },

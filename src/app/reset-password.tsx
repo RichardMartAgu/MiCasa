@@ -43,6 +43,9 @@ export default function ResetPasswordScreen() {
     let cancelled = false;
 
     async function applyTokens(tokens: RecoveryTokens | null) {
+      if (Platform.OS === 'web') {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
       if (cancelled) return;
       if (!tokens) {
         setPhase('error');
@@ -50,9 +53,6 @@ export default function ResetPasswordScreen() {
       }
       const { error } = await supabase.auth.setSession(tokens);
       if (cancelled) return;
-      if (Platform.OS === 'web') {
-        window.history.replaceState(null, '', window.location.pathname + window.location.search);
-      }
       setPhase(error ? 'error' : 'ready');
     }
 
