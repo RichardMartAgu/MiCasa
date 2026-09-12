@@ -52,9 +52,9 @@ export function useRealtimeCollection<T>(
         setError(null);
         setLoading(false);
       }
-    } catch {
+    } catch (e) {
       if (active()) {
-        setError('No se pudieron cargar los datos.');
+        setError(e instanceof Error ? e.message : 'No se pudieron cargar los datos.');
         setLoading(false);
       }
     }

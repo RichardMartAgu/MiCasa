@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/ui/card';
+import { ErrorBanner } from '@/components/ui/error-banner';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
@@ -17,26 +18,28 @@ export default function HomeScreen() {
   const { user } = useAuth();
   const { currentCasa, members, profiles } = useCasa();
 
-  const { data: appointments } = useRealtimeCollection<Appointment>(
+  const { data: appointments, error: appointmentsError } = useRealtimeCollection<Appointment>(
     () => (currentCasa ? fetchAppointments(currentCasa.id) : Promise.resolve([])),
     'appointments',
     currentCasa?.id ?? null,
   );
-  const { data: expenses } = useRealtimeCollection<Expense>(
+  const { data: expenses, error: expensesError } = useRealtimeCollection<Expense>(
     () => (currentCasa ? fetchExpenses(currentCasa.id) : Promise.resolve([])),
     'expenses',
     currentCasa?.id ?? null,
   );
-  const { data: lists } = useRealtimeCollection<ShoppingList>(
+  const { data: lists, error: listsError } = useRealtimeCollection<ShoppingList>(
     () => (currentCasa ? fetchShoppingLists(currentCasa.id) : Promise.resolve([])),
     'shopping_lists',
     currentCasa?.id ?? null,
   );
-  const { data: contacts } = useRealtimeCollection<Contact>(
+  const { data: contacts, error: contactsError } = useRealtimeCollection<Contact>(
     () => (currentCasa ? fetchContacts(currentCasa.id) : Promise.resolve([])),
     'contacts',
     currentCasa?.id ?? null,
   );
+
+  const loadError = appointmentsError ?? expensesError ?? listsError ?? contactsError;
 
   const upcoming = useMemo(() => {
     const now = new Date();
@@ -79,6 +82,8 @@ export default function HomeScreen() {
           invitación: <Text style={styles.code}>{currentCasa?.invite_code}</Text>
         </Text>
       </View>
+
+      {loadError ? <ErrorBanner message={loadError} /> : null}
 
       <View style={styles.statsRow}>
         <Card style={styles.statCard}>

@@ -8,6 +8,7 @@ import { ExpenseForm } from '@/components/expenses/expense-form';
 import type { ExpenseFormInput } from '@/components/expenses/expense-form';
 import { ExpenseList } from '@/components/expenses/expense-list';
 import { Card } from '@/components/ui/card';
+import { ErrorBanner } from '@/components/ui/error-banner';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
@@ -30,16 +31,18 @@ import type { Category, Expense } from '@/lib/types';
 export default function GastosScreen() {
   const { user } = useAuth();
   const { currentCasa } = useCasa();
-  const { data: expenses } = useRealtimeCollection<Expense>(
+  const { data: expenses, error: expensesError } = useRealtimeCollection<Expense>(
     () => (currentCasa ? fetchExpenses(currentCasa.id) : Promise.resolve([])),
     'expenses',
     currentCasa?.id ?? null,
   );
-  const { data: categories } = useRealtimeCollection<Category>(
+  const { data: categories, error: categoriesError } = useRealtimeCollection<Category>(
     () => (currentCasa ? fetchCategories(currentCasa.id) : Promise.resolve([])),
     'categories',
     currentCasa?.id ?? null,
   );
+
+  const loadError = expensesError ?? categoriesError;
 
   const [expenseModalVisible, setExpenseModalVisible] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -172,6 +175,7 @@ export default function GastosScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {loadError ? <ErrorBanner message={loadError} /> : null}
         <Card>
           <Text style={styles.sectionTitle}>Este mes</Text>
           <Text style={styles.total}>{formatCurrency(monthTotal)}</Text>

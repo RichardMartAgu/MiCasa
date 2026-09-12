@@ -112,7 +112,7 @@ describe('useRealtimeCollection', () => {
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.error).toBe('No se pudieron cargar los datos.');
+    expect(result.current.error).toBe('boom');
     expect(result.current.data).toEqual([]);
   });
 

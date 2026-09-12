@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ErrorBanner } from '@/components/ui/error-banner';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -46,7 +47,7 @@ function toISOLocal(date: Date): string {
 export default function CitasScreen() {
   const { user } = useAuth();
   const { currentCasa } = useCasa();
-  const { data: appointments } = useRealtimeCollection<Appointment>(
+  const { data: appointments, error: appointmentsError } = useRealtimeCollection<Appointment>(
     () => (currentCasa ? fetchAppointments(currentCasa.id) : Promise.resolve([])),
     'appointments',
     currentCasa?.id ?? null,
@@ -192,6 +193,7 @@ export default function CitasScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {appointmentsError ? <ErrorBanner message={appointmentsError} /> : null}
         <Text style={styles.sectionTitle}>Próximas</Text>
         {upcoming.length === 0 ? (
           <EmptyState

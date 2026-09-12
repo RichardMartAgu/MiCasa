@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ErrorBanner } from '@/components/ui/error-banner';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -34,7 +35,7 @@ import { validateDate, validateOptionalText, validateTitle } from '@/lib/validat
 export default function CumpleanosScreen() {
   const { user } = useAuth();
   const { currentCasa } = useCasa();
-  const { data: contacts } = useRealtimeCollection<Contact>(
+  const { data: contacts, error: contactsError } = useRealtimeCollection<Contact>(
     () => (currentCasa ? fetchContacts(currentCasa.id) : Promise.resolve([])),
     'contacts',
     currentCasa?.id ?? null,
@@ -199,6 +200,7 @@ export default function CumpleanosScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {contactsError ? <ErrorBanner message={contactsError} /> : null}
         <Text style={styles.sectionTitle}>Próximos 30 días</Text>
         {upcoming.length === 0 ? (
           <EmptyState

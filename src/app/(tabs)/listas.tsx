@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ErrorBanner } from '@/components/ui/error-banner';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -35,7 +36,7 @@ import { validateTitle } from '@/lib/validation';
 export default function ListasScreen() {
   const { user } = useAuth();
   const { currentCasa } = useCasa();
-  const { data: lists } = useRealtimeCollection<ShoppingList>(
+  const { data: lists, error: listsError } = useRealtimeCollection<ShoppingList>(
     () => (currentCasa ? fetchShoppingLists(currentCasa.id) : Promise.resolve([])),
     'shopping_lists',
     currentCasa?.id ?? null,
@@ -49,13 +50,15 @@ export default function ListasScreen() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const { data: items } = useRealtimeCollection<ShoppingItem>(
+  const { data: items, error: itemsError } = useRealtimeCollection<ShoppingItem>(
     () => (expandedId ? fetchShoppingItems(expandedId) : Promise.resolve([])),
     'shopping_items',
     expandedId,
     expandedId ? `list_id=eq.${expandedId}` : undefined,
     'list_id',
   );
+
+  const loadError = listsError ?? itemsError;
 
   async function handleAddList() {
     const check = validateTitle(listTitle);
@@ -126,6 +129,7 @@ export default function ListasScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {loadError ? <ErrorBanner message={loadError} /> : null}
         {lists.length === 0 ? (
           <EmptyState
             icon="cart-outline"

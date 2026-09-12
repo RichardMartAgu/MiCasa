@@ -12,11 +12,13 @@ import {
   fetchShoppingItems,
   fetchShoppingLists,
   removeAppointment,
+  removeCasaMember,
   removeCategory,
   removeContact,
   removeExpense,
   removeShoppingItem,
   removeShoppingList,
+  setCasaMemberRole,
   toggleShoppingItem,
   toggleShoppingList,
   updateAppointment,
@@ -73,6 +75,16 @@ describe('fetch helpers', () => {
     const result = await fetchCategories(casaId);
     expect(result).toEqual([]);
     expect((query as Record<string, jest.Mock>).select).toHaveBeenCalledWith('*');
+  });
+
+  it('lanza error traducido cuando la query falla', async () => {
+    setupFrom({ error: { message: 'Network request failed' } });
+    await expect(fetchCategories(casaId)).rejects.toThrow('Problema de conexión. Inténtalo de nuevo.');
+  });
+
+  it('lanza error en fetchShoppingItems cuando la query falla', async () => {
+    setupFrom({ error: { message: 'algo' } });
+    await expect(fetchShoppingItems('list-1')).rejects.toThrow('Error desconocido. Inténtalo de nuevo.');
   });
 });
 
@@ -136,6 +148,8 @@ describe('CRUD por tabla', () => {
     ['addContact', () => addContact({ casa_id: 'c', user_id: 'u', name: 'n', birth_date: '2020-01-01' })],
     ['updateContact', () => updateContact('1', { name: 'n', birth_date: '2020-01-01' })],
     ['removeContact', () => removeContact('1')],
+    ['removeCasaMember', () => removeCasaMember('c1', 'u2')],
+    ['setCasaMemberRole', () => setCasaMemberRole('c1', 'u2', 'admin')],
   ];
 
   it.each(tableCases)('%s devuelve null cuando no hay error', async (_name, fn) => {

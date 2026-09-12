@@ -196,6 +196,31 @@ describe('CasaProvider', () => {
     expect(result.current.profiles).toEqual({ u1: profile });
   });
 
+  it('refreshMembers recarga miembros de la casa actual', async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'casas') {
+        return queryChain({ data: [casa], error: null });
+      }
+      if (table === 'casa_members') {
+        return queryChain({ data: [member], error: null });
+      }
+      if (table === 'profiles') {
+        return queryChain({ data: [profile], error: null });
+      }
+      return queryChain({ data: [], error: null });
+    });
+
+    const { result } = renderHook(() => useCasa(), { wrapper });
+    await waitFor(() => expect(result.current.members).toEqual([member]));
+
+    await act(async () => {
+      await result.current.refreshMembers();
+    });
+
+    expect(result.current.members).toEqual([member]);
+    expect(result.current.profiles).toEqual({ u1: profile });
+  });
+
   it('useCasa lanza error fuera del provider', () => {
     expect(() => renderHook(() => useCasa())).toThrow(
       'useCasa debe usarse dentro de <CasaProvider>',

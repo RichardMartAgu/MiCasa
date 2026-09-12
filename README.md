@@ -11,7 +11,7 @@ MiCasa te permite llevar la **contabilidad de compras** por secciones (Bebé, Re
 ## ✨ Funcionalidades
 
 - **Autenticación** con correo y contraseña (Supabase Auth).
-- **Casas multi-usuario**: crea una casa, comparte su código de invitación y toda tu pareja/familia gestiona los mismos datos en tiempo real.
+- **Casas multi-usuario**: crea una casa, comparte su código de invitación y toda tu pareja/familia gestiona los mismos datos en tiempo real. El propietario puede promover a administrador o expulsar miembros.
 - **Gastos con secciones**: categorías con color, icono y presupuesto mensual, barras de progreso y aviso cuando se supera el presupuesto.
 - **Citas**: tipo (médico, escuela, mascota…), persona, lugar, fecha y hora.
 - **Listas de la compra**: artículos con cantidad, marcado de completado y listas terminadas.
@@ -56,7 +56,7 @@ npm run android  # emulador Android
 ## 🧪 Calidad
 
 ```bash
-npm test          # 196 tests unitarios (Jest)
+npm test          # 241 tests unitarios (Jest)
 npm run typecheck # TypeScript estricto
 npm run lint      # ESLint (config de Expo)
 ```
