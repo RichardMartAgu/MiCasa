@@ -25,6 +25,7 @@ Todo lo que se añada al proyecto debe ser **100% gratis**. Nada de servicios, d
 # Documentación
 
 Cada vez que se añada documentación nueva (docs, archivos .md, decisiones), actualizar siempre el `README.md` si refleja el estado del proyecto. Además, mantener `INDEX.md` al día según su regla interna.
+Al instalar una dependencia nueva, reflejarla siempre en `README.md` (stack, scripts o tests afectados).
 
 # Git workflow
 
