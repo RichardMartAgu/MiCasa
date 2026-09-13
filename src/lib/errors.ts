@@ -7,6 +7,7 @@ const RULES: { pattern: RegExp; message: string }[] = [
   { pattern: /Network request failed|Failed to fetch/i, message: 'Problema de conexión. Inténtalo de nuevo.' },
   { pattern: /duplicate key value violates unique constraint/i, message: 'Ese registro ya existe.' },
   { pattern: /new row violates check constraint|violates check constraint/i, message: 'Algún dato no cumple las reglas de la aplicación.' },
+  { pattern: /provider not enabled|unsupported provider/i, message: 'Este método de acceso no está disponible en este momento.' },
 ];
 
 const FALLBACK = 'Error desconocido. Inténtalo de nuevo.';

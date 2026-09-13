@@ -11,6 +11,7 @@ MiCasa te permite llevar la **contabilidad de compras** por secciones (Bebé, Re
 ## ✨ Funcionalidades
 
 - **Autenticación** con correo y contraseña (Supabase Auth).
+- **Login con Google** (OAuth) vía `expo-auth-session` + `expo-web-browser`.
 - **Casas multi-usuario**: crea una casa, comparte su código de invitación y toda tu pareja/familia gestiona los mismos datos en tiempo real. El propietario puede promover a administrador o expulsar miembros.
 - **Gastos con secciones**: categorías con color, icono y presupuesto mensual, barras de progreso y aviso cuando se supera el presupuesto.
 - **Citas**: tipo (médico, escuela, mascota…), persona, lugar, fecha y hora.
@@ -25,6 +26,7 @@ MiCasa te permite llevar la **contabilidad de compras** por secciones (Bebé, Re
 | --- | --- |
 | Móvil | [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/) (React Native 0.86, React 19, TypeScript) |
 | Navegación | expo-router (file-based) |
+| OAuth Google | expo-auth-session + expo-web-browser |
 | Backend | [Supabase](https://supabase.com) (PostgreSQL + Auth + Realtime) |
 | Tests | Jest + jest-expo |
 
@@ -52,6 +54,16 @@ npm start        # escanea el QR con la app Expo Go
 npm run web      # o pruébala en el navegador
 npm run android  # emulador Android
 ```
+
+## 🎬 Demo local y despliegue
+
+| Tarea | Comando | Puntero |
+| --- | --- | --- |
+| Demo local (8080) | `npm run demo` | [`scripts/serve-demo.sh`](scripts/serve-demo.sh) |
+| Build web estático | `npm run build:web` | — |
+| Desplegar en Vercel | `npm run deploy:vercel` | [`vercel.json`](vercel.json) |
+
+`npm run demo` comprueba si hay versión nueva del código (commit más reciente que el build en `dist/`); si la hay, reconstruye antes de servir. Reglas de despliegue y revisión de seguridad: ver [`AGENTS.md`](AGENTS.md).
 
 ## 🧪 Calidad
 
