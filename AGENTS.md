@@ -18,6 +18,10 @@ Rules:
 
 Ningún bloque de código se da por terminado ni se commitea si el `security-auditor` devuelve **BLOQUEADO**. Si la auditoría falla, primero se corrigen los hallazgos y después se vuelve a auditar hasta obtener **APROBADO**.
 
+# Coste cero
+
+Todo lo que se añada al proyecto debe ser **100% gratis**. Nada de servicios, dependencias, APIs o proveedores de pago. Si una opción tiene coste, buscar alternativa gratuita o descartarla.
+
 # Git workflow
 
 - Funcionalidades → rama propia `feat/<slug>` desde `master`, con `git worktree add` para paralelas. PR a `master` al terminar (verificado: build + typecheck + tests OK).
