@@ -17,3 +17,9 @@ Rules:
 # Regla dura (no negociable)
 
 Ningún bloque de código se da por terminado ni se commitea si el `security-auditor` devuelve **BLOQUEADO**. Si la auditoría falla, primero se corrigen los hallazgos y después se vuelve a auditar hasta obtener **APROBADO**.
+
+# Git workflow
+
+- Funcionalidades → rama propia `feat/<slug>` desde `master`, con `git worktree add` para paralelas. PR a `master` al terminar (verificado: build + typecheck + tests OK).
+- Cambios pequeños (agentes `.opencode/`, docs, scripts, config, fixes menores) → commit directo en `master`.
+- PRs vía GitHub API con token de `~/.config/gh/hosts.yml` (curl + Bearer, `gh` no instalado).
