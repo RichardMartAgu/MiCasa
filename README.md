@@ -53,6 +53,16 @@ npm run web      # o pruébala en el navegador
 npm run android  # emulador Android
 ```
 
+## 🎬 Demo local y despliegue
+
+| Tarea | Comando | Puntero |
+| --- | --- | --- |
+| Demo local (8080) | `npm run demo` | [`scripts/serve-demo.sh`](scripts/serve-demo.sh) |
+| Build web estático | `npm run build:web` | — |
+| Desplegar en Vercel | `npm run deploy:vercel` | [`vercel.json`](vercel.json) |
+
+`npm run demo` comprueba si hay versión nueva del código (commit más reciente que el build en `dist/`); si la hay, reconstruye antes de servir. Reglas de despliegue y revisión de seguridad: ver [`AGENTS.md`](AGENTS.md).
+
 ## 🧪 Calidad
 
 ```bash

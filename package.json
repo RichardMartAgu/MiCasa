@@ -12,6 +12,7 @@
     "@react-native-community/datetimepicker": "9.2.1",
     "@supabase/supabase-js": "^2.116.0",
     "expo": "~57.0.9",
+    "expo-auth-session": "~57.0.12",
     "expo-constants": "~57.0.8",
     "expo-device": "~57.0.1",
     "expo-font": "~57.0.1",
@@ -37,6 +38,7 @@
     "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@react-native/jest-preset": "^0.86.2",
     "@testing-library/react-native": "^13.3.3",
     "@types/jest": "30.0.0",
@@ -54,6 +56,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "build:web": "expo export --platform web",
+    "demo": "bash scripts/serve-demo.sh",
+    "deploy:vercel": "npx vercel --prod --yes",
     "lint": "expo lint",
     "test": "jest",
     "test:watch": "jest --watch",

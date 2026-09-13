@@ -33,7 +33,7 @@ interface CategoryManagerProps {
   onDelete: (id: string) => void;
 }
 
-const COLOR_OPTIONS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+const COLOR_OPTIONS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
 export function CategoryManager({
   visible,

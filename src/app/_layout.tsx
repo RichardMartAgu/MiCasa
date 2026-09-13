@@ -10,7 +10,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <AuthProvider>
         <CasaProvider>
-          <StatusBar style="auto" />
+          <StatusBar style="light" />
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="login" />
             <Stack.Screen name="register" />

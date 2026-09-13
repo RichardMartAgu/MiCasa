@@ -16,26 +16,8 @@ import {
 } from 'react-native';
 
 import { useAuth } from '@/context/auth-context';
+import { Palette, Shadow } from '@/constants/theme';
 import { validateEmail, validatePassword } from '@/lib/validation';
-
-const Warm = {
-  bgTop: '#FAF6EF',
-  bgBottom: '#F2E9DC',
-  glowOlive: 'rgba(122, 132, 80, 0.20)',
-  glowAmber: 'rgba(214, 176, 116, 0.30)',
-  card: 'rgba(255, 255, 255, 0.58)',
-  cardBorder: 'rgba(255, 255, 255, 0.95)',
-  inputBg: 'rgba(255, 255, 255, 0.72)',
-  inputBorder: 'rgba(176, 155, 128, 0.38)',
-  olive: '#7A8450',
-  olivePressed: '#646F3F',
-  oliveSoft: 'rgba(122, 132, 80, 0.12)',
-  wood: '#B08968',
-  text: '#3B372F',
-  textSoft: '#7A7163',
-  textMuted: '#A69B8A',
-  danger: '#C0523F',
-} as const;
 
 interface FieldProps extends TextInputProps {
   label: string;
@@ -57,11 +39,11 @@ function Field({ label, icon, error, onFocus, onBlur, ...rest }: FieldProps) {
         <Ionicons
           name={icon}
           size={18}
-          color={error ? Warm.danger : focused ? Warm.olive : Warm.textMuted}
+          color={error ? Palette.danger : focused ? Palette.accent : Palette.textMuted}
         />
         <TextInput
           style={styles.input}
-          placeholderTextColor={Warm.textMuted}
+          placeholderTextColor={Palette.textMuted}
           onFocus={(e) => {
             setFocused(true);
             onFocus?.(e);
@@ -79,13 +61,21 @@ function Field({ label, icon, error, onFocus, onBlur, ...rest }: FieldProps) {
 }
 
 export default function LoginScreen() {
-  const { session, signIn } = useAuth();
+  const { session, signIn, signInWithGoogle } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{ email?: string; password?: string; form?: string }>({});
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   if (session) return <Redirect href="/" />;
+
+  async function handleGoogle() {
+    setGoogleLoading(true);
+    const error = await signInWithGoogle();
+    setGoogleLoading(false);
+    if (error) setErrors({ form: error.message });
+  }
 
   async function handleSubmit() {
     const emailCheck = validateEmail(email);
@@ -106,16 +96,16 @@ export default function LoginScreen() {
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <LinearGradient colors={[Warm.bgTop, Warm.bgBottom]} style={styles.background}>
+      <LinearGradient colors={[Palette.bg, Palette.surface]} style={styles.background}>
         <LinearGradient
-          colors={['rgba(214, 176, 116, 0.00)', Warm.glowAmber]}
+          colors={['rgba(56, 189, 248, 0.00)', 'rgba(56, 189, 248, 0.14)']}
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
           pointerEvents="none"
           style={styles.glowTop}
         />
         <LinearGradient
-          colors={[Warm.glowOlive, 'rgba(122, 132, 80, 0.00)']}
+          colors={['rgba(59, 130, 246, 0.14)', 'rgba(59, 130, 246, 0.00)']}
           start={{ x: 0, y: 1 }}
           end={{ x: 0, y: 0 }}
           pointerEvents="none"
@@ -128,9 +118,9 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
             <LinearGradient
-              colors={[Warm.oliveSoft, 'rgba(176, 137, 104, 0.10)']}
+              colors={[Palette.primarySoft, 'rgba(56, 189, 248, 0.10)']}
               style={styles.logo}>
-              <Ionicons name="home-outline" size={30} color={Warm.olive} />
+              <Ionicons name="home-outline" size={30} color={Palette.accent} />
             </LinearGradient>
             <Text style={styles.brand}>MiCasa</Text>
             <Text style={styles.greeting}>Bienvenido a casa</Text>
@@ -173,7 +163,7 @@ export default function LoginScreen() {
               (pressed || loading) && styles.buttonPressed,
             ]}>
             {loading ? (
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color={Palette.onPrimary} />
             ) : (
               <Text style={styles.buttonLabel}>Entrar</Text>
             )}
@@ -191,6 +181,26 @@ export default function LoginScreen() {
               Regístrate
             </Link>
           </Text>
+
+          <View style={styles.dividerRow}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>o</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <Pressable
+            accessibilityRole="button"
+            disabled={googleLoading}
+            onPress={handleGoogle}
+            style={({ pressed }) => [
+              styles.googleButton,
+              (pressed || googleLoading) && styles.googleButtonPressed,
+            ]}>
+            <Ionicons name="logo-google" size={18} color={Palette.textSecondary} />
+            <Text style={styles.googleLabel}>
+              {googleLoading ? 'Abriendo Google…' : 'Continuar con Google'}
+            </Text>
+          </Pressable>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -198,7 +208,7 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: Warm.bgTop },
+  flex: { flex: 1, backgroundColor: Palette.bg },
   background: {
     position: 'absolute',
     top: 0,
@@ -238,11 +248,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 16,
   },
-brand: {
+  brand: {
     fontSize: 15,
     fontWeight: '700',
     letterSpacing: 4,
-    color: Warm.textSoft,
+    color: Palette.textSecondary,
     textTransform: 'uppercase',
     marginBottom: 8,
   },
@@ -250,27 +260,23 @@ brand: {
     fontSize: 32,
     fontWeight: '800',
     letterSpacing: -0.5,
-    color: Warm.text,
+    color: Palette.text,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 15,
-    color: Warm.textSoft,
+    color: Palette.textSecondary,
     textAlign: 'center',
     marginTop: 6,
   },
   card: {
-    backgroundColor: Warm.card,
-    borderColor: Warm.cardBorder,
+    backgroundColor: Palette.surface,
+    borderColor: Palette.border,
     borderWidth: 1,
     borderRadius: 28,
     padding: 24,
     gap: 18,
-    shadowColor: Warm.wood,
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.16,
-    shadowRadius: 28,
-    elevation: 6,
+    ...Shadow.card,
   },
   fieldContainer: {
     gap: 6,
@@ -278,66 +284,62 @@ brand: {
   fieldLabel: {
     fontSize: 13,
     fontWeight: '600',
-    color: Warm.textSoft,
+    color: Palette.textSecondary,
   },
   fieldInput: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: Warm.inputBg,
+    backgroundColor: Palette.surfaceAlt,
     borderWidth: 1,
-    borderColor: Warm.inputBorder,
+    borderColor: Palette.border,
     borderRadius: 16,
     paddingHorizontal: 16,
     minHeight: 54,
   },
   fieldInputFocused: {
-    borderColor: Warm.olive,
+    borderColor: Palette.primary,
     borderWidth: 1.5,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: Palette.surface,
   },
   fieldInputError: {
-    borderColor: Warm.danger,
+    borderColor: Palette.danger,
     borderWidth: 1.5,
   },
   input: {
     flex: 1,
     fontSize: 16,
-    color: Warm.text,
+    color: Palette.text,
     minHeight: 54,
     paddingVertical: 0,
   },
   fieldError: {
     fontSize: 13,
-    color: Warm.danger,
+    color: Palette.danger,
   },
   formError: {
-    color: Warm.danger,
+    color: Palette.danger,
     fontSize: 14,
     textAlign: 'center',
   },
   button: {
-    backgroundColor: Warm.olive,
+    backgroundColor: Palette.primary,
     borderRadius: 20,
     minHeight: 56,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: Warm.olive,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 14,
-    elevation: 5,
+    ...Shadow.fab,
   },
   buttonPressed: {
-    backgroundColor: Warm.olivePressed,
+    backgroundColor: Palette.primaryPressed,
   },
   buttonLabel: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: Palette.onPrimary,
   },
   linkCenter: {
-    color: Warm.olive,
+    color: Palette.primary,
     fontWeight: '700',
     fontSize: 15,
     textAlign: 'center',
@@ -345,11 +347,47 @@ brand: {
   footer: {
     textAlign: 'center',
     fontSize: 15,
-    color: Warm.textSoft,
+    color: Palette.textSecondary,
     marginTop: 2,
   },
   link: {
-    color: Warm.olive,
+    color: Palette.primary,
     fontWeight: '700',
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 4,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: Palette.border,
+  },
+  dividerText: {
+    fontSize: 13,
+    color: Palette.textMuted,
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: Palette.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Palette.borderStrong,
+    borderRadius: 20,
+    minHeight: 52,
+    ...Shadow.fab,
+  },
+  googleButtonPressed: {
+    backgroundColor: Palette.surfaceMuted,
+    opacity: 0.85,
+  },
+  googleLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Palette.text,
   },
 });

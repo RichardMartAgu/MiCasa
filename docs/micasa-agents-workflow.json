@@ -1,0 +1,65 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "MiCasa: flujo por bloques con 6 agentes",
+    "output": "micasa-agents-workflow.html",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "happy-path", "label": "Camino feliz", "focus": ["user", "orq", "exec", "audit", "qa", "devops", "final"], "note": "Objetivo → bloque → auditoría → QA → deploy" },
+      { "id": "gates", "label": "Gates de calidad", "focus": ["audit", "qa", "exec"], "note": "BLOQUEADO y FALLA devuelven el bloque a corrección." },
+      { "id": "release", "label": "Release", "focus": ["qa", "devops", "final", "user"], "note": "Solo PASA llega a devops y se notifica al usuario." }
+    ]
+  },
+  "lanes": [
+    { "id": "usuario", "label": "Usuario" },
+    { "id": "orquestador", "label": "Orquestador" },
+    { "id": "ejecucion", "label": "Back / Front" },
+    { "id": "security", "label": "Security", "variant": "exception" },
+    { "id": "qa", "label": "QA Test" },
+    { "id": "devops", "label": "DevOps" }
+  ],
+  "phases": [
+    { "id": "plan", "label": "Plan", "fromCol": 0, "toCol": 1 },
+    { "id": "build", "label": "Construcción", "fromCol": 2, "toCol": 2, "variant": "emphasis" },
+    { "id": "gates", "label": "Gates de calidad", "fromCol": 3, "toCol": 4, "variant": "security" },
+    { "id": "release", "label": "Release", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "gate_sec", "label": "Gate de seguridad", "lane": "security", "fromCol": 3, "toCol": 3, "variant": "security" },
+    { "id": "loop", "label": "Bucle de corrección", "lane": "ejecucion", "fromCol": 2, "toCol": 4, "variant": "security" }
+  ],
+  "mainPath": ["user", "orq", "exec", "audit", "qa", "devops", "final"],
+  "semanticChecks": {
+    "allowedRoots": ["user"],
+    "allowedTerminals": ["final"],
+    "requiredPaths": [
+      { "from": "audit", "to": "qa" },
+      { "from": "qa", "to": "devops" }
+    ]
+  },
+  "nodes": [
+    { "id": "user", "lane": "usuario", "col": 0, "type": "external", "label": "Objetivo", "sublabel": "requisito del usuario", "width": 140 },
+    { "id": "orq", "lane": "orquestador", "col": 1, "type": "backend", "label": "Orquestador", "sublabel": "descompone + asigna", "width": 140 },
+    { "id": "exec", "lane": "ejecucion", "col": 2, "type": "backend", "label": "Back / Front", "sublabel": "escribe el bloque", "width": 140 },
+    { "id": "audit", "lane": "security", "col": 3, "type": "security", "label": "Security", "sublabel": "auditoría read-only", "tag": "APROBADO / BLOQUEADO", "width": 140 },
+    { "id": "qa", "lane": "qa", "col": 4, "type": "backend", "label": "QA Test", "sublabel": "tsc + lint + tests", "tag": "PASA / FALLA", "width": 140 },
+    { "id": "devops", "lane": "devops", "col": 5, "type": "cloud", "label": "DevOps", "sublabel": "deploy + migraciones", "width": 140 },
+    { "id": "final", "lane": "usuario", "col": 5, "type": "backend", "label": "Entregado", "sublabel": "verificado + notificado", "width": 140 }
+  ],
+  "edges": [
+    { "id": "e-user-orq", "from": "user", "to": "orq", "label": "objetivo" },
+    { "id": "e-orq-exec", "from": "orq", "to": "exec", "label": "asigna bloque", "variant": "emphasis" },
+    { "id": "e-exec-audit", "from": "exec", "to": "audit", "label": "código + tests" },
+    { "id": "e-audit-exec", "from": "audit", "to": "exec", "label": "BLOQUEADO", "variant": "security", "role": "error" },
+    { "id": "e-audit-qa", "from": "audit", "to": "qa", "label": "APROBADO", "variant": "emphasis" },
+    { "id": "e-qa-exec", "from": "qa", "to": "exec", "label": "FALLA", "variant": "security", "role": "error" },
+    { "id": "e-qa-devops", "from": "qa", "to": "devops", "label": "PASA", "variant": "emphasis" },
+    { "id": "e-devops-final", "from": "devops", "to": "final", "label": "deploy + resumen" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Pipeline", "items": ["Orquestador descompone en bloques", "Back/Front ejecuta, Security audita, QA verifica", "DevOps despliega al final"] },
+    { "dot": "rose", "title": "Regla dura", "items": ["BLOQUEADO o FALLA → remediar y reauditar", "Nada se commitea sin APROBADO + PASA"] },
+    { "dot": "emerald", "title": "Verificación", "items": ["npx tsc --noEmit", "npx expo lint", "npx jest (+ checks de web/)"] }
+  ]
+}
