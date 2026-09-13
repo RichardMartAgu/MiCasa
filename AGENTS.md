@@ -22,6 +22,10 @@ Ningún bloque de código se da por terminado ni se commitea si el `security-aud
 
 Todo lo que se añada al proyecto debe ser **100% gratis**. Nada de servicios, dependencias, APIs o proveedores de pago. Si una opción tiene coste, buscar alternativa gratuita o descartarla.
 
+# Documentación
+
+Cada vez que se añada documentación nueva (docs, archivos .md, decisiones), actualizar siempre el `README.md` si refleja el estado del proyecto. Además, mantener `INDEX.md` al día según su regla interna.
+
 # Git workflow
 
 - Funcionalidades → rama propia `feat/<slug>` desde `master`, con `git worktree add` para paralelas. PR a `master` al terminar (verificado: build + typecheck + tests OK).
