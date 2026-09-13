@@ -5,46 +5,524 @@
     "title": "MiCasa: arquitectura de runtime",
     "output": "micasa-architecture.html",
     "quality_profile": "showcase",
-    "viewBox": [1400, 740],
+    "viewBox": [
+      1395,
+      740
+    ],
     "views": [
-      { "id": "request-path", "label": "Camino principal", "focus": ["familia", "movil", "web", "auth", "db"], "note": "Los clientes autentican contra Auth y acceden a datos vía RLS." },
-      { "id": "emails", "label": "Emails con Resend", "focus": ["auth", "edge", "resend", "inbox"], "note": "Verify/recovery por SMTP y transaccionales por Edge Functions." },
-      { "id": "pipeline", "label": "CI/CD", "focus": ["ci", "vercel", "web"], "note": "GitHub Actions construye y Vercel sirve el estático." }
+      {
+        "id": "request-path",
+        "label": "Camino principal",
+        "focus": [
+          "familia",
+          "movil",
+          "web",
+          "auth",
+          "db"
+        ],
+        "note": "Los clientes autentican contra Auth y acceden a datos vía RLS."
+      },
+      {
+        "id": "emails",
+        "label": "Emails con Resend",
+        "focus": [
+          "auth",
+          "edge",
+          "resend",
+          "inbox"
+        ],
+        "note": "Verify/recovery por SMTP y transaccionales por Edge Functions."
+      },
+      {
+        "id": "pipeline",
+        "label": "CI/CD",
+        "focus": [
+          "ci",
+          "vercel",
+          "web"
+        ],
+        "note": "GitHub Actions construye y Vercel sirve el estático."
+      }
     ]
   },
   "components": [
-    { "id": "familia", "type": "external", "label": "Familia", "sublabel": "web + móvil", "pos": [38, 300], "size": [122, 60] },
-    { "id": "movil", "type": "frontend", "label": "App Móvil Expo", "sublabel": "SDK 57 · src/", "pos": [300, 90], "size": [170, 64], "tag": "Dusk" },
-    { "id": "web", "type": "frontend", "label": "Web Astro", "sublabel": "shadcn-astro · Nano Stores", "pos": [300, 460], "size": [170, 64], "tag": "web/" },
-    { "id": "auth", "type": "security", "label": "Supabase Auth", "sublabel": "login · sesiones", "pos": [540, 70], "size": [150, 64] },
-    { "id": "db", "type": "database", "label": "PostgreSQL", "sublabel": "RLS + Realtime", "pos": [540, 300], "size": [150, 64] },
-    { "id": "edge", "type": "backend", "label": "Edge Functions", "sublabel": "Deno · supabase/functions/", "pos": [960, 170], "size": [140, 64] },
-    { "id": "vercel", "type": "cloud", "label": "Vercel", "sublabel": "static hosting", "pos": [840, 80], "size": [140, 64] },
-    { "id": "ci", "type": "cloud", "label": "GitHub Actions", "sublabel": "CI/CD", "pos": [840, 300], "size": [140, 64] },
-    { "id": "resend", "type": "external", "label": "Resend", "sublabel": "SMTP + API", "pos": [940, 460], "size": [140, 64] },
-    { "id": "inbox", "type": "external", "label": "Bandeja del usuario", "sublabel": "emails recibidos", "pos": [1240, 400], "size": [150, 64] }
+    {
+      "id": "familia",
+      "type": "external",
+      "label": "Familia",
+      "sublabel": "web + móvil",
+      "pos": [
+        38,
+        300
+      ],
+      "size": [
+        122,
+        60
+      ]
+    },
+    {
+      "id": "movil",
+      "type": "frontend",
+      "label": "App Móvil Expo",
+      "sublabel": "SDK 57 · src/",
+      "pos": [
+        300,
+        90
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "tag": "Dusk"
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Web Astro",
+      "sublabel": "shadcn-astro · Nano Stores",
+      "pos": [
+        300,
+        460
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "tag": "web/"
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "Supabase Auth",
+      "sublabel": "login · sesiones",
+      "pos": [
+        540,
+        70
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "RLS + Realtime",
+      "pos": [
+        540,
+        300
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "edge",
+      "type": "backend",
+      "label": "Edge Functions",
+      "sublabel": "Deno · supabase/functions/",
+      "pos": [
+        960,
+        170
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "vercel",
+      "type": "cloud",
+      "label": "Vercel",
+      "sublabel": "static hosting",
+      "pos": [
+        840,
+        80
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "ci",
+      "type": "cloud",
+      "label": "GitHub Actions",
+      "sublabel": "CI/CD",
+      "pos": [
+        840,
+        300
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "resend",
+      "type": "external",
+      "label": "Resend",
+      "sublabel": "SMTP + API",
+      "pos": [
+        940,
+        460
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "inbox",
+      "type": "external",
+      "label": "Bandeja del usuario",
+      "sublabel": "emails recibidos",
+      "pos": [
+        1240,
+        400
+      ],
+      "size": [
+        150,
+        64
+      ]
+    }
   ],
   "boundaries": [
-    { "kind": "region", "label": "Supabase Cloud", "wraps": ["auth", "db"] },
-    { "kind": "region", "label": "Supabase Edge Runtime", "wraps": ["edge"] },
-    { "kind": "security-group", "label": "RLS: Row Level Security", "wraps": ["db"] }
+    {
+      "kind": "region",
+      "label": "Supabase Cloud",
+      "wraps": [
+        "auth",
+        "db"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Supabase Edge Runtime",
+      "wraps": [
+        "edge"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "RLS: Row Level Security",
+      "wraps": [
+        "db"
+      ]
+    }
   ],
   "connections": [
-    { "id": "familia-movil", "from": "familia", "to": "movil", "label": "HTTPS", "variant": "emphasis", "fromSide": "right", "toSide": "left", "via": [[290, 330], [290, 122]], "labelAt": [200, 324] },
-    { "id": "familia-web", "from": "familia", "to": "web", "label": "HTTPS", "variant": "emphasis", "fromSide": "bottom", "toSide": "left", "via": [[99, 492], [160, 492]], "labelAt": [130, 486] },
-    { "id": "movil-auth", "from": "movil", "to": "auth", "fromSide": "right", "toSide": "left", "via": [[515, 122], [515, 102]] },
-    { "id": "web-auth", "from": "web", "to": "auth", "label": "login / signup", "fromSide": "top", "toSide": "top", "via": [[385, 370], [20, 370], [20, 50], [615, 50], [615, 70]], "labelAt": [420, 346] },
-    { "id": "movil-db", "from": "movil", "to": "db", "label": "REST + Realtime", "fromSide": "bottom", "toSide": "left", "via": [[385, 240], [500, 240], [500, 332]], "labelAt": [440, 234] },
-    { "id": "web-db", "from": "web", "to": "db", "label": "REST + Realtime", "fromSide": "right", "toSide": "top", "via": [[520, 492], [520, 280], [615, 280]], "labelAt": [580, 264] },
-    { "id": "edge-db", "from": "edge", "to": "db", "label": "SQL tipado", "fromSide": "bottom", "toSide": "bottom", "via": [[1030, 380], [615, 380]], "labelAt": [780, 392] },
-    { "id": "auth-resend", "from": "auth", "to": "resend", "label": "SMTP verify / recovery", "variant": "security", "fromSide": "bottom", "toSide": "top", "via": [[615, 145], [525, 145], [525, 425], [1010, 425]], "labelAt": [640, 180] },
-    { "id": "edge-resend", "from": "edge", "to": "resend", "label": "API transaccional", "fromSide": "right", "toSide": "left", "via": [[1120, 202], [1120, 370], [900, 370], [900, 492]], "labelAt": [950, 408] },
-    { "id": "resend-inbox", "from": "resend", "to": "inbox", "label": "delivery", "fromSide": "right", "toSide": "left", "via": [[1200, 492], [1200, 60], [1230, 60], [1230, 432]], "labelAt": [1170, 74] },
-    { "id": "ci-vercel", "from": "ci", "to": "vercel", "label": "build + deploy", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "via": [[910, 222]], "labelAt": [910, 240] }
+    {
+      "id": "familia-movil",
+      "from": "familia",
+      "to": "movil",
+      "label": "HTTPS",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [
+          290,
+          330
+        ],
+        [
+          290,
+          122
+        ]
+      ],
+      "labelAt": [
+        200,
+        324
+      ]
+    },
+    {
+      "id": "familia-web",
+      "from": "familia",
+      "to": "web",
+      "label": "HTTPS",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          99,
+          492
+        ],
+        [
+          160,
+          492
+        ]
+      ],
+      "labelAt": [
+        130,
+        486
+      ]
+    },
+    {
+      "id": "movil-auth",
+      "from": "movil",
+      "to": "auth",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [
+          515,
+          122
+        ],
+        [
+          515,
+          102
+        ]
+      ]
+    },
+    {
+      "id": "web-auth",
+      "from": "web",
+      "to": "auth",
+      "label": "login / signup",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          385,
+          370
+        ],
+        [
+          20,
+          370
+        ],
+        [
+          20,
+          50
+        ],
+        [
+          615,
+          50
+        ],
+        [
+          615,
+          70
+        ]
+      ],
+      "labelAt": [
+        420,
+        346
+      ]
+    },
+    {
+      "id": "movil-db",
+      "from": "movil",
+      "to": "db",
+      "label": "REST + Realtime",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          385,
+          240
+        ],
+        [
+          500,
+          240
+        ],
+        [
+          500,
+          332
+        ]
+      ],
+      "labelAt": [
+        440,
+        234
+      ]
+    },
+    {
+      "id": "web-db",
+      "from": "web",
+      "to": "db",
+      "label": "REST + Realtime",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [
+          520,
+          492
+        ],
+        [
+          520,
+          280
+        ],
+        [
+          615,
+          280
+        ]
+      ],
+      "labelAt": [
+        580,
+        264
+      ]
+    },
+    {
+      "id": "edge-db",
+      "from": "edge",
+      "to": "db",
+      "label": "SQL tipado",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          1035,
+          380
+        ],
+        [
+          615,
+          380
+        ]
+      ],
+      "labelAt": [
+        780,
+        392
+      ]
+    },
+    {
+      "id": "auth-resend",
+      "from": "auth",
+      "to": "resend",
+      "label": "SMTP verify / recovery",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          615,
+          60
+        ],
+        [
+          1220,
+          60
+        ],
+        [
+          1220,
+          430
+        ],
+        [
+          1010,
+          430
+        ]
+      ],
+      "labelAt": [
+        640,
+        180
+      ]
+    },
+    {
+      "id": "edge-resend",
+      "from": "edge",
+      "to": "resend",
+      "label": "API transaccional",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [
+          1120,
+          202
+        ],
+        [
+          1120,
+          370
+        ],
+        [
+          900,
+          370
+        ],
+        [
+          900,
+          492
+        ]
+      ],
+      "labelAt": [
+        950,
+        408
+      ]
+    },
+    {
+      "id": "resend-inbox",
+      "from": "resend",
+      "to": "inbox",
+      "label": "delivery",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [
+          1200,
+          492
+        ],
+        [
+          1200,
+          60
+        ],
+        [
+          1230,
+          60
+        ],
+        [
+          1230,
+          432
+        ]
+      ],
+      "labelAt": [
+        1170,
+        74
+      ]
+    },
+    {
+      "id": "ci-vercel",
+      "from": "ci",
+      "to": "vercel",
+      "label": "build + deploy",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "via": [
+        [
+          910,
+          222
+        ]
+      ],
+      "labelAt": [
+        910,
+        240
+      ]
+    }
   ],
   "cards": [
-    { "dot": "cyan", "title": "Clientes", "items": ["App móvil Expo SDK 57 (src/)", "Web Astro Mobile-First (web/)", "Paleta Dusk compartida"] },
-    { "dot": "emerald", "title": "Backend", "items": ["Supabase Auth + PostgreSQL con RLS", "Edge Functions Deno en supabase/functions/", "Realtime para datos en directo"] },
-    { "dot": "rose", "title": "Email (Resend)", "items": ["SMTP para verify/recovery de Auth", "Transaccionales: invitación a casa, recordatorios", "RESEND_API_KEY en secrets · SPF/DKIM"] }
+    {
+      "dot": "cyan",
+      "title": "Clientes",
+      "items": [
+        "App móvil Expo SDK 57 (src/)",
+        "Web Astro Mobile-First (web/)",
+        "Paleta Dusk compartida"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Backend",
+      "items": [
+        "Supabase Auth + PostgreSQL con RLS",
+        "Edge Functions Deno en supabase/functions/",
+        "Realtime para datos en directo"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Email (Resend)",
+      "items": [
+        "SMTP para verify/recovery de Auth",
+        "Transaccionales: invitación a casa, recordatorios",
+        "RESEND_API_KEY en secrets · SPF/DKIM"
+      ]
+    }
   ]
 }
