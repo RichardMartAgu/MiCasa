@@ -33,7 +33,13 @@
           "imageWidth": 76
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "MiCasa necesita acceso a tu calendario para sincronizar eventos de cumpleaños."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
