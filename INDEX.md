@@ -80,6 +80,7 @@ src/
 | `supabase/functions/send-email/` | Edge Function Deno: emails Resend (invitación casa, bienvenida, recordatorios, avisos presupuesto, cumpleaños). Deployada en prod v1 |
 | `docs/micasa-agents-workflow.json` | Flujo de agentes (64L) |
 | `docs/micasa-architecture.json` | Arquitectura del proyecto (49L) |
+| `docs/calendar-sync-plan.md` | Plan sync cumpleaños con calendario del dispositivo (Expo Calendar + deep link) |
 | `docs/oauth-google-pendiente.md` | Estado OAuth Google: pasos config dashboard, archivos, pendientes |
 | `scripts/` | serve-demo.sh, notify-telegram.sh |
 | `.github/workflows/` | CI/CD |

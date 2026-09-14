@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 
 import CumpleanosScreen from '@/app/(tabs)/cumpleanos';
@@ -54,6 +54,11 @@ const mockUpcomingBirthdays = jest.fn();
 jest.mock('@/lib/birthdays', () => ({
   birthdayLabel: (...args: unknown[]) => mockBirthdayLabel(...args),
   upcomingBirthdays: (...args: unknown[]) => mockUpcomingBirthdays(...args),
+}));
+
+const mockSyncBirthdays = jest.fn();
+jest.mock('@/lib/calendar-sync', () => ({
+  syncBirthdays: (...args: unknown[]) => mockSyncBirthdays(...args),
 }));
 
 const mockToISODate = jest.fn();
@@ -131,6 +136,52 @@ describe('CumpleanosScreen', () => {
   it('muestra EmptyState sin cumpleaños próximos', () => {
     const { getByText } = setup();
     expect(getByText('Sin cumpleaños próximos')).toBeTruthy();
+  });
+
+  it('avisa sin contactos al pulsar sincronizar', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const { getByText } = setup([]);
+
+    fireEvent.press(getByText('Calendario'));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Sin contactos',
+      'Añade contactos primero para sincronizar sus cumpleaños.',
+    );
+    alertSpy.mockRestore();
+  });
+
+  it('sincroniza cumpleaños con calendario tras confirmar', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockSyncBirthdays.mockResolvedValue({ synced: 2, errors: 0 });
+    const { getByText } = setup([soonContact, restContact]);
+
+    fireEvent.press(getByText('Calendario'));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Sincronizar cumpleaños',
+      expect.stringContaining('para 2 contactos'),
+      expect.arrayContaining([
+        expect.objectContaining({ text: 'Cancelar', style: 'cancel' }),
+        expect.objectContaining({ text: 'Sincronizar' }),
+      ]),
+    );
+
+    const confirmButton = alertSpy.mock.calls[0][2]?.find(
+      (btn) => btn.text === 'Sincronizar',
+    );
+    await act(async () => {
+      await confirmButton?.onPress?.();
+    });
+
+    await waitFor(() => {
+      expect(mockSyncBirthdays).toHaveBeenCalledWith([soonContact, restContact]);
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Sincronización completada',
+        '2 cumpleaños sincronizados con el calendario.',
+      );
+    });
+    alertSpy.mockRestore();
   });
 
   it('muestra cumpleaños próximos', () => {
