@@ -102,21 +102,20 @@ describe('GastosScreen', () => {
   });
 
   it('muestra categorías con totales', () => {
-    const { getByText } = setup([expense], [category]);
-    expect(getByText('Comida')).toBeTruthy();
+    const { getAllByText } = setup([expense], [category]);
+    expect(getAllByText('Comida')).toHaveLength(2);
   });
 
   it('abre modal y guarda gasto nuevo', async () => {
-    const { getByText, getAllByDisplayValue } = setup([], [category]);
+    const { getByText, getByLabelText } = setup([], [category]);
 
     fireEvent.press(getByText('add'));
     await waitFor(() => {
       expect(getByText('Nuevo gasto')).toBeTruthy();
     });
 
-    const [titleInput, amountInput] = getAllByDisplayValue('');
-    fireEvent.changeText(titleInput, 'Pan');
-    fireEvent.changeText(amountInput, '2.50');
+    fireEvent.changeText(getByLabelText('Concepto'), 'Pan');
+    fireEvent.changeText(getByLabelText('Importe (€)'), '2.50');
     fireEvent.press(getByText('Guardar'));
 
     await waitFor(() => {
@@ -134,14 +133,13 @@ describe('GastosScreen', () => {
   it('muestra Alert si addExpense falla', async () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockAddExpense.mockResolvedValue({ message: 'Problema de conexión. Inténtalo de nuevo.' });
-    const { getByText, getAllByDisplayValue } = setup([], [category]);
+    const { getByText, getByLabelText } = setup([], [category]);
 
     fireEvent.press(getByText('add'));
     await waitFor(() => expect(getByText('Nuevo gasto')).toBeTruthy());
 
-    const [titleInput, amountInput] = getAllByDisplayValue('');
-    fireEvent.changeText(titleInput, 'Pan');
-    fireEvent.changeText(amountInput, '2.50');
+    fireEvent.changeText(getByLabelText('Concepto'), 'Pan');
+    fireEvent.changeText(getByLabelText('Importe (€)'), '2.50');
     fireEvent.press(getByText('Guardar'));
 
     await waitFor(() => {
@@ -154,16 +152,15 @@ describe('GastosScreen', () => {
   });
 
   it('muestra modal de secciones y añade categoría', async () => {
-    const { getByText, getAllByDisplayValue } = setup([], []);
+    const { getByText, getByLabelText } = setup([], []);
 
     fireEvent.press(getByText('layers-outline'));
     await waitFor(() => {
       expect(getByText('Secciones de gasto')).toBeTruthy();
     });
 
-    const [nameInput, budgetInput] = getAllByDisplayValue('');
-    fireEvent.changeText(nameInput, 'Bebé');
-    fireEvent.changeText(budgetInput, '150');
+    fireEvent.changeText(getByLabelText('Nombre de la sección'), 'Bebé');
+    fireEvent.changeText(getByLabelText('Presupuesto mensual (€)'), '150');
     fireEvent.press(getByText('Añadir sección'));
 
     await waitFor(() => {
