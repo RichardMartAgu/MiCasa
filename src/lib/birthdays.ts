@@ -1,5 +1,5 @@
 import type { Contact } from './types';
-import { daysBetween, fromISODate, startOfDay } from './date';
+import { daysBetween, safeDate, startOfDay } from './date';
 
 export interface UpcomingBirthday {
   contact: Contact;
@@ -34,8 +34,8 @@ export function upcomingBirthdays(
   const upcoming: UpcomingBirthday[] = [];
 
   for (const contact of contacts) {
-    const birth = fromISODate(contact.birth_date);
-    if (Number.isNaN(birth.getTime())) continue;
+    const birth = safeDate(contact.birth_date);
+    if (birth === null) continue;
     const date = nextBirthday(birth, origin);
     const daysUntil = daysBetween(origin, date);
     if (daysUntil < 0 || daysUntil > horizonDays) continue;

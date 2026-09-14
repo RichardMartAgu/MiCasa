@@ -9,6 +9,7 @@ import type { ExpenseFormInput } from '@/components/expenses/expense-form';
 import { ExpenseList } from '@/components/expenses/expense-list';
 import { Card } from '@/components/ui/card';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { NoCasaState } from '@/components/ui/no-casa-state';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
@@ -23,14 +24,14 @@ import {
   updateCategory,
   updateExpense,
 } from '@/lib/api';
-import { monthKey, toISODate } from '@/lib/date';
+import { monthKey, safeDate, toISODate } from '@/lib/date';
 import { totalsByCategory } from '@/lib/finance';
 import { formatCurrency } from '@/lib/format';
 import type { Category, Expense } from '@/lib/types';
 
 export default function GastosScreen() {
   const { user } = useAuth();
-  const { currentCasa } = useCasa();
+  const { currentCasa, loading } = useCasa();
   const { data: expenses, error: expensesError } = useRealtimeCollection<Expense>(
     () => (currentCasa ? fetchExpenses(currentCasa.id) : Promise.resolve([])),
     'expenses',
@@ -57,15 +58,25 @@ export default function GastosScreen() {
   const totals = useMemo(
     () =>
       totalsByCategory(
-        expenses.filter((e) => monthKey(new Date(e.spent_at)) === thisMonth),
+        expenses.filter((e) => {
+          const d = safeDate(e.spent_at);
+          return d !== null && monthKey(d) === thisMonth;
+        }),
         categories,
       ),
     [expenses, categories, thisMonth],
   );
   const monthTotal = totals.reduce((sum, t) => sum + t.total, 0);
   const todayTotal = expenses
-    .filter((e) => toISODate(new Date(e.spent_at)) === toISODate(now))
+    .filter((e) => {
+      const d = safeDate(e.spent_at);
+      return d !== null && toISODate(d) === toISODate(now);
+    })
     .reduce((sum, e) => sum + e.amount, 0);
+
+  if (!loading && !currentCasa) {
+    return <NoCasaState />;
+  }
 
   function openAddExpense() {
     setEditingExpense(null);

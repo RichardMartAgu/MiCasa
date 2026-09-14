@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
-import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 import { Palette, Radius, Spacing } from '@/constants/theme';
 
@@ -10,8 +11,19 @@ export type TextFieldProps = TextInputProps & {
   rightIcon?: ReactNode;
 };
 
-export function TextField({ label, error, leftIcon, rightIcon, style, ...rest }: TextFieldProps) {
+export function TextField({
+  label,
+  error,
+  leftIcon,
+  rightIcon,
+  secureTextEntry,
+  style,
+  ...rest
+}: TextFieldProps) {
   const [focused, setFocused] = useState(false);
+  const [show, setShow] = useState(false);
+  const isSecure = secureTextEntry === true;
+  const toggleIcon: keyof typeof Ionicons.glyphMap = show ? 'eye-off-outline' : 'eye-outline';
   return (
     <View style={styles.container}>
       <Text style={styles.label}>{label}</Text>
@@ -28,10 +40,23 @@ export function TextField({ label, error, leftIcon, rightIcon, style, ...rest }:
           placeholderTextColor={Palette.textMuted}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
+          secureTextEntry={isSecure ? !show : undefined}
           style={[styles.input, style]}
           {...rest}
         />
-        {rightIcon ? <View style={styles.icon}>{rightIcon}</View> : null}
+        {isSecure ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={show ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+            accessibilityState={{ checked: show }}
+            hitSlop={8}
+            onPress={() => setShow((prev) => !prev)}
+            style={styles.toggle}>
+            <Ionicons name={toggleIcon} size={22} color={Palette.textMuted} />
+          </Pressable>
+        ) : rightIcon ? (
+          <View style={styles.icon}>{rightIcon}</View>
+        ) : null}
       </View>
       {error ? (
         <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">
@@ -64,6 +89,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  toggle: {
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.three,
   },
   input: {
     flex: 1,

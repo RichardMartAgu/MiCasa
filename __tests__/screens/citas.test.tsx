@@ -18,6 +18,11 @@ jest.mock('@expo/vector-icons', () => {
   };
 });
 
+const mockNavigate = jest.fn();
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ navigate: mockNavigate }),
+}));
+
 const mockUseAuth = jest.fn();
 jest.mock('@/context/auth-context', () => ({
   useAuth: () => mockUseAuth(),
@@ -234,5 +239,12 @@ describe('CitasScreen', () => {
       expect(mockRemoveAppointment).toHaveBeenCalledWith('a1');
     });
     alertSpy.mockRestore();
+  });
+
+  it('muestra aviso de crear casa cuando no hay casa', () => {
+    mockUseCasa.mockReturnValue({ currentCasa: null, loading: false });
+    const { getByText } = render(<CitasScreen />);
+    expect(getByText('Crea una casa primero')).toBeTruthy();
+    expect(getByText('Ir a Ajustes')).toBeTruthy();
   });
 });

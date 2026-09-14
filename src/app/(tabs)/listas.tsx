@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { NoCasaState } from '@/components/ui/no-casa-state';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -35,7 +36,7 @@ import { validateTitle } from '@/lib/validation';
 
 export default function ListasScreen() {
   const { user } = useAuth();
-  const { currentCasa } = useCasa();
+  const { currentCasa, loading } = useCasa();
   const { data: lists, error: listsError } = useRealtimeCollection<ShoppingList>(
     () => (currentCasa ? fetchShoppingLists(currentCasa.id) : Promise.resolve([])),
     'shopping_lists',
@@ -59,6 +60,10 @@ export default function ListasScreen() {
   );
 
   const loadError = listsError ?? itemsError;
+
+  if (!loading && !currentCasa) {
+    return <NoCasaState />;
+  }
 
   async function handleAddList() {
     const check = validateTitle(listTitle);

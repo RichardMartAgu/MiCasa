@@ -12,6 +12,8 @@ interface CollectionResult<T> {
 const FILTER_PATTERN =
   /^([a-zA-Z_][a-zA-Z0-9_]*)=(eq|neq|lt|lte|gt|gte|like|ilike|is|in)\.(\(?[a-zA-Z0-9_.,\-: ]*\)?)$/;
 
+let channelSeq = 0;
+
 export function safeRealtimeFilter(
   filter: string | undefined,
   casaId: string,
@@ -74,8 +76,9 @@ export function useRealtimeCollection<T>(
     runFetch(isActive);
 
     const channelFilter = safeRealtimeFilter(filter, casaId, memberColumn);
+    const channelName = `realtime-${table}-${casaId}-${channelFilter}-${channelSeq++}`;
     const channel = supabase
-      .channel(`realtime-${table}-${casaId}-${channelFilter}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         {

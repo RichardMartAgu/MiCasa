@@ -76,6 +76,12 @@ describe('upcomingBirthdays', () => {
     const contacts = [contact({ id: '1', name: 'Roto', birth_date: 'fecha-mala' })];
     expect(upcomingBirthdays(contacts, from, 30)).toEqual([]);
   });
+
+  it('excluye fecha nacimiento inválida como 2024-02-30 sin rollover', () => {
+    const from = new Date(2026, 7, 3);
+    const contacts = [contact({ id: '1', name: 'Feb30', birth_date: '2024-02-30' })];
+    expect(upcomingBirthdays(contacts, from, 30)).toEqual([]);
+  });
 });
 
 describe('birthdayLabel', () => {

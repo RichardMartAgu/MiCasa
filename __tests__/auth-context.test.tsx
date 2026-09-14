@@ -13,6 +13,23 @@ const mockSignInWithOAuth = jest.fn();
 const mockExchangeCodeForSession = jest.fn();
 const mockSetSession = jest.fn();
 const mockOpenAuthSession = jest.fn();
+const mockIsWeb = jest.fn(() => false);
+
+function defaultParseCallbackUrl(url: string): Record<string, string> {
+  const raw = url.includes('#') ? (url.split('#')[1] ?? '') : (url.split('?')[1] ?? '');
+  if (!raw) return {};
+  const params = new URLSearchParams(raw);
+  const result: Record<string, string> = {};
+  const accessToken = params.get('access_token');
+  if (accessToken) result.access_token = accessToken;
+  const refreshToken = params.get('refresh_token');
+  if (refreshToken) result.refresh_token = refreshToken;
+  const code = params.get('code');
+  if (code) result.code = code;
+  return result;
+}
+
+const mockParseCallbackUrl = jest.fn(defaultParseCallbackUrl);
 
 jest.mock('@/lib/supabase', () => ({
   supabase: {
@@ -31,19 +48,8 @@ jest.mock('@/lib/supabase', () => ({
 
 jest.mock('@/lib/oauth', () => ({
   buildRedirectUri: () => 'micasa://auth-callback',
-  isWeb: () => false,
-  parseCallbackUrl: (url: string) => {
-    const raw = url.includes('#') ? (url.split('#')[1] ?? '') : (url.split('?')[1] ?? '');
-    const params = new URLSearchParams(raw);
-    const result: Record<string, string> = {};
-    const accessToken = params.get('access_token');
-    if (accessToken) result.access_token = accessToken;
-    const refreshToken = params.get('refresh_token');
-    if (refreshToken) result.refresh_token = refreshToken;
-    const code = params.get('code');
-    if (code) result.code = code;
-    return result;
-  },
+  isWeb: () => mockIsWeb(),
+  parseCallbackUrl: (url: string) => mockParseCallbackUrl(url),
 }));
 
 jest.mock('expo-web-browser', () => ({
@@ -59,6 +65,8 @@ function wrapper({ children }: PropsWithChildren) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockIsWeb.mockReturnValue(false);
+  mockParseCallbackUrl.mockImplementation(defaultParseCallbackUrl);
   mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
   mockOnAuthStateChange.mockReturnValue({
     data: { subscription: { unsubscribe: jest.fn() } },
@@ -255,5 +263,87 @@ describe('AuthProvider', () => {
     expect(() => renderHook(() => useAuth())).toThrow(
       'useAuth debe usarse dentro de <AuthProvider>',
     );
+  });
+});
+
+describe('finishWebRedirect', () => {
+  let replaceStateSpy: jest.Mock;
+  let fakeLocation: { href: string; pathname: string; search: string; hash: string };
+  const originalWindow = globalThis.window;
+
+  function mockWindow() {
+    fakeLocation = { href: '', pathname: '/', search: '', hash: '' };
+    replaceStateSpy = jest.fn();
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      writable: true,
+      value: {
+        location: fakeLocation,
+        history: { replaceState: replaceStateSpy },
+      },
+    });
+  }
+
+  function restoreWindow() {
+    if (originalWindow === undefined) {
+      delete (globalThis as Record<string, unknown>).window;
+    } else {
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        writable: true,
+        value: originalWindow,
+      });
+    }
+  }
+
+  beforeEach(() => {
+    mockIsWeb.mockReturnValue(true);
+    mockWindow();
+  });
+
+  afterEach(() => {
+    mockIsWeb.mockReturnValue(false);
+    restoreWindow();
+  });
+
+  it('hash malformado no rompe el mount', async () => {
+    mockParseCallbackUrl.mockImplementation(() => {
+      throw new Error('url inválida');
+    });
+    fakeLocation.href = 'http://localhost/#%';
+    fakeLocation.hash = '#%';
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.session).toBeNull();
+  });
+
+  it('applyCallback rechazada no causa unhandled rejection', async () => {
+    mockExchangeCodeForSession.mockRejectedValue(new Error('exchange failed'));
+    mockParseCallbackUrl.mockReturnValue({ code: 'auth_code_xyz' });
+    fakeLocation.href = 'http://localhost/#code=auth_code_xyz';
+    fakeLocation.hash = '#code=auth_code_xyz';
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.session).toBeNull();
+  });
+
+  it('access_token en hash limpia URL con pathname solo', async () => {
+    mockParseCallbackUrl.mockReturnValue({
+      access_token: 'atoken',
+      refresh_token: 'rtoken',
+    });
+    fakeLocation.href = 'http://localhost/callback?extra=1#access_token=atoken&refresh_token=rtoken';
+    fakeLocation.pathname = '/callback';
+    fakeLocation.search = '?extra=1';
+    fakeLocation.hash = '#access_token=atoken&refresh_token=rtoken';
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(replaceStateSpy).toHaveBeenCalledWith(null, '', '/callback');
   });
 });

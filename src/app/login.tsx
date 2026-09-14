@@ -27,6 +27,8 @@ interface FieldProps extends TextInputProps {
 
 function Field({ label, icon, error, onFocus, onBlur, ...rest }: FieldProps) {
   const [focused, setFocused] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const { secureTextEntry, ...restInput } = rest;
   return (
     <View style={styles.fieldContainer}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -44,6 +46,7 @@ function Field({ label, icon, error, onFocus, onBlur, ...rest }: FieldProps) {
         <TextInput
           style={styles.input}
           placeholderTextColor={Palette.textMuted}
+          secureTextEntry={secureTextEntry ? !showPassword : undefined}
           onFocus={(e) => {
             setFocused(true);
             onFocus?.(e);
@@ -52,8 +55,23 @@ function Field({ label, icon, error, onFocus, onBlur, ...rest }: FieldProps) {
             setFocused(false);
             onBlur?.(e);
           }}
-          {...rest}
+          {...restInput}
         />
+        {secureTextEntry ? (
+          <Pressable
+            style={styles.eyeButton}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+            accessibilityState={{ checked: showPassword }}
+            onPress={() => setShowPassword((v) => !v)}>
+            <Ionicons
+              name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+              size={22}
+              color={Palette.textMuted}
+            />
+          </Pressable>
+        ) : null}
       </View>
       {error ? <Text style={styles.fieldError}>{error}</Text> : null}
     </View>
@@ -312,6 +330,13 @@ const styles = StyleSheet.create({
     color: Palette.text,
     minHeight: 54,
     paddingVertical: 0,
+  },
+  eyeButton: {
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 44,
+    minWidth: 44,
   },
   fieldError: {
     fontSize: 13,

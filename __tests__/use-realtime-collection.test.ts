@@ -161,4 +161,36 @@ describe('useRealtimeCollection', () => {
 
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
+
+  it('genera nombres de channel distintos entre mounts secuenciales', async () => {
+    const fetchFn = jest.fn().mockResolvedValue([]);
+    const first = renderHook(() =>
+      useRealtimeCollection(fetchFn, 'expenses', 'casa-1'),
+    );
+    await waitFor(() => expect(fetchFn).toHaveBeenCalled());
+    first.unmount();
+
+    const second = renderHook(() =>
+      useRealtimeCollection(fetchFn, 'expenses', 'casa-1'),
+    );
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    second.unmount();
+
+    expect(mockChannel.mock.calls[0][0]).not.toBe(mockChannel.mock.calls[1][0]);
+  });
+
+  it('genera nombre de channel distinto al cambiar de casa', async () => {
+    const fetchFn = jest.fn().mockResolvedValue([]);
+    const { rerender } = renderHook(
+      ({ casaId }: { casaId: string | null }) =>
+        useRealtimeCollection(fetchFn, 'expenses', casaId),
+      { initialProps: { casaId: 'casa-1' } },
+    );
+    await waitFor(() => expect(fetchFn).toHaveBeenCalled());
+
+    rerender({ casaId: 'casa-2' });
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+
+    expect(mockChannel.mock.calls[0][0]).not.toBe(mockChannel.mock.calls[1][0]);
+  });
 });

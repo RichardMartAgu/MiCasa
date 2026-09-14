@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { NoCasaState } from '@/components/ui/no-casa-state';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -46,7 +47,7 @@ function toISOLocal(date: Date): string {
 
 export default function CitasScreen() {
   const { user } = useAuth();
-  const { currentCasa } = useCasa();
+  const { currentCasa, loading } = useCasa();
   const { data: appointments, error: appointmentsError } = useRealtimeCollection<Appointment>(
     () => (currentCasa ? fetchAppointments(currentCasa.id) : Promise.resolve([])),
     'appointments',
@@ -78,6 +79,10 @@ export default function CitasScreen() {
   const past = appointments
     .filter((a) => new Date(a.starts_at) < now)
     .sort((a, b) => new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime());
+
+  if (!loading && !currentCasa) {
+    return <NoCasaState />;
+  }
 
   function openAdd() {
     setEditingAppointmentId(null);

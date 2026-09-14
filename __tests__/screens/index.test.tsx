@@ -24,6 +24,11 @@ jest.mock('@expo/vector-icons', () => {
   };
 });
 
+const mockNavigate = jest.fn();
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ navigate: mockNavigate }),
+}));
+
 const mockUseAuth = jest.fn();
 jest.mock('@/context/auth-context', () => ({
   useAuth: () => mockUseAuth(),
@@ -175,6 +180,19 @@ describe('HomeScreen', () => {
     expect(getByText('2')).toBeTruthy();
   });
 
+  it('excluye gasto con spent_at inválida del total mensual sin crash', () => {
+    const invalidExpense: Expense = { ...expense, spent_at: 'invalid' };
+    const { getByText } = setup([], [invalidExpense], []);
+    expect(getByText('Gastos este mes')).toBeTruthy();
+    expect(getByText('0,00 €')).toBeTruthy();
+  });
+
+  it('excluye cita con starts_at inválida de próximas citas sin crash', () => {
+    const invalidAppointment: Appointment = { ...appointment, starts_at: 'invalid' };
+    const { getByText } = setup([invalidAppointment], [], []);
+    expect(getByText('No hay citas próximas.')).toBeTruthy();
+  });
+
   it('muestra próximas citas y miembros de la casa', () => {
     const memberAna: CasaMember = {
       casa_id: 'c1',
@@ -207,5 +225,29 @@ describe('HomeScreen', () => {
     const { getByText } = setup([], [], [], [soonContact]);
     expect(getByText(/Ana/)).toBeTruthy();
     expect(getByText('(cumple años)')).toBeTruthy();
+  });
+
+  it('muestra aviso de crear casa cuando no hay casa', () => {
+    mockUseCasa.mockReturnValue({
+      currentCasa: null,
+      members: [],
+      profiles: {},
+      loading: false,
+    });
+    const { getByText } = render(<HomeScreen />);
+    expect(getByText('Crea una casa primero')).toBeTruthy();
+    expect(getByText('Ir a Ajustes')).toBeTruthy();
+  });
+
+  it('navega a Ajustes desde el aviso sin casa', () => {
+    mockUseCasa.mockReturnValue({
+      currentCasa: null,
+      members: [],
+      profiles: {},
+      loading: false,
+    });
+    const { getByText } = render(<HomeScreen />);
+    fireEvent.press(getByText('Ir a Ajustes'));
+    expect(mockNavigate).toHaveBeenCalledWith('/ajustes');
   });
 });
