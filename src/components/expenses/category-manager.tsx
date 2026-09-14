@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Modal,
@@ -45,19 +45,12 @@ export function CategoryManager({
   onEdit,
   onDelete,
 }: CategoryManagerProps) {
-  const [name, setName] = useState('');
-  const [budget, setBudget] = useState('');
-  const [color, setColor] = useState<string>(Palette.primary);
+  const [name, setName] = useState(editingCategory?.name ?? '');
+  const [budget, setBudget] = useState(
+    editingCategory?.budget != null ? String(editingCategory.budget) : '',
+  );
+  const [color, setColor] = useState<string>(editingCategory?.color ?? Palette.primary);
   const [errors, setErrors] = useState<{ name?: string; budget?: string }>({});
-
-  useEffect(() => {
-    if (visible) {
-      setName(editingCategory?.name ?? '');
-      setBudget(editingCategory?.budget != null ? String(editingCategory.budget) : '');
-      setColor(editingCategory?.color ?? Palette.primary);
-      setErrors({});
-    }
-  }, [visible, editingCategory]);
 
   function handleSave() {
     const nameCheck = validateTitle(name);

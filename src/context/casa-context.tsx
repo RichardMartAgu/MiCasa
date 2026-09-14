@@ -90,7 +90,11 @@ export function CasaProvider({ children }: { children: ReactNode }) {
         .eq('casa_id', currentCasa.id);
       if (cancelled) return;
       const rows = data ?? [];
-      setMembersByCasa((prev) => ({ ...prev, [currentCasa.id]: rows }));
+      const members: CasaMember[] = rows.map((m) => ({
+        ...m,
+        role: m.role === 'owner' || m.role === 'admin' ? m.role : 'member',
+      }));
+      setMembersByCasa((prev) => ({ ...prev, [currentCasa.id]: members }));
 
       const userIds = rows.map((m) => m.user_id);
       if (userIds.length > 0) {
