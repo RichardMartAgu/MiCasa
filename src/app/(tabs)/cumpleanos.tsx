@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { NoCasaState } from '@/components/ui/no-casa-state';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -28,13 +29,13 @@ import {
   updateContact,
 } from '@/lib/api';
 import { birthdayLabel, upcomingBirthdays } from '@/lib/birthdays';
-import { fromISODate, toISODate } from '@/lib/date';
+import { safeDate, toISODate } from '@/lib/date';
 import type { Contact } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
 export default function CumpleanosScreen() {
   const { user } = useAuth();
-  const { currentCasa } = useCasa();
+  const { currentCasa, loading } = useCasa();
   const { data: contacts, error: contactsError } = useRealtimeCollection<Contact>(
     () => (currentCasa ? fetchContacts(currentCasa.id) : Promise.resolve([])),
     'contacts',
@@ -61,6 +62,10 @@ export default function CumpleanosScreen() {
   const upcomingIds = new Set(upcoming.map((u) => u.contact.id));
   const rest = contacts.filter((c) => !upcomingIds.has(c.id));
 
+  if (!loading && !currentCasa) {
+    return <NoCasaState />;
+  }
+
   function openAdd() {
     setEditingContactId(null);
     setName('');
@@ -74,7 +79,7 @@ export default function CumpleanosScreen() {
   function openEdit(contact: Contact) {
     setEditingContactId(contact.id);
     setName(contact.name);
-    setBirthDate(fromISODate(contact.birth_date));
+    setBirthDate(safeDate(contact.birth_date) ?? new Date());
     setRelationship(contact.relationship ?? '');
     setPhone(contact.phone ?? '');
     setErrors({});
@@ -139,7 +144,7 @@ export default function CumpleanosScreen() {
   }
 
   function renderContact(contact: Contact, daysUntil?: number, age?: number) {
-    const birth = new Date(contact.birth_date + 'T00:00:00');
+    const birth = safeDate(contact.birth_date);
     return (
       <Card key={contact.id} style={styles.contactCard}>
         <View style={styles.avatar}>
@@ -148,7 +153,7 @@ export default function CumpleanosScreen() {
         <View style={styles.contactInfo}>
           <Text style={styles.contactName}>{contact.name}</Text>
           <Text style={styles.cardMeta}>
-            🎂 {birth.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })}
+            🎂 {birth !== null ? birth.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' }) : '—'}
             {age !== undefined ? ` · cumple ${age}` : ''}
           </Text>
           {contact.relationship ? (

@@ -1,3 +1,4 @@
+import { safeDate } from './date';
 import type { Category, Expense } from './types';
 
 export function parseAmount(value: number): number {
@@ -47,7 +48,8 @@ export function monthlyTotals(
 ): { key: string; label: string; total: number }[] {
   const byMonth: Record<string, number> = {};
   for (const expense of expenses) {
-    const date = new Date(expense.spent_at);
+    const date = safeDate(expense.spent_at);
+    if (date === null) continue;
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
     byMonth[key] = parseAmount((byMonth[key] ?? 0) + expense.amount);
   }

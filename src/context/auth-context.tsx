@@ -45,11 +45,17 @@ function finishWebRedirect(): void {
     typeof window.location?.hash === 'string' &&
     window.location.hash.length > 1
   ) {
-    const params = parseCallbackUrl(window.location.href);
-    if (params.access_token || params.code) {
-      void applyCallback(params);
-      const cleanUrl = window.location.pathname + window.location.search;
-      window.history.replaceState(null, '', cleanUrl);
+    try {
+      const params = parseCallbackUrl(window.location.href);
+      if (params.access_token || params.code) {
+        void applyCallback(params).catch(() => {});
+      }
+      const raw = window.location.hash.slice(1);
+      if (params.access_token || params.code || new URLSearchParams(raw).has('error')) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    } catch {
+      window.history.replaceState(null, '', window.location.pathname);
     }
   }
 }

@@ -13,7 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Spacing } from '@/constants/theme';
-import { toISODate } from '@/lib/date';
+import { safeDate, toISODate } from '@/lib/date';
 import type { Category, Expense } from '@/lib/types';
 import { validateAmount, validateTitle } from '@/lib/validation';
 
@@ -44,7 +44,7 @@ export function ExpenseForm({
   const [title, setTitle] = useState(expense?.title ?? '');
   const [amount, setAmount] = useState(expense ? String(expense.amount) : '');
   const [categoryId, setCategoryId] = useState<string | null>(expense?.category_id ?? null);
-  const [date, setDate] = useState(expense ? new Date(expense.spent_at) : new Date());
+  const [date, setDate] = useState(expense ? safeDate(expense.spent_at) ?? new Date() : new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [errors, setErrors] = useState<{ title?: string; amount?: string }>({});
 

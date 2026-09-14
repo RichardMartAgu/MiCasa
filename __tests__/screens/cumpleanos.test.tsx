@@ -19,6 +19,11 @@ jest.mock('@expo/vector-icons', () => {
   };
 });
 
+const mockNavigate = jest.fn();
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ navigate: mockNavigate }),
+}));
+
 const mockUseAuth = jest.fn();
 jest.mock('@/context/auth-context', () => ({
   useAuth: () => mockUseAuth(),
@@ -51,10 +56,9 @@ jest.mock('@/lib/birthdays', () => ({
   upcomingBirthdays: (...args: unknown[]) => mockUpcomingBirthdays(...args),
 }));
 
-const mockFromISODate = jest.fn();
 const mockToISODate = jest.fn();
 jest.mock('@/lib/date', () => ({
-  fromISODate: (...args: unknown[]) => mockFromISODate(...args),
+  ...jest.requireActual('@/lib/date'),
   toISODate: (...args: unknown[]) => mockToISODate(...args),
 }));
 
@@ -111,7 +115,6 @@ beforeEach(() => {
   mockUpdateContact.mockResolvedValue(null);
   mockBirthdayLabel.mockReturnValue('en 5 días');
   mockUpcomingBirthdays.mockReturnValue([]);
-  mockFromISODate.mockReturnValue(new Date(2000, 0, 1));
   mockToISODate.mockReturnValue('2020-05-10');
   mockValidateTitle.mockReturnValue({ valid: true });
   mockValidateDate.mockReturnValue({ valid: true });
@@ -148,6 +151,18 @@ describe('CumpleanosScreen', () => {
     expect(getByText('Leo')).toBeTruthy();
     expect(getByText(/👪 Hijo/)).toBeTruthy();
     expect(getByText('📞 612345678')).toBeTruthy();
+  });
+
+  it('renderiza contacto con birth_date inválida sin crash', () => {
+    const invalidContact: Contact = {
+      ...restContact,
+      id: 'c3',
+      birth_date: 'basura',
+    };
+    const { getByText } = setup([invalidContact]);
+
+    expect(getByText('Leo')).toBeTruthy();
+    expect(getByText(/🎂 —/)).toBeTruthy();
   });
 
   it('abre modal y crea contacto nuevo', async () => {
@@ -215,5 +230,12 @@ describe('CumpleanosScreen', () => {
       );
     });
     alertSpy.mockRestore();
+  });
+
+  it('muestra aviso de crear casa cuando no hay casa', () => {
+    mockUseCasa.mockReturnValue({ currentCasa: null, loading: false });
+    const { getByText } = render(<CumpleanosScreen />);
+    expect(getByText('Crea una casa primero')).toBeTruthy();
+    expect(getByText('Ir a Ajustes')).toBeTruthy();
   });
 });
