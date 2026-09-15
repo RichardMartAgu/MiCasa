@@ -16,6 +16,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { FilterBar } from '@/components/ui/filter-bar';
+import type { FilterChipOption } from '@/components/ui/filter-chips';
 import { NoCasaState } from '@/components/ui/no-casa-state';
 import { Spinner } from '@/components/ui/spinner';
 import { TextField } from '@/components/ui/text-field';
@@ -30,6 +32,7 @@ import {
   updateAppointment,
 } from '@/lib/api';
 import { formatDateTime } from '@/lib/date';
+import { filterAppointments } from '@/lib/filter';
 import type { Appointment, AppointmentKind } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
@@ -72,12 +75,27 @@ export default function CitasScreen() {
     location?: string;
   }>({});
   const [saving, setSaving] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [selectedKind, setSelectedKind] = useState('');
+
+  const kindOptions = useMemo<FilterChipOption[]>(
+    () => [
+      { label: 'Todos', value: '' },
+      ...KINDS.map((k) => ({ label: k.label, value: k.value })),
+    ],
+    [],
+  );
+
+  const visibleAppointments = useMemo(
+    () => filterAppointments(appointments, { search: searchText, kind: selectedKind }),
+    [appointments, searchText, selectedKind],
+  );
 
   const now = useMemo(() => new Date(), []);
-  const upcoming = appointments
+  const upcoming = visibleAppointments
     .filter((a) => new Date(a.starts_at) >= now)
     .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
-  const past = appointments
+  const past = visibleAppointments
     .filter((a) => new Date(a.starts_at) < now)
     .sort((a, b) => new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime());
 
@@ -199,6 +217,18 @@ export default function CitasScreen() {
           <Ionicons name="add" size={28} color={Palette.onPrimary} />
         </Pressable>
       </View>
+
+      <FilterBar
+        style={styles.filterBar}
+        search={{ value: searchText, onChangeText: setSearchText, placeholder: 'Buscar citas' }}
+        chips={{
+          options: kindOptions,
+          selected: selectedKind,
+          onSelect: (value) => {
+            if (typeof value === 'string') setSelectedKind(value);
+          },
+        }}
+      />
 
       <ScrollView contentContainerStyle={styles.content}>
         {appointmentsError ? <ErrorBanner message={appointmentsError} /> : null}
@@ -399,6 +429,7 @@ const styles = StyleSheet.create({
     ...Shadow.fab,
   },
   content: { paddingHorizontal: Spacing.four, gap: Spacing.three, paddingBottom: Spacing.six },
+  filterBar: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.three },
   sectionTitle: { fontSize: 18, fontWeight: '800', color: Palette.text, marginTop: Spacing.two },
   pastTitle: { fontSize: 14, color: Palette.textSecondary },
   cardRow: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.three },

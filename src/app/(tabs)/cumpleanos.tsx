@@ -17,6 +17,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { FilterBar } from '@/components/ui/filter-bar';
+import type { FilterChipOption } from '@/components/ui/filter-chips';
 import { NoCasaState } from '@/components/ui/no-casa-state';
 import { Spinner } from '@/components/ui/spinner';
 import { TextField } from '@/components/ui/text-field';
@@ -33,6 +35,7 @@ import {
 import { birthdayLabel, upcomingBirthdays } from '@/lib/birthdays';
 import { syncBirthdays } from '@/lib/calendar-sync';
 import { safeDate, toISODate } from '@/lib/date';
+import { filterContacts } from '@/lib/filter';
 import type { Contact } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
@@ -59,12 +62,36 @@ export default function CumpleanosScreen() {
     phone?: string;
   }>({});
   const [saving, setSaving] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [selectedRelationship, setSelectedRelationship] = useState('');
   const [syncing, setSyncing] = useState(false);
 
+  const relationshipOptions = useMemo<FilterChipOption[]>(() => {
+    const seen = new Set<string>();
+    const values: FilterChipOption[] = [{ label: 'Todos', value: '' }];
+    for (const c of contacts) {
+      const rel = c.relationship?.trim();
+      if (rel && !seen.has(rel)) {
+        seen.add(rel);
+        values.push({ label: rel, value: rel });
+      }
+    }
+    return values;
+  }, [contacts]);
+
+  const visibleContacts = useMemo(
+    () =>
+      filterContacts(contacts, {
+        search: searchText,
+        relationship: selectedRelationship,
+      }),
+    [contacts, searchText, selectedRelationship],
+  );
+
   const now = useMemo(() => new Date(), []);
-  const upcoming = upcomingBirthdays(contacts, now, 30);
+  const upcoming = upcomingBirthdays(visibleContacts, now, 30);
   const upcomingIds = new Set(upcoming.map((u) => u.contact.id));
-  const rest = contacts.filter((c) => !upcomingIds.has(c.id));
+  const rest = visibleContacts.filter((c) => !upcomingIds.has(c.id));
 
   if (loading) return <Spinner fullScreen />;
 
@@ -281,6 +308,18 @@ export default function CumpleanosScreen() {
         </View>
       </View>
 
+      <FilterBar
+        style={styles.filterBar}
+        search={{ value: searchText, onChangeText: setSearchText, placeholder: 'Buscar contactos' }}
+        chips={{
+          options: relationshipOptions,
+          selected: selectedRelationship,
+          onSelect: (value) => {
+            if (typeof value === 'string') setSelectedRelationship(value);
+          },
+        }}
+      />
+
       <ScrollView contentContainerStyle={styles.content}>
         {contactsError ? <ErrorBanner message={contactsError} /> : null}
         <Text style={styles.sectionTitle}>Próximos 30 días</Text>
@@ -405,6 +444,7 @@ const styles = StyleSheet.create({
     ...Shadow.fab,
   },
   content: { paddingHorizontal: Spacing.four, gap: Spacing.three, paddingBottom: Spacing.six },
+  filterBar: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.three },
   sectionTitle: { fontSize: 18, fontWeight: '800', color: Palette.text, marginTop: Spacing.two },
   contactCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   avatar: {

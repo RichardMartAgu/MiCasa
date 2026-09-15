@@ -134,14 +134,14 @@ describe('CitasScreen', () => {
   });
 
   it('abre modal y crea cita nueva', async () => {
-    const { getByText, getAllByDisplayValue } = setup([]);
+    const { getByText, getByLabelText } = setup([]);
 
     fireEvent.press(getByText('add'));
     await waitFor(() => {
       expect(getByText('Nueva cita')).toBeTruthy();
     });
 
-    const [titleInput] = getAllByDisplayValue('');
+    const titleInput = getByLabelText('Título');
     fireEvent.changeText(titleInput, 'Vacunación');
     fireEvent.press(getByText('Guardar'));
 

@@ -9,6 +9,8 @@ import type { ExpenseFormInput } from '@/components/expenses/expense-form';
 import { ExpenseList } from '@/components/expenses/expense-list';
 import { Card } from '@/components/ui/card';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { FilterBar } from '@/components/ui/filter-bar';
+import type { FilterChipOption } from '@/components/ui/filter-chips';
 import { NoCasaState } from '@/components/ui/no-casa-state';
 import { Spinner } from '@/components/ui/spinner';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
@@ -26,6 +28,7 @@ import {
   updateExpense,
 } from '@/lib/api';
 import { monthKey, safeDate, toISODate } from '@/lib/date';
+import { filterExpenses } from '@/lib/filter';
 import { totalsByCategory } from '@/lib/finance';
 import { formatCurrency } from '@/lib/format';
 import type { Category, Expense } from '@/lib/types';
@@ -53,6 +56,27 @@ export default function GastosScreen() {
   const [saving, setSaving] = useState(false);
   const [expenseFormKey, setExpenseFormKey] = useState(0);
   const [categoryFormKey, setCategoryFormKey] = useState(0);
+  const [searchText, setSearchText] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('');
+  const [dateRange, setDateRange] = useState('all');
+
+  const categoryOptions = useMemo<FilterChipOption[]>(
+    () => [
+      { label: 'Todas', value: '' },
+      ...categories.map((c) => ({ label: c.name, value: c.id, color: c.color })),
+    ],
+    [categories],
+  );
+
+  const filteredExpenses = useMemo(
+    () =>
+      filterExpenses(expenses, {
+        search: searchText,
+        categoryId: selectedCategory,
+        dateRange,
+      }),
+    [expenses, searchText, selectedCategory, dateRange],
+  );
 
   const now = useMemo(() => new Date(), []);
   const thisMonth = monthKey(now);
@@ -188,6 +212,19 @@ export default function GastosScreen() {
         </View>
       </View>
 
+      <FilterBar
+        style={styles.filterBar}
+        search={{ value: searchText, onChangeText: setSearchText, placeholder: 'Buscar gastos' }}
+        chips={{
+          options: categoryOptions,
+          selected: selectedCategory,
+          onSelect: (value) => {
+            if (typeof value === 'string') setSelectedCategory(value);
+          },
+        }}
+        date={{ selected: dateRange, onSelect: setDateRange }}
+      />
+
       <ScrollView contentContainerStyle={styles.content}>
         {loadError ? <ErrorBanner message={loadError} /> : null}
         <Card>
@@ -231,7 +268,7 @@ export default function GastosScreen() {
 
         <Text style={styles.sectionTitle}>Historial</Text>
         <ExpenseList
-          expenses={expenses}
+          expenses={filteredExpenses}
           categories={categories}
           onEdit={openEditExpense}
           onDelete={handleDeleteExpense}
@@ -296,6 +333,7 @@ const styles = StyleSheet.create({
     ...Shadow.fab,
   },
   content: { paddingHorizontal: Spacing.four, gap: Spacing.three, paddingBottom: Spacing.six },
+  filterBar: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.three },
   sectionTitle: { fontSize: 18, fontWeight: '800', color: Palette.text, marginTop: Spacing.two },
   total: { fontSize: 32, fontWeight: '800', color: Palette.primary },
   empty: { fontSize: 14, color: Palette.textMuted },
