@@ -6,6 +6,7 @@ import {
   formatDateTime,
   fromISODate,
   monthKey,
+  safeDate,
   startOfDay,
   toISODate,
   todayISO,
@@ -80,6 +81,56 @@ describe('fromISODate', () => {
     expect(d.getFullYear()).toBe(2026);
     expect(d.getMonth()).toBe(7);
     expect(d.getDate()).toBe(3);
+  });
+});
+
+describe('safeDate', () => {
+  it('devuelve Date válida para ISO correcto', () => {
+    const d = safeDate('2024-06-15');
+    expect(d).not.toBeNull();
+    expect(d!.getFullYear()).toBe(2024);
+    expect(d!.getMonth()).toBe(5);
+    expect(d!.getDate()).toBe(15);
+  });
+
+  it('devuelve null para cadena vacía', () => {
+    expect(safeDate('')).toBeNull();
+  });
+
+  it('devuelve null para fecha inválida', () => {
+    expect(safeDate('invalid')).toBeNull();
+  });
+
+  it('devuelve null para día inexistente (rollover)', () => {
+    expect(safeDate('2024-02-30')).toBeNull();
+  });
+
+  it('devuelve null para mes fuera de rango', () => {
+    expect(safeDate('2024-13-01')).toBeNull();
+  });
+
+  it('devuelve null para mes cero', () => {
+    expect(safeDate('2024-00-10')).toBeNull();
+  });
+
+  it('devuelve null para día cero', () => {
+    expect(safeDate('2024-06-00')).toBeNull();
+  });
+
+  it('devuelve null para día fuera de rango', () => {
+    expect(safeDate('2024-06-32')).toBeNull();
+  });
+
+  it('acepta timestamp ISO completo', () => {
+    const d = safeDate('2024-06-15T10:30:00');
+    expect(d).not.toBeNull();
+    expect(d!.getFullYear()).toBe(2024);
+    expect(d!.getMonth()).toBe(5);
+    expect(d!.getDate()).toBe(15);
+  });
+
+  it('devuelve null para timestamp con mes inválido', () => {
+    expect(safeDate('2024-13-01T10:30:00')).toBeNull();
   });
 });
 

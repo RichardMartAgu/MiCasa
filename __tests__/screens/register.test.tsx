@@ -36,17 +36,17 @@ beforeEach(() => {
 describe('RegisterScreen', () => {
   it('muestra formulario de registro', () => {
     const { getByText, getByRole } = setup();
-    expect(getByRole('button')).toBeTruthy();
+    expect(getByRole('button', { name: 'Crear cuenta' })).toBeTruthy();
     expect(getByText('Tu nombre')).toBeTruthy();
     expect(getByText('Correo electrónico')).toBeTruthy();
     expect(getByText('Contraseña')).toBeTruthy();
-    expect(getByRole('button')).toBeTruthy();
+    expect(getByRole('button', { name: 'Crear cuenta' })).toBeTruthy();
   });
 
   it('no llama signUp con campos vacíos', async () => {
     const { getByText, getByRole } = setup();
 
-    fireEvent.press(getByRole('button'));
+    fireEvent.press(getByRole('button', { name: 'Crear cuenta' }));
 
     await waitFor(() => {
       expect(getByText('El nombre es obligatorio.')).toBeTruthy();
@@ -61,7 +61,7 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(name, 'Ana García');
     fireEvent.changeText(email, 'ana@casa.com');
     fireEvent.changeText(password, '123456');
-    fireEvent.press(getByRole('button'));
+    fireEvent.press(getByRole('button', { name: 'Crear cuenta' }));
 
     await waitFor(() => {
       expect(signUp).toHaveBeenCalledWith('ana@casa.com', '123456', 'Ana García');
@@ -75,7 +75,7 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(name, 'Ana');
     fireEvent.changeText(email, 'ana@casa.com');
     fireEvent.changeText(password, '123456');
-    fireEvent.press(getByRole('button'));
+    fireEvent.press(getByRole('button', { name: 'Crear cuenta' }));
 
     await waitFor(() => {
       expect(getByText(/Revisa tu correo para confirmar/)).toBeTruthy();
@@ -90,7 +90,7 @@ describe('RegisterScreen', () => {
     fireEvent.changeText(name, 'Ana');
     fireEvent.changeText(email, 'ana@casa.com');
     fireEvent.changeText(password, '123456');
-    fireEvent.press(getByRole('button'));
+    fireEvent.press(getByRole('button', { name: 'Crear cuenta' }));
 
     await waitFor(() => {
       expect(getByText('Ya existe una cuenta con ese correo.')).toBeTruthy();

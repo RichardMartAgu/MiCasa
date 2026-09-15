@@ -39,6 +39,26 @@ describe('Button', () => {
     expect(getByText('Cancelar')).toBeTruthy();
   });
 
+  it('renderiza variante outline', () => {
+    const { getByText } = render(<Button title="Cancelar" variant="outline" />);
+    expect(getByText('Cancelar')).toBeTruthy();
+  });
+
+  it('renderiza variante ghost', () => {
+    const { getByText } = render(<Button title="Cancelar" variant="ghost" />);
+    expect(getByText('Cancelar')).toBeTruthy();
+  });
+
+  it('renderiza tamaño pequeño', () => {
+    const { getByText } = render(<Button title="Entrar" size="sm" />);
+    expect(getByText('Entrar')).toBeTruthy();
+  });
+
+  it('renderiza tamaño grande', () => {
+    const { getByText } = render(<Button title="Entrar" size="lg" />);
+    expect(getByText('Entrar')).toBeTruthy();
+  });
+
   it('no llama onPress cuando disabled', () => {
     const onPress = jest.fn();
     const { getByRole } = render(<Button title="Entrar" disabled onPress={onPress} />);

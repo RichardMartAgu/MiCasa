@@ -18,6 +18,11 @@ jest.mock('@expo/vector-icons', () => {
   };
 });
 
+const mockNavigate = jest.fn();
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ navigate: mockNavigate }),
+}));
+
 const mockUseAuth = jest.fn();
 jest.mock('@/context/auth-context', () => ({
   useAuth: () => mockUseAuth(),
@@ -106,6 +111,19 @@ describe('GastosScreen', () => {
     expect(getByText('Comida')).toBeTruthy();
   });
 
+  it('excluye gasto con spent_at inválida de los totales sin crash', () => {
+    const invalidExpense: Expense = {
+      ...expense,
+      id: 'e2',
+      spent_at: 'invalid',
+    };
+    const { getByText } = setup([invalidExpense], [category]);
+
+    expect(getByText('Supermercado')).toBeTruthy();
+    expect(getByText('0,00 €')).toBeTruthy();
+    expect(getByText(/0,00 € \/ 200,00 €/)).toBeTruthy();
+  });
+
   it('abre modal y guarda gasto nuevo', async () => {
     const { getByText, getAllByDisplayValue } = setup([], [category]);
 
@@ -171,5 +189,12 @@ describe('GastosScreen', () => {
         expect.objectContaining({ casa_id: 'c1', name: 'Bebé', budget: 150 }),
       );
     });
+  });
+
+  it('muestra aviso de crear casa cuando no hay casa', () => {
+    mockUseCasa.mockReturnValue({ currentCasa: null, loading: false });
+    const { getByText } = render(<GastosScreen />);
+    expect(getByText('Crea una casa primero')).toBeTruthy();
+    expect(getByText('Ir a Ajustes')).toBeTruthy();
   });
 });

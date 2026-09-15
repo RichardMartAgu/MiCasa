@@ -15,6 +15,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ErrorBanner } from '@/components/ui/error-banner';
+import { NoCasaState } from '@/components/ui/no-casa-state';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -45,8 +47,8 @@ function toISOLocal(date: Date): string {
 
 export default function CitasScreen() {
   const { user } = useAuth();
-  const { currentCasa } = useCasa();
-  const { data: appointments } = useRealtimeCollection<Appointment>(
+  const { currentCasa, loading } = useCasa();
+  const { data: appointments, error: appointmentsError } = useRealtimeCollection<Appointment>(
     () => (currentCasa ? fetchAppointments(currentCasa.id) : Promise.resolve([])),
     'appointments',
     currentCasa?.id ?? null,
@@ -77,6 +79,10 @@ export default function CitasScreen() {
   const past = appointments
     .filter((a) => new Date(a.starts_at) < now)
     .sort((a, b) => new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime());
+
+  if (!loading && !currentCasa) {
+    return <NoCasaState />;
+  }
 
   function openAdd() {
     setEditingAppointmentId(null);
@@ -182,12 +188,17 @@ export default function CitasScreen() {
           <Text style={styles.title}>Citas</Text>
           <Text style={styles.subtitle}>Médico, escuela, mascotas y más</Text>
         </View>
-        <Pressable style={styles.fab} onPress={openAdd}>
+        <Pressable
+          style={styles.fab}
+          accessibilityRole="button"
+          accessibilityLabel="Nueva cita"
+          onPress={openAdd}>
           <Ionicons name="add" size={28} color={Palette.onPrimary} />
         </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {appointmentsError ? <ErrorBanner message={appointmentsError} /> : null}
         <Text style={styles.sectionTitle}>Próximas</Text>
         {upcoming.length === 0 ? (
           <EmptyState
@@ -206,10 +217,18 @@ export default function CitasScreen() {
                   {a.location ? <Text style={styles.cardMeta}>📍 {a.location}</Text> : null}
                 </View>
                 <View style={styles.cardActions}>
-                  <Pressable onPress={() => openEdit(a)} hitSlop={12}>
+                  <Pressable
+                    onPress={() => openEdit(a)}
+                    hitSlop={14}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Editar cita ${a.title}`}>
                     <Ionicons name="pencil-outline" size={20} color={Palette.textSecondary} />
                   </Pressable>
-                  <Pressable onPress={() => handleDelete(a.id)} hitSlop={12}>
+                  <Pressable
+                    onPress={() => handleDelete(a.id)}
+                    hitSlop={14}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Eliminar cita ${a.title}`}>
                     <Ionicons name="trash-outline" size={20} color={Palette.danger} />
                   </Pressable>
                 </View>
@@ -235,6 +254,7 @@ export default function CitasScreen() {
         visible={modalVisible}
         animationType="slide"
         transparent
+        accessibilityViewIsModal
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
@@ -255,6 +275,8 @@ export default function CitasScreen() {
                   <Pressable
                     key={k.value}
                     style={[styles.chip, kind === k.value && styles.chipSelected]}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: kind === k.value }}
                     onPress={() => setKind(k.value)}>
                     <Ionicons
                       name={k.icon}
@@ -284,18 +306,30 @@ export default function CitasScreen() {
               />
 
               <View style={styles.dateRow}>
-                <Pressable style={styles.dateButton} onPress={() => setShowDatePicker(true)}>
+                <Pressable
+                  style={styles.dateButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Cambiar fecha: ${date.toLocaleDateString('es-ES')}`}
+                  onPress={() => setShowDatePicker(true)}>
                   <Text style={styles.dateButtonLabel}>
                     📅 {date.toLocaleDateString('es-ES')}
                   </Text>
                 </Pressable>
-                <Pressable style={styles.dateButton} onPress={() => setShowTimePicker(true)}>
+                <Pressable
+                  style={styles.dateButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Cambiar hora: ${time.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`}
+                  onPress={() => setShowTimePicker(true)}>
                   <Text style={styles.dateButtonLabel}>
                     🕐 {time.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
                   </Text>
                 </Pressable>
               </View>
-              {errors.date ? <Text style={styles.error}>{errors.date}</Text> : null}
+              {errors.date ? (
+                <Text style={styles.error} accessibilityRole="alert">
+                  {errors.date}
+                </Text>
+              ) : null}
 
               {showDatePicker && (
                 <DateTimePicker
@@ -391,6 +425,7 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
+    minHeight: 44,
     borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Palette.border,

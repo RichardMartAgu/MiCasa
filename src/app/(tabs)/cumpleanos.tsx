@@ -3,6 +3,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Alert,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -15,6 +16,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ErrorBanner } from '@/components/ui/error-banner';
+import { NoCasaState } from '@/components/ui/no-casa-state';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -27,14 +30,15 @@ import {
   updateContact,
 } from '@/lib/api';
 import { birthdayLabel, upcomingBirthdays } from '@/lib/birthdays';
-import { fromISODate, toISODate } from '@/lib/date';
+import { syncBirthdays } from '@/lib/calendar-sync';
+import { safeDate, toISODate } from '@/lib/date';
 import type { Contact } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
 export default function CumpleanosScreen() {
   const { user } = useAuth();
-  const { currentCasa } = useCasa();
-  const { data: contacts } = useRealtimeCollection<Contact>(
+  const { currentCasa, loading } = useCasa();
+  const { data: contacts, error: contactsError } = useRealtimeCollection<Contact>(
     () => (currentCasa ? fetchContacts(currentCasa.id) : Promise.resolve([])),
     'contacts',
     currentCasa?.id ?? null,
@@ -54,11 +58,16 @@ export default function CumpleanosScreen() {
     phone?: string;
   }>({});
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const now = useMemo(() => new Date(), []);
   const upcoming = upcomingBirthdays(contacts, now, 30);
   const upcomingIds = new Set(upcoming.map((u) => u.contact.id));
   const rest = contacts.filter((c) => !upcomingIds.has(c.id));
+
+  if (!loading && !currentCasa) {
+    return <NoCasaState />;
+  }
 
   function openAdd() {
     setEditingContactId(null);
@@ -73,7 +82,7 @@ export default function CumpleanosScreen() {
   function openEdit(contact: Contact) {
     setEditingContactId(contact.id);
     setName(contact.name);
-    setBirthDate(fromISODate(contact.birth_date));
+    setBirthDate(safeDate(contact.birth_date) ?? new Date());
     setRelationship(contact.relationship ?? '');
     setPhone(contact.phone ?? '');
     setErrors({});
@@ -137,8 +146,55 @@ export default function CumpleanosScreen() {
     ]);
   }
 
+  function handleSync() {
+    if (contacts.length === 0) {
+      Alert.alert('Sin contactos', 'Añade contactos primero para sincronizar sus cumpleaños.');
+      return;
+    }
+    Alert.alert(
+      'Sincronizar cumpleaños',
+      `Se crearán eventos anuales en el calendario del dispositivo para ${contacts.length} contactos.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Sincronizar',
+          onPress: async () => {
+            setSyncing(true);
+            const result = await syncBirthdays(contacts);
+            setSyncing(false);
+            const message =
+              result.errors > 0
+                ? `${result.synced} sincronizados, ${result.errors} con error.`
+                : `${result.synced} cumpleaños sincronizados con el calendario.`;
+            Alert.alert('Sincronización completada', message);
+          },
+        },
+      ],
+    );
+  }
+
+  function openInGoogleCalendar(contact: Contact) {
+    if (Platform.OS === 'web') {
+      const birth = safeDate(contact.birth_date);
+      if (birth === null) return;
+      const y = birth.getFullYear();
+      const m = String(birth.getMonth() + 1).padStart(2, '0');
+      const d = String(birth.getDate()).padStart(2, '0');
+      const date = `${y}${m}${d}`;
+      const title = encodeURIComponent(`🎂 Cumpleaños de ${contact.name}`);
+      const details = encodeURIComponent(
+        contact.relationship ? `Parentesco: ${contact.relationship}` : '',
+      );
+      const url =
+        `https://calendar.google.com/calendar/render?action=TEMPLATE` +
+        `&text=${title}&dates=${date}/${date}` +
+        `&recur=RRULE:FREQ=YEARLY&details=${details}`;
+      void Linking.openURL(url);
+    }
+  }
+
   function renderContact(contact: Contact, daysUntil?: number, age?: number) {
-    const birth = new Date(contact.birth_date + 'T00:00:00');
+    const birth = safeDate(contact.birth_date);
     return (
       <Card key={contact.id} style={styles.contactCard}>
         <View style={styles.avatar}>
@@ -147,7 +203,7 @@ export default function CumpleanosScreen() {
         <View style={styles.contactInfo}>
           <Text style={styles.contactName}>{contact.name}</Text>
           <Text style={styles.cardMeta}>
-            🎂 {birth.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })}
+            🎂 {birth !== null ? birth.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' }) : '—'}
             {age !== undefined ? ` · cumple ${age}` : ''}
           </Text>
           {contact.relationship ? (
@@ -162,10 +218,27 @@ export default function CumpleanosScreen() {
             </Text>
           ) : null}
           <View style={styles.contactActions}>
-            <Pressable onPress={() => openEdit(contact)} hitSlop={10}>
+            {Platform.OS === 'web' ? (
+              <Pressable
+                onPress={() => openInGoogleCalendar(contact)}
+                hitSlop={14}
+                accessibilityRole="button"
+                accessibilityLabel={`Añadir cumpleaños de ${contact.name} a Google Calendar`}>
+                <Ionicons name="calendar-outline" size={18} color={Palette.primary} />
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={() => openEdit(contact)}
+              hitSlop={14}
+              accessibilityRole="button"
+              accessibilityLabel={`Editar contacto ${contact.name}`}>
               <Ionicons name="pencil-outline" size={18} color={Palette.textSecondary} />
             </Pressable>
-            <Pressable onPress={() => handleDelete(contact.id)} hitSlop={10}>
+            <Pressable
+              onPress={() => handleDelete(contact.id)}
+              hitSlop={14}
+              accessibilityRole="button"
+              accessibilityLabel={`Eliminar contacto ${contact.name}`}>
               <Ionicons name="trash-outline" size={18} color={Palette.danger} />
             </Pressable>
           </View>
@@ -181,12 +254,32 @@ export default function CumpleanosScreen() {
           <Text style={styles.title}>Cumpleaños</Text>
           <Text style={styles.subtitle}>Nunca más olvides una fecha</Text>
         </View>
-        <Pressable style={styles.fab} onPress={openAdd}>
-          <Ionicons name="add" size={28} color={Palette.onPrimary} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            style={[styles.syncButton, syncing && styles.syncButtonDisabled]}
+            disabled={syncing}
+            accessibilityRole="button"
+            accessibilityLabel="Sincronizar cumpleaños con el calendario del dispositivo"
+            onPress={handleSync}>
+            <Text style={styles.syncButtonLabel}>{syncing ? '…' : 'Calendario'}</Text>
+            <Ionicons
+              name={syncing ? 'sync' : 'calendar-outline'}
+              size={16}
+              color={Palette.primary}
+            />
+          </Pressable>
+          <Pressable
+            style={styles.fab}
+            accessibilityRole="button"
+            accessibilityLabel="Nuevo contacto"
+            onPress={openAdd}>
+            <Ionicons name="add" size={28} color={Palette.onPrimary} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {contactsError ? <ErrorBanner message={contactsError} /> : null}
         <Text style={styles.sectionTitle}>Próximos 30 días</Text>
         {upcoming.length === 0 ? (
           <EmptyState
@@ -210,6 +303,7 @@ export default function CumpleanosScreen() {
         visible={modalVisible}
         animationType="slide"
         transparent
+        accessibilityViewIsModal
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
@@ -218,10 +312,18 @@ export default function CumpleanosScreen() {
             </Text>
             <View style={styles.form}>
               <TextField label="Nombre" value={name} onChangeText={setName} error={errors.name} />
-              <Pressable style={styles.dateButton} onPress={() => setShowDatePicker(true)}>
+              <Pressable
+                style={styles.dateButton}
+                accessibilityRole="button"
+                accessibilityLabel={`Cambiar fecha de nacimiento: ${toISODate(birthDate)}`}
+                onPress={() => setShowDatePicker(true)}>
                 <Text style={styles.dateButtonLabel}>🎂 {toISODate(birthDate)}</Text>
               </Pressable>
-              {errors.date ? <Text style={styles.error}>{errors.date}</Text> : null}
+              {errors.date ? (
+                <Text style={styles.error} accessibilityRole="alert">
+                  {errors.date}
+                </Text>
+              ) : null}
               {showDatePicker && (
                 <DateTimePicker
                   value={birthDate}
@@ -274,6 +376,20 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.three,
   },
   headerText: { gap: Spacing.one },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  syncButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    borderWidth: 1,
+    borderColor: Palette.border,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    backgroundColor: Palette.surface,
+  },
+  syncButtonDisabled: { opacity: 0.6 },
+  syncButtonLabel: { fontSize: 13, fontWeight: '700', color: Palette.primary },
   title: { fontSize: 28, fontWeight: '800', color: Palette.text },
   subtitle: { fontSize: 14, color: Palette.textSecondary },
   fab: {

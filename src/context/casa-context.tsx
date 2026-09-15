@@ -8,6 +8,33 @@ import type { Casa, CasaMember, Profile } from '@/lib/types';
 
 const CURRENT_CASA_KEY = 'micasa.current_casa_id';
 
+async function fetchMembersForCasa(casaId: string) {
+  const { data } = await supabase
+    .from('casa_members')
+    .select('*')
+    .eq('casa_id', casaId);
+  const rows = data ?? [];
+  const members: CasaMember[] = rows.map((m) => ({
+    ...m,
+    role: m.role === 'owner' || m.role === 'admin' ? m.role : 'member',
+  }));
+
+  const userIds = rows.map((m) => m.user_id);
+  let profiles: Record<string, Profile | null> = {};
+  if (userIds.length > 0) {
+    const { data: profileRows } = await supabase
+      .from('profiles')
+      .select('*')
+      .in('id', userIds);
+    profiles = {};
+    for (const id of userIds) {
+      profiles[id] = profileRows?.find((p) => p.id === id) ?? null;
+    }
+  }
+
+  return { members, profiles };
+}
+
 export type CasaError = { message: string };
 
 interface CasaContextValue {
@@ -20,6 +47,7 @@ interface CasaContextValue {
   createCasa: (name: string) => Promise<CasaError | null>;
   joinCasa: (code: string) => Promise<CasaError | null>;
   refresh: () => Promise<void>;
+  refreshMembers: () => Promise<void>;
 }
 
 const CasaContext = createContext<CasaContextValue | undefined>(undefined);
@@ -81,37 +109,25 @@ export function CasaProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!currentCasa) return;
-    let cancelled = false;
+    let active = true;
 
     (async () => {
-      const { data } = await supabase
-        .from('casa_members')
-        .select('*')
-        .eq('casa_id', currentCasa.id);
-      if (cancelled) return;
-      const rows = data ?? [];
-      setMembersByCasa((prev) => ({ ...prev, [currentCasa.id]: rows }));
-
-      const userIds = rows.map((m) => m.user_id);
-      if (userIds.length > 0) {
-        const { data: profileRows } = await supabase
-          .from('profiles')
-          .select('*')
-          .in('id', userIds);
-        if (cancelled) return;
-        const map: Record<string, Profile | null> = {};
-        for (const id of userIds) {
-          map[id] = profileRows?.find((p) => p.id === id) ?? null;
-        }
-        setProfilesByCasa((prev) => ({ ...prev, [currentCasa.id]: map }));
-      } else {
-        setProfilesByCasa((prev) => ({ ...prev, [currentCasa.id]: {} }));
-      }
+      const result = await fetchMembersForCasa(currentCasa.id);
+      if (!active) return;
+      setMembersByCasa((prev) => ({ ...prev, [currentCasa.id]: result.members }));
+      setProfilesByCasa((prev) => ({ ...prev, [currentCasa.id]: result.profiles }));
     })();
 
     return () => {
-      cancelled = true;
+      active = false;
     };
+  }, [currentCasa]);
+
+  const refreshMembers = useCallback(async () => {
+    if (!currentCasa) return;
+    const result = await fetchMembersForCasa(currentCasa.id);
+    setMembersByCasa((prev) => ({ ...prev, [currentCasa.id]: result.members }));
+    setProfilesByCasa((prev) => ({ ...prev, [currentCasa.id]: result.profiles }));
   }, [currentCasa]);
 
   const createCasa = useCallback(
@@ -166,8 +182,9 @@ export function CasaProvider({ children }: { children: ReactNode }) {
       createCasa,
       joinCasa,
       refresh,
+      refreshMembers,
     }),
-    [casas, currentCasa, members, profiles, loading, setCurrentCasa, createCasa, joinCasa, refresh],
+    [casas, currentCasa, members, profiles, loading, setCurrentCasa, createCasa, joinCasa, refresh, refreshMembers],
   );
 
   return <CasaContext.Provider value={value}>{children}</CasaContext.Provider>;

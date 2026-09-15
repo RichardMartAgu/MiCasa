@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Modal,
@@ -33,7 +33,7 @@ interface CategoryManagerProps {
   onDelete: (id: string) => void;
 }
 
-const COLOR_OPTIONS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+const COLOR_OPTIONS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
 export function CategoryManager({
   visible,
@@ -45,19 +45,12 @@ export function CategoryManager({
   onEdit,
   onDelete,
 }: CategoryManagerProps) {
-  const [name, setName] = useState('');
-  const [budget, setBudget] = useState('');
-  const [color, setColor] = useState<string>(Palette.primary);
+  const [name, setName] = useState(editingCategory?.name ?? '');
+  const [budget, setBudget] = useState(
+    editingCategory?.budget != null ? String(editingCategory.budget) : '',
+  );
+  const [color, setColor] = useState<string>(editingCategory?.color ?? Palette.primary);
   const [errors, setErrors] = useState<{ name?: string; budget?: string }>({});
-
-  useEffect(() => {
-    if (visible) {
-      setName(editingCategory?.name ?? '');
-      setBudget(editingCategory?.budget != null ? String(editingCategory.budget) : '');
-      setColor(editingCategory?.color ?? Palette.primary);
-      setErrors({});
-    }
-  }, [visible, editingCategory]);
 
   function handleSave() {
     const nameCheck = validateTitle(name);
@@ -77,7 +70,12 @@ export function CategoryManager({
   }
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      accessibilityViewIsModal
+      onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View style={styles.modal}>
           <Text style={styles.modalTitle}>
@@ -109,6 +107,9 @@ export function CategoryManager({
                     { backgroundColor: c },
                     color === c && styles.colorSelected,
                   ]}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`Color ${c}`}
+                  accessibilityState={{ checked: color === c }}
                   onPress={() => setColor(c)}
                 />
               ))}
@@ -125,10 +126,18 @@ export function CategoryManager({
                 <View style={[styles.colorDot, { backgroundColor: c.color }]} />
                 <Text style={styles.categoryName}>{c.name}</Text>
                 <View style={styles.rowActions}>
-                  <Pressable onPress={() => onEdit(c)} hitSlop={10}>
+                  <Pressable
+                    onPress={() => onEdit(c)}
+                    hitSlop={14}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Editar sección ${c.name}`}>
                     <Ionicons name="pencil-outline" size={18} color={Palette.textSecondary} />
                   </Pressable>
-                  <Pressable onPress={() => onDelete(c.id)} hitSlop={10}>
+                  <Pressable
+                    onPress={() => onDelete(c.id)}
+                    hitSlop={14}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Eliminar sección ${c.name}`}>
                     <Ionicons name="trash-outline" size={18} color={Palette.danger} />
                   </Pressable>
                 </View>
@@ -153,7 +162,7 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 20, fontWeight: '800', color: Palette.text, marginBottom: Spacing.three },
   form: { gap: Spacing.three },
   colorRow: { flexDirection: 'row', gap: Spacing.two, flexWrap: 'wrap' },
-  colorOption: { width: 36, height: 36, borderRadius: Radius.pill },
+  colorOption: { width: 44, height: 44, borderRadius: Radius.pill },
   colorSelected: { borderWidth: 3, borderColor: Palette.text },
   categoryManageRow: {
     flexDirection: 'row',
