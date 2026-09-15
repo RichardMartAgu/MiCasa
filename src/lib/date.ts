@@ -44,6 +44,19 @@ export function fromISODate(iso: string): Date {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
+export function safeDate(iso: string): Date | null {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [y, m, d] = iso.split('-').map(Number);
+    if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const date = new Date(y, m - 1, d);
+    if (toISODate(date) !== iso) return null;
+    return date;
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
 function parseISO(iso: string): Date {
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
     return fromISODate(iso);

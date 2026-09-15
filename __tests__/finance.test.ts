@@ -112,4 +112,16 @@ describe('monthlyTotals', () => {
     expect(totals[1].key).toBe('2026-08');
     expect(totals[1].total).toBe(30);
   });
+
+  it('excluye gastos con spent_at inválida', () => {
+    const expenses = [
+      expense({ amount: 10, spent_at: '2026-08-03T10:00:00' }),
+      expense({ amount: 99, spent_at: 'invalid' }),
+      expense({ amount: 5, spent_at: '2026-07-01T10:00:00' }),
+    ];
+    const totals = monthlyTotals(expenses, 'es-ES');
+    expect(totals).toHaveLength(2);
+    expect(totals[0].total).toBe(5);
+    expect(totals[1].total).toBe(10);
+  });
 });

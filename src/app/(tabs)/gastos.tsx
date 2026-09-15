@@ -8,8 +8,10 @@ import { ExpenseForm } from '@/components/expenses/expense-form';
 import type { ExpenseFormInput } from '@/components/expenses/expense-form';
 import { ExpenseList } from '@/components/expenses/expense-list';
 import { Card } from '@/components/ui/card';
+import { ErrorBanner } from '@/components/ui/error-banner';
 import { FilterBar } from '@/components/ui/filter-bar';
 import type { FilterChipOption } from '@/components/ui/filter-chips';
+import { NoCasaState } from '@/components/ui/no-casa-state';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
@@ -24,7 +26,7 @@ import {
   updateCategory,
   updateExpense,
 } from '@/lib/api';
-import { monthKey, toISODate } from '@/lib/date';
+import { monthKey, safeDate, toISODate } from '@/lib/date';
 import { filterExpenses } from '@/lib/filter';
 import { totalsByCategory } from '@/lib/finance';
 import { formatCurrency } from '@/lib/format';
@@ -32,17 +34,19 @@ import type { Category, Expense } from '@/lib/types';
 
 export default function GastosScreen() {
   const { user } = useAuth();
-  const { currentCasa } = useCasa();
-  const { data: expenses } = useRealtimeCollection<Expense>(
+  const { currentCasa, loading } = useCasa();
+  const { data: expenses, error: expensesError } = useRealtimeCollection<Expense>(
     () => (currentCasa ? fetchExpenses(currentCasa.id) : Promise.resolve([])),
     'expenses',
     currentCasa?.id ?? null,
   );
-  const { data: categories } = useRealtimeCollection<Category>(
+  const { data: categories, error: categoriesError } = useRealtimeCollection<Category>(
     () => (currentCasa ? fetchCategories(currentCasa.id) : Promise.resolve([])),
     'categories',
     currentCasa?.id ?? null,
   );
+
+  const loadError = expensesError ?? categoriesError;
 
   const [expenseModalVisible, setExpenseModalVisible] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -78,15 +82,25 @@ export default function GastosScreen() {
   const totals = useMemo(
     () =>
       totalsByCategory(
-        expenses.filter((e) => monthKey(new Date(e.spent_at)) === thisMonth),
+        expenses.filter((e) => {
+          const d = safeDate(e.spent_at);
+          return d !== null && monthKey(d) === thisMonth;
+        }),
         categories,
       ),
     [expenses, categories, thisMonth],
   );
   const monthTotal = totals.reduce((sum, t) => sum + t.total, 0);
   const todayTotal = expenses
-    .filter((e) => toISODate(new Date(e.spent_at)) === toISODate(now))
+    .filter((e) => {
+      const d = safeDate(e.spent_at);
+      return d !== null && toISODate(d) === toISODate(now);
+    })
     .reduce((sum, e) => sum + e.amount, 0);
+
+  if (!loading && !currentCasa) {
+    return <NoCasaState />;
+  }
 
   function openAddExpense() {
     setEditingExpense(null);
@@ -178,10 +192,18 @@ export default function GastosScreen() {
           </Text>
         </View>
         <View style={styles.headerActions}>
-          <Pressable style={styles.iconButton} onPress={openAddCategory}>
+          <Pressable
+            style={styles.iconButton}
+            accessibilityRole="button"
+            accessibilityLabel="Gestionar secciones"
+            onPress={openAddCategory}>
             <Ionicons name="layers-outline" size={22} color={Palette.primary} />
           </Pressable>
-          <Pressable style={styles.fab} onPress={openAddExpense}>
+          <Pressable
+            style={styles.fab}
+            accessibilityRole="button"
+            accessibilityLabel="Nuevo gasto"
+            onPress={openAddExpense}>
             <Ionicons name="add" size={26} color={Palette.onPrimary} />
           </Pressable>
         </View>
@@ -201,6 +223,7 @@ export default function GastosScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.content}>
+        {loadError ? <ErrorBanner message={loadError} /> : null}
         <Card>
           <Text style={styles.sectionTitle}>Este mes</Text>
           <Text style={styles.total}>{formatCurrency(monthTotal)}</Text>

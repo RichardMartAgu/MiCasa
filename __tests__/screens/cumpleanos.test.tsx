@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 
 import CumpleanosScreen from '@/app/(tabs)/cumpleanos';
@@ -18,6 +18,11 @@ jest.mock('@expo/vector-icons', () => {
     Ionicons: ({ name }: { name: string }) => <Text>{name}</Text>,
   };
 });
+
+const mockNavigate = jest.fn();
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ navigate: mockNavigate }),
+}));
 
 const mockUseAuth = jest.fn();
 jest.mock('@/context/auth-context', () => ({
@@ -51,10 +56,14 @@ jest.mock('@/lib/birthdays', () => ({
   upcomingBirthdays: (...args: unknown[]) => mockUpcomingBirthdays(...args),
 }));
 
-const mockFromISODate = jest.fn();
+const mockSyncBirthdays = jest.fn();
+jest.mock('@/lib/calendar-sync', () => ({
+  syncBirthdays: (...args: unknown[]) => mockSyncBirthdays(...args),
+}));
+
 const mockToISODate = jest.fn();
 jest.mock('@/lib/date', () => ({
-  fromISODate: (...args: unknown[]) => mockFromISODate(...args),
+  ...jest.requireActual('@/lib/date'),
   toISODate: (...args: unknown[]) => mockToISODate(...args),
 }));
 
@@ -111,7 +120,6 @@ beforeEach(() => {
   mockUpdateContact.mockResolvedValue(null);
   mockBirthdayLabel.mockReturnValue('en 5 días');
   mockUpcomingBirthdays.mockReturnValue([]);
-  mockFromISODate.mockReturnValue(new Date(2000, 0, 1));
   mockToISODate.mockReturnValue('2020-05-10');
   mockValidateTitle.mockReturnValue({ valid: true });
   mockValidateDate.mockReturnValue({ valid: true });
@@ -128,6 +136,52 @@ describe('CumpleanosScreen', () => {
   it('muestra EmptyState sin cumpleaños próximos', () => {
     const { getByText } = setup();
     expect(getByText('Sin cumpleaños próximos')).toBeTruthy();
+  });
+
+  it('avisa sin contactos al pulsar sincronizar', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const { getByText } = setup([]);
+
+    fireEvent.press(getByText('Calendario'));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Sin contactos',
+      'Añade contactos primero para sincronizar sus cumpleaños.',
+    );
+    alertSpy.mockRestore();
+  });
+
+  it('sincroniza cumpleaños con calendario tras confirmar', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockSyncBirthdays.mockResolvedValue({ synced: 2, errors: 0 });
+    const { getByText } = setup([soonContact, restContact]);
+
+    fireEvent.press(getByText('Calendario'));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Sincronizar cumpleaños',
+      expect.stringContaining('para 2 contactos'),
+      expect.arrayContaining([
+        expect.objectContaining({ text: 'Cancelar', style: 'cancel' }),
+        expect.objectContaining({ text: 'Sincronizar' }),
+      ]),
+    );
+
+    const confirmButton = alertSpy.mock.calls[0][2]?.find(
+      (btn) => btn.text === 'Sincronizar',
+    );
+    await act(async () => {
+      await confirmButton?.onPress?.();
+    });
+
+    await waitFor(() => {
+      expect(mockSyncBirthdays).toHaveBeenCalledWith([soonContact, restContact]);
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Sincronización completada',
+        '2 cumpleaños sincronizados con el calendario.',
+      );
+    });
+    alertSpy.mockRestore();
   });
 
   it('muestra cumpleaños próximos', () => {
@@ -148,6 +202,18 @@ describe('CumpleanosScreen', () => {
     expect(getByText('Leo')).toBeTruthy();
     expect(getByText(/👪 Hijo/)).toBeTruthy();
     expect(getByText('📞 612345678')).toBeTruthy();
+  });
+
+  it('renderiza contacto con birth_date inválida sin crash', () => {
+    const invalidContact: Contact = {
+      ...restContact,
+      id: 'c3',
+      birth_date: 'basura',
+    };
+    const { getByText } = setup([invalidContact]);
+
+    expect(getByText('Leo')).toBeTruthy();
+    expect(getByText(/🎂 —/)).toBeTruthy();
   });
 
   it('abre modal y crea contacto nuevo', async () => {
@@ -215,5 +281,12 @@ describe('CumpleanosScreen', () => {
       );
     });
     alertSpy.mockRestore();
+  });
+
+  it('muestra aviso de crear casa cuando no hay casa', () => {
+    mockUseCasa.mockReturnValue({ currentCasa: null, loading: false });
+    const { getByText } = render(<CumpleanosScreen />);
+    expect(getByText('Crea una casa primero')).toBeTruthy();
+    expect(getByText('Ir a Ajustes')).toBeTruthy();
   });
 });

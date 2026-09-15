@@ -71,14 +71,14 @@ describe('ExpenseList', () => {
     expect(getByText(/Sin sección/)).toBeTruthy();
   });
 
-  it('muestra solo 30 gastos', () => {
+  it('renderiza todos los gastos sin truncar', () => {
     const manyExpenses = Array.from({ length: 35 }, (_, i) => ({
       ...expense,
       id: `e${i}`,
       title: `Gasto ${i}`,
     }));
-    const { queryByText, getByText } = setup(manyExpenses);
+    const { getByText } = setup(manyExpenses);
     expect(getByText('Gasto 0')).toBeTruthy();
-    expect(queryByText('Gasto 30')).toBeNull();
+    expect(getByText('Gasto 34')).toBeTruthy();
   });
 });

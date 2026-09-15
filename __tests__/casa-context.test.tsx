@@ -147,11 +147,11 @@ describe('CasaProvider', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
-      const error = await result.current.joinCasa('abcd1234');
+      const error = await result.current.joinCasa('abcdef0123456789');
       expect(error).toBeNull();
     });
 
-    expect(mockRpc).toHaveBeenCalledWith('join_casa', { code: 'ABCD1234' });
+    expect(mockRpc).toHaveBeenCalledWith('join_casa', { code: 'ABCDEF0123456789' });
   });
 
   it('joinCasa devuelve error si la casa no existe', async () => {
@@ -160,7 +160,7 @@ describe('CasaProvider', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
-      const error = await result.current.joinCasa('ABCD1234');
+      const error = await result.current.joinCasa('ABCDEF0123456789');
       expect(error).toEqual({ message: 'No existe ninguna casa con ese código.' });
     });
   });
@@ -171,7 +171,7 @@ describe('CasaProvider', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
-      const error = await result.current.joinCasa('ABCD1234');
+      const error = await result.current.joinCasa('ABCDEF0123456789');
       expect(error).toEqual({ message: 'Debes iniciar sesión.' });
     });
   });
@@ -193,6 +193,31 @@ describe('CasaProvider', () => {
     const { result } = renderHook(() => useCasa(), { wrapper });
     await waitFor(() => expect(result.current.casas).toEqual([casa]));
     await waitFor(() => expect(result.current.members).toEqual([member]));
+    expect(result.current.profiles).toEqual({ u1: profile });
+  });
+
+  it('refreshMembers recarga miembros de la casa actual', async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'casas') {
+        return queryChain({ data: [casa], error: null });
+      }
+      if (table === 'casa_members') {
+        return queryChain({ data: [member], error: null });
+      }
+      if (table === 'profiles') {
+        return queryChain({ data: [profile], error: null });
+      }
+      return queryChain({ data: [], error: null });
+    });
+
+    const { result } = renderHook(() => useCasa(), { wrapper });
+    await waitFor(() => expect(result.current.members).toEqual([member]));
+
+    await act(async () => {
+      await result.current.refreshMembers();
+    });
+
+    expect(result.current.members).toEqual([member]);
     expect(result.current.profiles).toEqual({ u1: profile });
   });
 

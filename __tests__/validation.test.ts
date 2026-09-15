@@ -66,12 +66,13 @@ describe('validateCasaName', () => {
 });
 
 describe('validateInviteCode', () => {
-  it('acepta códigos de 8 caracteres alfanuméricos', () => {
-    expect(validateInviteCode('ABCD1234')).toEqual({ valid: true });
-    expect(validateInviteCode('abcd1234')).toEqual({ valid: true });
+  it('acepta códigos de 16 caracteres hexadecimales', () => {
+    expect(validateInviteCode('ABCDEF0123456789')).toEqual({ valid: true });
+    expect(validateInviteCode('abcdef0123456789')).toEqual({ valid: true });
   });
 
   it('rechaza códigos con formato incorrecto', () => {
+    expect(validateInviteCode('ABCD1234')).toMatchObject({ valid: false });
     expect(validateInviteCode('ABC')).toMatchObject({ valid: false });
     expect(validateInviteCode('AB CD 12')).toMatchObject({ valid: false });
     expect(validateInviteCode('')).toMatchObject({ valid: false });

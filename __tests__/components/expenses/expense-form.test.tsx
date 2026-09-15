@@ -1,6 +1,7 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import { ExpenseForm } from '@/components/expenses/expense-form';
+import { toISODate } from '@/lib/date';
 import type { Category, Expense } from '@/lib/types';
 
 jest.mock('@react-native-community/datetimepicker', () => {
@@ -70,6 +71,13 @@ describe('ExpenseForm', () => {
     const { getByDisplayValue } = setup({ expense });
     expect(getByDisplayValue('Supermercado')).toBeTruthy();
     expect(getByDisplayValue('45.5')).toBeTruthy();
+  });
+
+  it('usa fecha actual si spent_at es inválida sin crash', () => {
+    const invalidExpense: Expense = { ...expense, spent_at: 'invalid' };
+    const { getByText } = setup({ expense: invalidExpense });
+    expect(getByText('Editar gasto')).toBeTruthy();
+    expect(getByText(`📅 ${toISODate(new Date())}`)).toBeTruthy();
   });
 
   it('llama onSave con input correcto', async () => {

@@ -2,41 +2,45 @@ import { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/ui/card';
+import { ErrorBanner } from '@/components/ui/error-banner';
+import { NoCasaState } from '@/components/ui/no-casa-state';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
 import { fetchAppointments, fetchContacts, fetchExpenses, fetchShoppingLists } from '@/lib/api';
 import { birthdayLabel, upcomingBirthdays } from '@/lib/birthdays';
-import { monthKey } from '@/lib/date';
+import { formatDateTime, monthKey, safeDate } from '@/lib/date';
 import { totalExpenses } from '@/lib/finance';
 import { formatCurrency, initials } from '@/lib/format';
 import type { Appointment, Contact, Expense, ShoppingList } from '@/lib/types';
 
 export default function HomeScreen() {
   const { user } = useAuth();
-  const { currentCasa, members, profiles } = useCasa();
+  const { currentCasa, members, profiles, loading } = useCasa();
 
-  const { data: appointments } = useRealtimeCollection<Appointment>(
+  const { data: appointments, error: appointmentsError } = useRealtimeCollection<Appointment>(
     () => (currentCasa ? fetchAppointments(currentCasa.id) : Promise.resolve([])),
     'appointments',
     currentCasa?.id ?? null,
   );
-  const { data: expenses } = useRealtimeCollection<Expense>(
+  const { data: expenses, error: expensesError } = useRealtimeCollection<Expense>(
     () => (currentCasa ? fetchExpenses(currentCasa.id) : Promise.resolve([])),
     'expenses',
     currentCasa?.id ?? null,
   );
-  const { data: lists } = useRealtimeCollection<ShoppingList>(
+  const { data: lists, error: listsError } = useRealtimeCollection<ShoppingList>(
     () => (currentCasa ? fetchShoppingLists(currentCasa.id) : Promise.resolve([])),
     'shopping_lists',
     currentCasa?.id ?? null,
   );
-  const { data: contacts } = useRealtimeCollection<Contact>(
+  const { data: contacts, error: contactsError } = useRealtimeCollection<Contact>(
     () => (currentCasa ? fetchContacts(currentCasa.id) : Promise.resolve([])),
     'contacts',
     currentCasa?.id ?? null,
   );
+
+  const loadError = appointmentsError ?? expensesError ?? listsError ?? contactsError;
 
   const upcoming = useMemo(() => {
     const now = new Date();
@@ -46,39 +50,61 @@ export default function HomeScreen() {
   const nextAppointments = useMemo(() => {
     const now = new Date();
     return appointments
-      .filter((a) => new Date(a.starts_at) >= now)
-      .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
-      .slice(0, 3);
+      .map((a) => ({ a, d: safeDate(a.starts_at) }))
+      .filter((x): x is { a: Appointment; d: Date } => x.d !== null && x.d >= now)
+      .sort((x, y) => x.d.getTime() - y.d.getTime())
+      .slice(0, 3)
+      .map((x) => x.a);
   }, [appointments]);
 
   const monthTotal = useMemo(() => {
     const key = monthKey(new Date());
-    return totalExpenses(expenses.filter((e) => monthKey(new Date(e.spent_at)) === key));
+    return totalExpenses(
+      expenses.filter((e) => {
+        const d = safeDate(e.spent_at);
+        return d !== null && monthKey(d) === key;
+      }),
+    );
   }, [expenses]);
 
   const pendingLists = useMemo(() => lists.filter((l) => !l.done).length, [lists]);
 
   const myProfile = user ? profiles[user.id] : null;
 
+  const header = (
+    <View style={styles.header}>
+      <View style={styles.headerRow}>
+        <View>
+          <Text style={styles.casaName}>{currentCasa?.name ?? 'MiCasa'}</Text>
+          <Text style={styles.greeting}>
+            Hola, {myProfile?.display_name ?? 'casa'} 👋
+          </Text>
+        </View>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials(myProfile?.display_name ?? user?.email ?? '?')}</Text>
+        </View>
+      </View>
+      <Text style={styles.memberCount}>
+        {members.length} {members.length === 1 ? 'miembro' : 'miembros'} · código de
+        invitación: <Text style={styles.code}>{currentCasa?.invite_code}</Text>
+      </Text>
+    </View>
+  );
+
+  if (!loading && !currentCasa) {
+    return (
+      <View style={styles.container}>
+        {header}
+        <NoCasaState />
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.casaName}>{currentCasa?.name ?? 'MiCasa'}</Text>
-            <Text style={styles.greeting}>
-              Hola, {myProfile?.display_name ?? 'casa'} 👋
-            </Text>
-          </View>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initials(myProfile?.display_name ?? user?.email ?? '?')}</Text>
-          </View>
-        </View>
-        <Text style={styles.memberCount}>
-          {members.length} {members.length === 1 ? 'miembro' : 'miembros'} · código de
-          invitación: <Text style={styles.code}>{currentCasa?.invite_code}</Text>
-        </Text>
-      </View>
+      {header}
+
+      {loadError ? <ErrorBanner message={loadError} /> : null}
 
       <View style={styles.statsRow}>
         <Card style={styles.statCard}>
@@ -99,16 +125,7 @@ export default function HomeScreen() {
           nextAppointments.map((a) => (
             <View key={a.id} style={styles.row}>
               <Text style={styles.rowTitle}>{a.title}</Text>
-              <Text style={styles.rowMeta}>
-                {new Date(a.starts_at).toLocaleDateString('es-ES', {
-                  day: 'numeric',
-                  month: 'short',
-                })}{' '}
-                · {new Date(a.starts_at).toLocaleTimeString('es-ES', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-              </Text>
+              <Text style={styles.rowMeta}>{formatDateTime(a.starts_at)}</Text>
             </View>
           ))
         )}

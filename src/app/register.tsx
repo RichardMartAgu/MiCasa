@@ -97,7 +97,11 @@ export default function RegisterScreen() {
               error={errors.password}
             />
 
-            {errors.form ? <Text style={styles.formError}>{errors.form}</Text> : null}
+            {errors.form ? (
+              <Text style={styles.formError} accessibilityRole="alert">
+                {errors.form}
+              </Text>
+            ) : null}
 
             <Button title="Crear cuenta" onPress={handleSubmit} loading={loading} />
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -8,12 +8,33 @@ import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
+import { removeCasaMember, setCasaMemberRole } from '@/lib/api';
 import { formatInviteCode, initials } from '@/lib/format';
+import type { CasaMember } from '@/lib/types';
 import { validateCasaName, validateInviteCode } from '@/lib/validation';
 
 export default function AjustesScreen() {
   const { user, signOut } = useAuth();
-  const { casas, currentCasa, members, profiles, setCurrentCasa, createCasa, joinCasa } = useCasa();
+  const {
+    casas,
+    currentCasa,
+    members,
+    profiles,
+    setCurrentCasa,
+    createCasa,
+    joinCasa,
+    refreshMembers,
+  } = useCasa();
+
+  const isOwner = useMemo(
+    () =>
+      Boolean(
+        user &&
+          currentCasa &&
+          members.some((m) => m.user_id === user.id && m.role === 'owner'),
+      ),
+    [user, currentCasa, members],
+  );
 
   const [createModal, setCreateModal] = useState(false);
   const [joinModal, setJoinModal] = useState(false);
@@ -56,6 +77,44 @@ export default function AjustesScreen() {
     setInviteCode('');
     setError(null);
     setJoinModal(false);
+  }
+
+  function handleToggleRole(member: CasaMember) {
+    if (!currentCasa) return;
+    const next = member.role === 'admin' ? 'member' : 'admin';
+    const name = profiles[member.user_id]?.display_name ?? 'Este miembro';
+    Alert.alert(
+      next === 'admin' ? 'Hacer administrador' : 'Quitar administrador',
+      `${name} pasará a ${next === 'admin' ? 'administrador' : 'miembro'}.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Confirmar',
+          onPress: async () => {
+            const err = await setCasaMemberRole(currentCasa.id, member.user_id, next);
+            if (err) Alert.alert('Error', err.message);
+            else await refreshMembers();
+          },
+        },
+      ],
+    );
+  }
+
+  function handleRemoveMember(member: CasaMember) {
+    if (!currentCasa) return;
+    const name = profiles[member.user_id]?.display_name ?? 'Este miembro';
+    Alert.alert('Eliminar miembro', `¿Quitar a ${name} de la casa?`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Eliminar',
+        style: 'destructive',
+        onPress: async () => {
+          const err = await removeCasaMember(currentCasa.id, member.user_id);
+          if (err) Alert.alert('Error', err.message);
+          else await refreshMembers();
+        },
+      },
+    ]);
   }
 
   return (
@@ -105,6 +164,28 @@ export default function AjustesScreen() {
             <Text style={styles.cardMeta}>
               {m.role === 'owner' ? 'Administrador' : m.role === 'admin' ? 'Admin' : 'Miembro'}
             </Text>
+            {isOwner && m.user_id !== user?.id && m.role !== 'owner' ? (
+              <View style={styles.memberActions}>
+                <Pressable
+                  onPress={() => handleToggleRole(m)}
+                  hitSlop={10}
+                  accessibilityLabel={
+                    m.role === 'admin' ? 'Quitar administrador' : 'Hacer administrador'
+                  }>
+                  <Ionicons
+                    name={m.role === 'admin' ? 'shield-outline' : 'shield-checkmark-outline'}
+                    size={20}
+                    color={Palette.primary}
+                  />
+                </Pressable>
+                <Pressable
+                  onPress={() => handleRemoveMember(m)}
+                  hitSlop={10}
+                  accessibilityLabel={`Eliminar a ${profiles[m.user_id]?.display_name ?? 'miembro'}`}>
+                  <Ionicons name="trash-outline" size={20} color={Palette.danger} />
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         ))}
       </Card>
@@ -115,6 +196,8 @@ export default function AjustesScreen() {
           <Pressable
             key={casa.id}
             style={styles.casaRow}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: casa.id === currentCasa?.id }}
             onPress={() => {
               setCurrentCasa(casa);
               Alert.alert('Casa seleccionada', `Ahora estás gestionando «${casa.name}».`);
@@ -142,6 +225,7 @@ export default function AjustesScreen() {
         visible={createModal}
         animationType="slide"
         transparent
+        accessibilityViewIsModal
         onRequestClose={() => setCreateModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
@@ -165,6 +249,7 @@ export default function AjustesScreen() {
         visible={joinModal}
         animationType="slide"
         transparent
+        accessibilityViewIsModal
         onRequestClose={() => setJoinModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
@@ -174,7 +259,7 @@ export default function AjustesScreen() {
               value={inviteCode}
               onChangeText={setInviteCode}
               autoCapitalize="characters"
-              placeholder="8AB3D4EF"
+              placeholder="ABCDEF0123456789"
               error={error}
             />
             <View style={styles.modalActions}>
@@ -224,10 +309,12 @@ const styles = StyleSheet.create({
   },
   memberAvatarText: { fontSize: 14, fontWeight: '700', color: Palette.primary },
   memberName: { flex: 1, fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  memberActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   casaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
+    minHeight: 44,
     paddingVertical: Spacing.two,
   },
   casaRowName: { flex: 1, fontSize: 15, color: Palette.textStrong },

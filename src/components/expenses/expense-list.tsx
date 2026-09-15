@@ -27,7 +27,7 @@ export function ExpenseList({ expenses, categories, onEdit, onDelete }: ExpenseL
 
   return (
     <>
-      {expenses.slice(0, 30).map((e) => {
+      {expenses.map((e) => {
         const category = categories.find((c) => c.id === e.category_id);
         return (
           <Card key={e.id} style={styles.expenseRow}>
@@ -44,10 +44,18 @@ export function ExpenseList({ expenses, categories, onEdit, onDelete }: ExpenseL
             <View style={styles.expenseRight}>
               <Text style={styles.expenseAmount}>{formatCurrency(e.amount)}</Text>
               <View style={styles.rowActions}>
-                <Pressable onPress={() => onEdit(e)} hitSlop={10}>
+                <Pressable
+                  onPress={() => onEdit(e)}
+                  hitSlop={14}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Editar gasto ${e.title}`}>
                   <Ionicons name="pencil-outline" size={18} color={Palette.textSecondary} />
                 </Pressable>
-                <Pressable onPress={() => onDelete(e.id)} hitSlop={10}>
+                <Pressable
+                  onPress={() => onDelete(e.id)}
+                  hitSlop={14}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Eliminar gasto ${e.title}`}>
                   <Ionicons name="trash-outline" size={18} color={Palette.danger} />
                 </Pressable>
               </View>

@@ -33,6 +33,13 @@ jest.mock('@/hooks/use-realtime-collection', () => ({
   useRealtimeCollection: (...args: unknown[]) => mockUseRealtimeCollection(...args),
 }));
 
+const mockRemoveCasaMember = jest.fn();
+const mockSetCasaMemberRole = jest.fn();
+jest.mock('@/lib/api', () => ({
+  removeCasaMember: (...args: unknown[]) => mockRemoveCasaMember(...args),
+  setCasaMemberRole: (...args: unknown[]) => mockSetCasaMemberRole(...args),
+}));
+
 const mockFormatInviteCode = jest.fn();
 const mockInitials = jest.fn();
 jest.mock('@/lib/format', () => ({
@@ -89,14 +96,16 @@ const signOut = jest.fn();
 const mockSetCurrentCasa = jest.fn();
 const mockCreateCasa = jest.fn();
 const mockJoinCasa = jest.fn();
+const mockRefreshMembers = jest.fn();
 
 function setup(
   casas: Casa[] = [casa1, casa2],
   currentCasa = casa1,
   members: CasaMember[] = [ownerMember, member2],
   profiles: Record<string, Profile | null> = { u1: profileCarlos, u2: profileAna },
+  currentUser = user,
 ) {
-  mockUseAuth.mockReturnValue({ user, signOut });
+  mockUseAuth.mockReturnValue({ user: currentUser, signOut });
   mockUseCasa.mockReturnValue({
     casas,
     currentCasa,
@@ -105,6 +114,7 @@ function setup(
     setCurrentCasa: mockSetCurrentCasa,
     createCasa: mockCreateCasa,
     joinCasa: mockJoinCasa,
+    refreshMembers: mockRefreshMembers,
   });
   return render(<AjustesScreen />);
 }
@@ -114,6 +124,9 @@ beforeEach(() => {
   mockSetCurrentCasa.mockResolvedValue(undefined);
   mockCreateCasa.mockResolvedValue(null);
   mockJoinCasa.mockResolvedValue(null);
+  mockRefreshMembers.mockResolvedValue(undefined);
+  mockRemoveCasaMember.mockResolvedValue(null);
+  mockSetCasaMemberRole.mockResolvedValue(null);
   mockFormatInviteCode.mockReturnValue('ABCD1234');
   mockInitials.mockReturnValue('CA');
   mockValidateCasaName.mockReturnValue({ valid: true });
@@ -209,5 +222,58 @@ describe('AjustesScreen', () => {
     const { getByText } = setup();
     fireEvent.press(getByText('Cerrar sesión'));
     expect(signOut).toHaveBeenCalled();
+  });
+
+  it('owner ve controles de gestión para otros miembros', () => {
+    const { getByLabelText, queryByLabelText } = setup();
+    expect(getByLabelText('Hacer administrador')).toBeTruthy();
+    expect(getByLabelText('Eliminar a Ana')).toBeTruthy();
+    expect(queryByLabelText('Eliminar a Carlos')).toBeNull();
+  });
+
+  it('owner elimina miembro tras confirmar', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const { getByLabelText } = setup();
+
+    fireEvent.press(getByLabelText('Eliminar a Ana'));
+
+    const buttons = alertSpy.mock.calls[0][2] as { text: string; onPress?: () => void }[];
+    const confirm = buttons.find((b) => b.text === 'Eliminar');
+    await confirm?.onPress?.();
+
+    await waitFor(() => {
+      expect(mockRemoveCasaMember).toHaveBeenCalledWith('c1', 'u2');
+      expect(mockRefreshMembers).toHaveBeenCalled();
+    });
+    alertSpy.mockRestore();
+  });
+
+  it('owner promueve miembro a admin tras confirmar', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const { getByLabelText } = setup();
+
+    fireEvent.press(getByLabelText('Hacer administrador'));
+
+    const buttons = alertSpy.mock.calls[0][2] as { text: string; onPress?: () => void }[];
+    const confirm = buttons.find((b) => b.text === 'Confirmar');
+    await confirm?.onPress?.();
+
+    await waitFor(() => {
+      expect(mockSetCasaMemberRole).toHaveBeenCalledWith('c1', 'u2', 'admin');
+      expect(mockRefreshMembers).toHaveBeenCalled();
+    });
+    alertSpy.mockRestore();
+  });
+
+  it('no-owner no ve controles de gestión', () => {
+    const { queryByLabelText } = setup(
+      [casa1, casa2],
+      casa1,
+      [ownerMember, member2],
+      { u1: profileCarlos, u2: profileAna },
+      { id: 'u2', email: 'ana@casa.com' } as never,
+    );
+    expect(queryByLabelText('Hacer administrador')).toBeNull();
+    expect(queryByLabelText('Eliminar a Carlos')).toBeNull();
   });
 });

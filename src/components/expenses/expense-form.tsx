@@ -13,7 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Spacing } from '@/constants/theme';
-import { toISODate } from '@/lib/date';
+import { safeDate, toISODate } from '@/lib/date';
 import type { Category, Expense } from '@/lib/types';
 import { validateAmount, validateTitle } from '@/lib/validation';
 
@@ -44,7 +44,7 @@ export function ExpenseForm({
   const [title, setTitle] = useState(expense?.title ?? '');
   const [amount, setAmount] = useState(expense ? String(expense.amount) : '');
   const [categoryId, setCategoryId] = useState<string | null>(expense?.category_id ?? null);
-  const [date, setDate] = useState(expense ? new Date(expense.spent_at) : new Date());
+  const [date, setDate] = useState(expense ? safeDate(expense.spent_at) ?? new Date() : new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [errors, setErrors] = useState<{ title?: string; amount?: string }>({});
 
@@ -66,7 +66,12 @@ export function ExpenseForm({
   }
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      accessibilityViewIsModal
+      onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View style={styles.modal}>
           <Text style={styles.modalTitle}>
@@ -93,6 +98,8 @@ export function ExpenseForm({
               <View style={styles.chipRow}>
                 <Pressable
                   style={[styles.chip, categoryId === null && styles.chipSelected]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: categoryId === null }}
                   onPress={() => setCategoryId(null)}>
                   <Text style={[styles.chipText, categoryId === null && styles.chipTextSelected]}>
                     Sin sección
@@ -102,6 +109,8 @@ export function ExpenseForm({
                   <Pressable
                     key={c.id}
                     style={[styles.chip, categoryId === c.id && styles.chipSelected]}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: categoryId === c.id }}
                     onPress={() => setCategoryId(c.id)}>
                     <Text style={[styles.chipText, categoryId === c.id && styles.chipTextSelected]}>
                       {c.name}
@@ -111,7 +120,11 @@ export function ExpenseForm({
               </View>
             </View>
 
-            <Pressable style={styles.dateButton} onPress={() => setShowDatePicker(true)}>
+            <Pressable
+              style={styles.dateButton}
+              accessibilityRole="button"
+              accessibilityLabel={`Cambiar fecha: ${toISODate(date)}`}
+              onPress={() => setShowDatePicker(true)}>
               <Text style={styles.dateButtonLabel}>📅 {toISODate(date)}</Text>
             </Pressable>
             {showDatePicker && (
@@ -158,6 +171,8 @@ const styles = StyleSheet.create({
   chip: {
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
+    minHeight: 44,
+    justifyContent: 'center',
     borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Palette.border,
