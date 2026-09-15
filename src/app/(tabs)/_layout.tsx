@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Platform, StyleSheet, type ColorValue } from 'react-native';
 
 import { Palette, Radius, Shadow } from '@/constants/theme';
+import { Spinner } from '@/components/ui/spinner';
 import { useAuth } from '@/context/auth-context';
 
 function icon(name: keyof typeof Ionicons.glyphMap) {
@@ -15,7 +16,7 @@ function icon(name: keyof typeof Ionicons.glyphMap) {
 export default function TabsLayout() {
   const { session, loading } = useAuth();
 
-  if (loading) return null;
+  if (loading) return <Spinner fullScreen />;
   if (!session) return <Redirect href="/login" />;
 
   return (
