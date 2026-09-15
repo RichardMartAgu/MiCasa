@@ -51,6 +51,35 @@ Seis agentes especializados viven en `.opencode/agents/` e intervienen en el flu
 
 Ningún bloque de código se da por terminado ni se commitea si el `security` devuelve **BLOQUEADO** o `qa-test` **FALLA**. Si la auditoría falla, primero se corrigen los hallazgos y después se vuelve a auditar hasta obtener **APROBADO**/**PASA**.
 
+## Regla dura: aislamiento de features
+
+Toda feature nueva o refactorización significativa se trabaja en **worktree separado + rama propia** que sale de `develop`. Nunca se escribe directamente en `develop` ni en `main`.
+
+### Flujo obligatorio
+
+1. Crear rama desde `develop`: `git checkout develop && git checkout -b feat/nombre-feature`
+2. Crear worktree: `git worktree add ../MiCasa-nombre-feature feat/nombre-feature`
+3. Trabajar dentro del worktree (`/home/richard/MiCasa-nombre-feature/`)
+4. Cuando el bloque pase security (**APROBADO**) + qa-test (**PASA**):
+   - Hacer commit en el worktree
+   - Empujar rama: `git push -u origin feat/nombre-feature`
+5. Una vez TODOS los bloques de la feature completados y auditados:
+   - Crear PR contra `develop`
+   - Merge solo tras approval del usuario
+6. Limpiar worktree: `git worktree remove ../MiCasa-nombre-feature`
+
+### Por qué
+
+- Evita romper `develop` con código en progreso
+- Permite trabajar en múltiples features en paralelo
+- Cada feature tiene su historial limpio de commits
+- Rollback simple si algo sale mal
+
+### Excepciones
+
+- Hotfixes críticos de seguridad → rama `hotfix/` desde `main`, sin worktree
+- Cambios documentales (README, docs) → directo en rama correspondiente
+
 # Despliegue
 
 Antes de desplegar (local `npm run demo` o Vercel `npm run deploy:vercel`):

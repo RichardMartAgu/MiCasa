@@ -63,7 +63,7 @@ Ningún bloque se da por terminado sin **APROBADO** de security + **PASA** de qa
 ```
 src/
 ├── app/          # Rutas expo-router ((tabs)/Inicio, Citas, Gastos, Listas, Cumpleaños, Ajustes)
-├── components/   # expenses/, ui/ (Button, Card, TextField, EmptyState)
+├── components/   # splash-screen.tsx (animado), expenses/, ui/ (Button, Card, TextField, EmptyState)
 ├── constants/    # theme.ts (colores Dusk, espaciados)
 ├── context/      # AuthProvider, CasaProvider
 ├── hooks/        # useRealtimeCollection
