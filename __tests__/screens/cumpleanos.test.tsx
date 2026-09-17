@@ -217,14 +217,14 @@ describe('CumpleanosScreen', () => {
   });
 
   it('abre modal y crea contacto nuevo', async () => {
-    const { getByText, getAllByDisplayValue } = setup([]);
+    const { getByText, getByLabelText } = setup([]);
 
     fireEvent.press(getByText('add'));
     await waitFor(() => {
       expect(getByText('Nuevo contacto')).toBeTruthy();
     });
 
-    const [nameInput] = getAllByDisplayValue('');
+    const nameInput = getByLabelText('Nombre');
     fireEvent.changeText(nameInput, 'Sofía');
     fireEvent.press(getByText('Guardar'));
 
