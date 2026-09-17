@@ -3,7 +3,6 @@ import { Link, Redirect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,6 +16,7 @@ import {
 
 import { useAuth } from '@/context/auth-context';
 import { Palette, Shadow } from '@/constants/theme';
+import { Spinner } from '@/components/ui/spinner';
 import { validateEmail, validatePassword } from '@/lib/validation';
 
 interface FieldProps extends TextInputProps {
@@ -174,6 +174,7 @@ export default function LoginScreen() {
 
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ busy: loading }}
             disabled={loading}
             onPress={handleSubmit}
             style={({ pressed }) => [
@@ -181,7 +182,7 @@ export default function LoginScreen() {
               (pressed || loading) && styles.buttonPressed,
             ]}>
             {loading ? (
-              <ActivityIndicator color={Palette.onPrimary} />
+              <Spinner size="small" color={Palette.onPrimary} />
             ) : (
               <Text style={styles.buttonLabel}>Entrar</Text>
             )}

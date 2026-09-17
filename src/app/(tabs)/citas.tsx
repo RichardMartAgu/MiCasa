@@ -19,6 +19,7 @@ import { ErrorBanner } from '@/components/ui/error-banner';
 import { FilterBar } from '@/components/ui/filter-bar';
 import type { FilterChipOption } from '@/components/ui/filter-chips';
 import { NoCasaState } from '@/components/ui/no-casa-state';
+import { Spinner } from '@/components/ui/spinner';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -97,6 +98,8 @@ export default function CitasScreen() {
   const past = visibleAppointments
     .filter((a) => new Date(a.starts_at) < now)
     .sort((a, b) => new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime());
+
+  if (loading) return <Spinner fullScreen />;
 
   if (!loading && !currentCasa) {
     return <NoCasaState />;

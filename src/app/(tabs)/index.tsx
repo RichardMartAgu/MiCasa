@@ -4,6 +4,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Card } from '@/components/ui/card';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { NoCasaState } from '@/components/ui/no-casa-state';
+import { Spinner } from '@/components/ui/spinner';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
@@ -90,6 +91,8 @@ export default function HomeScreen() {
       </Text>
     </View>
   );
+
+  if (loading) return <Spinner fullScreen />;
 
   if (!loading && !currentCasa) {
     return (

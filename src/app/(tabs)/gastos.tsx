@@ -12,6 +12,7 @@ import { ErrorBanner } from '@/components/ui/error-banner';
 import { FilterBar } from '@/components/ui/filter-bar';
 import type { FilterChipOption } from '@/components/ui/filter-chips';
 import { NoCasaState } from '@/components/ui/no-casa-state';
+import { Spinner } from '@/components/ui/spinner';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
@@ -97,6 +98,8 @@ export default function GastosScreen() {
       return d !== null && toISODate(d) === toISODate(now);
     })
     .reduce((sum, e) => sum + e.amount, 0);
+
+  if (loading) return <Spinner fullScreen />;
 
   if (!loading && !currentCasa) {
     return <NoCasaState />;

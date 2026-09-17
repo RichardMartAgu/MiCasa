@@ -20,6 +20,7 @@ import { ErrorBanner } from '@/components/ui/error-banner';
 import { FilterBar } from '@/components/ui/filter-bar';
 import type { FilterChipOption } from '@/components/ui/filter-chips';
 import { NoCasaState } from '@/components/ui/no-casa-state';
+import { Spinner } from '@/components/ui/spinner';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -91,6 +92,8 @@ export default function CumpleanosScreen() {
   const upcoming = upcomingBirthdays(visibleContacts, now, 30);
   const upcomingIds = new Set(upcoming.map((u) => u.contact.id));
   const rest = visibleContacts.filter((c) => !upcomingIds.has(c.id));
+
+  if (loading) return <Spinner fullScreen />;
 
   if (!loading && !currentCasa) {
     return <NoCasaState />;

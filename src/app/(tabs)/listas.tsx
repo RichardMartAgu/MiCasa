@@ -16,6 +16,7 @@ import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { NoCasaState } from '@/components/ui/no-casa-state';
+import { Spinner } from '@/components/ui/spinner';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -60,6 +61,8 @@ export default function ListasScreen() {
   );
 
   const loadError = listsError ?? itemsError;
+
+  if (loading) return <Spinner fullScreen />;
 
   if (!loading && !currentCasa) {
     return <NoCasaState />;
