@@ -9,6 +9,7 @@ import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { removeCasaMember, setCasaMemberRole } from '@/lib/api';
+import { confirmDialog } from '@/lib/confirm';
 import { formatInviteCode, initials } from '@/lib/format';
 import type { Casa, CasaMember } from '@/lib/types';
 import { validateCasaName, validateInviteCode } from '@/lib/validation';
@@ -74,22 +75,15 @@ export default function AjustesScreen() {
     setCreateModal(false);
   }
 
-  function handleDeleteCasa(casa: Casa) {
-    Alert.alert(
+  async function handleDeleteCasa(casa: Casa) {
+    const ok = await confirmDialog(
       'Eliminar casa',
       `Se borrarán «${casa.name}» y todos sus datos. Esta acción no se puede deshacer.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: async () => {
-            const err = await deleteCasa(casa.id);
-            if (err) Alert.alert('Error', err.message);
-          },
-        },
-      ],
+      { confirmText: 'Eliminar', destructive: true },
     );
+    if (!ok) return;
+    const err = await deleteCasa(casa.id);
+    if (err) Alert.alert('Error', err.message);
   }
 
   function openAddCasa() {
@@ -138,21 +132,17 @@ export default function AjustesScreen() {
     );
   }
 
-  function handleRemoveMember(member: CasaMember) {
+  async function handleRemoveMember(member: CasaMember) {
     if (!currentCasa) return;
     const name = profiles[member.user_id]?.display_name ?? 'Este miembro';
-    Alert.alert('Eliminar miembro', `¿Quitar a ${name} de la casa?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Eliminar',
-        style: 'destructive',
-        onPress: async () => {
-          const err = await removeCasaMember(currentCasa.id, member.user_id);
-          if (err) Alert.alert('Error', err.message);
-          else await refreshMembers();
-        },
-      },
-    ]);
+    const ok = await confirmDialog('Eliminar miembro', `¿Quitar a ${name} de la casa?`, {
+      confirmText: 'Eliminar',
+      destructive: true,
+    });
+    if (!ok) return;
+    const err = await removeCasaMember(currentCasa.id, member.user_id);
+    if (err) Alert.alert('Error', err.message);
+    else await refreshMembers();
   }
 
   return (

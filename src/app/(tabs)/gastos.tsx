@@ -27,6 +27,7 @@ import {
   updateCategory,
   updateExpense,
 } from '@/lib/api';
+import { confirmDialog } from '@/lib/confirm';
 import { monthKey, safeDate, toISODate } from '@/lib/date';
 import { filterExpenses } from '@/lib/filter';
 import { totalsByCategory } from '@/lib/finance';
@@ -157,32 +158,26 @@ export default function GastosScreen() {
     setCategoryModalVisible(false);
   }
 
-  function handleDeleteCategory(id: string) {
-    Alert.alert('Eliminar sección', '¿Seguro? Los gastos de esa sección se quedarán sin categoría.', [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Eliminar',
-        style: 'destructive',
-        onPress: async () => {
-          const error = await removeCategory(id);
-          if (error) Alert.alert('Error', error.message);
-        },
-      },
-    ]);
+  async function handleDeleteCategory(id: string) {
+    const ok = await confirmDialog(
+      'Eliminar sección',
+      '¿Seguro? Los gastos de esa sección se quedarán sin categoría.',
+      { confirmText: 'Eliminar', destructive: true },
+    );
+    if (!ok) return;
+    const error = await removeCategory(id);
+    if (error) Alert.alert('Error', error.message);
   }
 
-  function handleDeleteExpense(id: string) {
-    Alert.alert('Eliminar gasto', '¿Seguro que quieres eliminar este gasto?', [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Eliminar',
-        style: 'destructive',
-        onPress: async () => {
-          const error = await removeExpense(id);
-          if (error) Alert.alert('Error', error.message);
-        },
-      },
-    ]);
+  async function handleDeleteExpense(id: string) {
+    const ok = await confirmDialog(
+      'Eliminar gasto',
+      '¿Seguro que quieres eliminar este gasto?',
+      { confirmText: 'Eliminar', destructive: true },
+    );
+    if (!ok) return;
+    const error = await removeExpense(id);
+    if (error) Alert.alert('Error', error.message);
   }
 
   return (

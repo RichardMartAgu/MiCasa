@@ -34,6 +34,7 @@ import {
 } from '@/lib/api';
 import { birthdayLabel, upcomingBirthdays } from '@/lib/birthdays';
 import { syncBirthdays } from '@/lib/calendar-sync';
+import { confirmDialog } from '@/lib/confirm';
 import { safeDate, toISODate } from '@/lib/date';
 import { filterContacts } from '@/lib/filter';
 import type { Contact } from '@/lib/types';
@@ -162,18 +163,15 @@ export default function CumpleanosScreen() {
     setModalVisible(false);
   }
 
-  function handleDelete(id: string) {
-    Alert.alert('Eliminar contacto', '¿Seguro que quieres eliminar este contacto?', [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Eliminar',
-        style: 'destructive',
-        onPress: async () => {
-          const error = await removeContact(id);
-          if (error) Alert.alert('Error', error.message);
-        },
-      },
-    ]);
+  async function handleDelete(id: string) {
+    const ok = await confirmDialog(
+      'Eliminar contacto',
+      '¿Seguro que quieres eliminar este contacto?',
+      { confirmText: 'Eliminar', destructive: true },
+    );
+    if (!ok) return;
+    const error = await removeContact(id);
+    if (error) Alert.alert('Error', error.message);
   }
 
   function handleSync() {
