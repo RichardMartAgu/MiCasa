@@ -642,6 +642,19 @@ alter publication supabase_realtime add table public.appointments;
 alter publication supabase_realtime add table public.appointment_kinds;
 alter publication supabase_realtime add table public.shopping_lists;
 alter publication supabase_realtime add table public.shopping_items;
+
+-- replica identity full: necesario para que realtime entregue eventos DELETE
+-- (y UPDATE) filtrables por columnas no-PK (casa_id, list_id). Sin esto, el
+-- borrado de ítems/listas/gastos/citas/contactos o cambios de miembros no
+-- refresca la UI del resto de miembros.
+alter table public.expenses replica identity full;
+alter table public.appointments replica identity full;
+alter table public.appointment_kinds replica identity full;
+alter table public.shopping_lists replica identity full;
+alter table public.shopping_items replica identity full;
+alter table public.categories replica identity full;
+alter table public.contacts replica identity full;
+alter table public.casa_members replica identity full;
 alter publication supabase_realtime add table public.categories;
 alter publication supabase_realtime add table public.contacts;
 alter publication supabase_realtime add table public.casa_members;
