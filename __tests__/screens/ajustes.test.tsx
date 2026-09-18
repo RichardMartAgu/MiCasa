@@ -96,6 +96,8 @@ const signOut = jest.fn();
 const mockSetCurrentCasa = jest.fn();
 const mockCreateCasa = jest.fn();
 const mockJoinCasa = jest.fn();
+const mockRenameCasa = jest.fn();
+const mockDeleteCasa = jest.fn();
 const mockRefreshMembers = jest.fn();
 
 function setup(
@@ -114,6 +116,8 @@ function setup(
     setCurrentCasa: mockSetCurrentCasa,
     createCasa: mockCreateCasa,
     joinCasa: mockJoinCasa,
+    renameCasa: mockRenameCasa,
+    deleteCasa: mockDeleteCasa,
     refreshMembers: mockRefreshMembers,
   });
   return render(<AjustesScreen />);
@@ -124,6 +128,8 @@ beforeEach(() => {
   mockSetCurrentCasa.mockResolvedValue(undefined);
   mockCreateCasa.mockResolvedValue(null);
   mockJoinCasa.mockResolvedValue(null);
+  mockRenameCasa.mockResolvedValue(null);
+  mockDeleteCasa.mockResolvedValue(null);
   mockRefreshMembers.mockResolvedValue(undefined);
   mockRemoveCasaMember.mockResolvedValue(null);
   mockSetCasaMemberRole.mockResolvedValue(null);
@@ -263,6 +269,58 @@ describe('AjustesScreen', () => {
       expect(mockRefreshMembers).toHaveBeenCalled();
     });
     alertSpy.mockRestore();
+  });
+
+  it('owner edita casa tras abrir modal', async () => {
+    const { getByText, getByLabelText, getByDisplayValue } = setup();
+
+    fireEvent.press(getByLabelText('Editar casa Mi Hogar'));
+    await waitFor(() => {
+      expect(getByText('Editar casa')).toBeTruthy();
+    });
+
+    const nameInput = getByDisplayValue('Mi Hogar');
+    fireEvent.changeText(nameInput, 'Hogar renovado');
+    fireEvent.press(getByText('Guardar cambios'));
+
+    await waitFor(() => {
+      expect(mockRenameCasa).toHaveBeenCalledWith('c1', 'Hogar renovado');
+    });
+  });
+
+  it('owner elimina casa tras confirmar', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const { getByLabelText } = setup();
+
+    fireEvent.press(getByLabelText('Eliminar casa Mi Hogar'));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Eliminar casa',
+      expect.any(String),
+      expect.any(Array),
+    );
+    const buttons = alertSpy.mock.calls[0][2] as
+      | { text: string; onPress?: () => void }[]
+      | undefined;
+    const deleteButton = buttons?.find((b) => b.text === 'Eliminar');
+    await deleteButton?.onPress?.();
+
+    await waitFor(() => {
+      expect(mockDeleteCasa).toHaveBeenCalledWith('c1');
+    });
+    alertSpy.mockRestore();
+  });
+
+  it('no-owner no ve acciones de editar/borrar casas', () => {
+    const { queryByLabelText } = setup(
+      [casa1, casa2],
+      casa1,
+      [ownerMember, member2],
+      { u1: profileCarlos, u2: profileAna },
+      { id: 'u2', email: 'ana@casa.com' } as never,
+    );
+    expect(queryByLabelText('Editar casa Mi Hogar')).toBeNull();
+    expect(queryByLabelText('Eliminar casa Mi Hogar')).toBeNull();
   });
 
   it('no-owner no ve controles de gestión', () => {

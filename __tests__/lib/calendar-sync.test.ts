@@ -149,6 +149,15 @@ describe('syncBirthdays', () => {
     expect(mockGetCalendars).not.toHaveBeenCalled();
   });
 
+  it('no lanza si requestCalendarPermissions falla (Android sin permiso)', async () => {
+    mockRequestPermissions.mockRejectedValue(new Error('Permissions error'));
+
+    const result = await syncBirthdays([contact]);
+
+    expect(result).toEqual({ synced: 0, errors: 0 });
+    expect(mockGetCalendars).not.toHaveBeenCalled();
+  });
+
   it('cuenta errores por fallo individual', async () => {
     createEventMock.mockRejectedValueOnce(new Error('boom'));
 

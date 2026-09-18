@@ -2,7 +2,7 @@ import { supabase } from './supabase';
 import { friendlyError } from './errors';
 import type {
   Appointment,
-  AppointmentKind,
+  AppointmentKindRow,
   Category,
   Contact,
   Expense,
@@ -115,7 +115,7 @@ export async function addAppointment(input: {
   description?: string | null;
   person?: string | null;
   location?: string | null;
-  kind: AppointmentKind;
+  kind: string;
   starts_at: string;
   reminder_at?: string | null;
 }): Promise<ApiError | null> {
@@ -130,7 +130,7 @@ export async function updateAppointment(
     description?: string | null;
     person?: string | null;
     location?: string | null;
-    kind: AppointmentKind;
+    kind: string;
     starts_at: string;
     reminder_at?: string | null;
   },
@@ -141,6 +141,39 @@ export async function updateAppointment(
 
 export async function removeAppointment(id: string): Promise<ApiError | null> {
   const { error } = await supabase.from('appointments').delete().eq('id', id);
+  return toError(error);
+}
+
+export async function fetchAppointmentKinds(casaId: string): Promise<AppointmentKindRow[]> {
+  const { data, error } = await supabase
+    .from('appointment_kinds')
+    .select('*')
+    .eq('casa_id', casaId)
+    .order('sort_order', { ascending: true });
+  if (error) throw new Error(friendlyError(error.message));
+  return (data ?? []) as AppointmentKindRow[];
+}
+
+export async function addAppointmentKind(input: {
+  casa_id: string;
+  name: string;
+  icon?: string;
+  sort_order?: number;
+}): Promise<ApiError | null> {
+  const { error } = await supabase.from('appointment_kinds').insert(input);
+  return toError(error);
+}
+
+export async function updateAppointmentKind(
+  id: string,
+  input: { name?: string; icon?: string; sort_order?: number },
+): Promise<ApiError | null> {
+  const { error } = await supabase.from('appointment_kinds').update(input).eq('id', id);
+  return toError(error);
+}
+
+export async function removeAppointmentKind(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('appointment_kinds').delete().eq('id', id);
   return toError(error);
 }
 
@@ -189,6 +222,7 @@ export async function fetchShoppingItems(listId: string): Promise<ShoppingItem[]
 
 export async function addShoppingItem(input: {
   list_id: string;
+  casa_id: string;
   name: string;
   quantity?: number | null;
   unit?: string | null;
@@ -250,6 +284,16 @@ export async function removeContact(id: string): Promise<ApiError | null> {
 }
 
 // ---- Miembros de la casa -----------------------------------------------------
+
+export async function updateCasa(id: string, input: { name: string }): Promise<ApiError | null> {
+  const { error } = await supabase.from('casas').update(input).eq('id', id);
+  return toError(error);
+}
+
+export async function removeCasa(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('casas').delete().eq('id', id);
+  return toError(error);
+}
 
 export async function removeCasaMember(
   casaId: string,

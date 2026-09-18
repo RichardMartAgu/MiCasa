@@ -170,37 +170,52 @@ function layout(markup: string): string {
 </html>`;
 }
 
+const esc = (v: string | undefined | null): string =>
+  String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 const templates: Record<EmailType, (d: EmailData) => { subject: string; html: string }> = {
   invitacion_casa: (d) => {
     const data = d as DataInvitacionCasa;
+    const inviterName = esc(data.inviterName);
+    const casaName = esc(data.casaName);
     return {
       subject: `${data.inviterName} te invita a ${data.casaName} en MiCasa`,
       html: layout(`
-        <p><strong>${data.inviterName}</strong> te ha invitado a unirte a la casa <strong>${data.casaName}</strong>.</p>
+        <p><strong>${inviterName}</strong> te ha invitado a unirte a la casa <strong>${casaName}</strong>.</p>
         <p>Tu código de invitación:</p>
-        <p style="background:#f0ecf5;border-radius:10px;padding:12px 16px;font-size:22px;letter-spacing:4px;font-weight:700;text-align:center;">${data.inviteCode}</p>
+        <p style="background:#f0ecf5;border-radius:10px;padding:12px 16px;font-size:22px;letter-spacing:4px;font-weight:700;text-align:center;">${esc(data.inviteCode)}</p>
         <p>Abre MiCasa, pulsa "Unirme a una casa" e introduce el código.</p>
       `),
     };
   },
   bienvenida: (d) => {
     const data = d as DataBienvenida;
+    const name = esc(data.name);
     return {
       subject: `Bienvenido a MiCasa, ${data.name}`,
       html: layout(`
-        <p>¡Hola, <strong>${data.name}</strong>!</p>
+        <p>¡Hola, <strong>${name}</strong>!</p>
         <p>Tu cuenta MiCasa está lista. Crea una casa o únete con el código de un familiar para empezar a compartir gastos, citas y listas de la compra.</p>
       `),
     };
   },
   recordatorio_cita: (d) => {
     const data = d as DataRecordatorioCita;
+    const title = esc(data.title);
+    const when = esc(data.when);
+    const location = esc(data.location);
+    const name = esc(data.name);
     return {
       subject: `Recordatorio: ${data.title} — ${data.when}`,
       html: layout(`
-        <p>Hola <strong>${data.name}</strong>,</p>
+        <p>Hola <strong>${name}</strong>,</p>
         <p>Recuerda tu cita:</p>
-        <p><strong>${data.title}</strong> · ${data.when}${data.location ? ` · ${data.location}` : ""}</p>
+        <p><strong>${title}</strong> · ${when}${location ? ` · ${location}` : ""}</p>
       `),
     };
   },
@@ -208,10 +223,12 @@ const templates: Record<EmailType, (d: EmailData) => { subject: string; html: st
     const data = d as DataAvisoPresupuesto;
     const pct = data.budget > 0 ? Math.round((data.spent / data.budget) * 100) : 0;
     const money = (n: number) => n.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+    const sectionName = esc(data.sectionName);
+    const month = esc(data.month);
     return {
       subject: `${data.month}: ${data.sectionName} al ${pct}% del presupuesto`,
       html: layout(`
-        <p>Gasto en <strong>${data.sectionName}</strong> (${data.month}):</p>
+        <p>Gasto en <strong>${sectionName}</strong> (${month}):</p>
         <p style="font-size:20px;"><strong>${money(data.spent)}</strong> de ${money(data.budget)} · ${pct}%</p>
         ${pct >= 100 ? `<p style="color:#b3412b;">Has superado el presupuesto de esta sección.</p>` : pct >= 80 ? `<p style="color:#b3792b;">Vas camino de superar el presupuesto.</p>` : ""}
       `),
@@ -219,11 +236,13 @@ const templates: Record<EmailType, (d: EmailData) => { subject: string; html: st
   },
   cumpleanos: (d) => {
     const data = d as DataCumpleanos;
+    const contactName = esc(data.contactName);
+    const birthDate = esc(data.birthDate);
     return {
       subject: `🎂 Cumpleaños: ${data.contactName} (${data.birthDate})`,
       html: layout(`
-        <p>¡No olvides felicitar a <strong>${data.contactName}</strong>!</p>
-        <p>Su cumpleaños es el <strong>${data.birthDate}</strong>.</p>
+        <p>¡No olvides felicitar a <strong>${contactName}</strong>!</p>
+        <p>Su cumpleaños es el <strong>${birthDate}</strong>.</p>
       `),
     };
   },

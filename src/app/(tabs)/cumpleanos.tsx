@@ -190,13 +190,18 @@ export default function CumpleanosScreen() {
           text: 'Sincronizar',
           onPress: async () => {
             setSyncing(true);
-            const result = await syncBirthdays(contacts);
-            setSyncing(false);
-            const message =
-              result.errors > 0
-                ? `${result.synced} sincronizados, ${result.errors} con error.`
-                : `${result.synced} cumpleaños sincronizados con el calendario.`;
-            Alert.alert('Sincronización completada', message);
+            try {
+              const result = await syncBirthdays(contacts);
+              const message =
+                result.errors > 0
+                  ? `${result.synced} sincronizados, ${result.errors} con error.`
+                  : `${result.synced} cumpleaños sincronizados con el calendario.`;
+              Alert.alert('Sincronización completada', message);
+            } catch {
+              Alert.alert('Error', 'No se pudo acceder al calendario. Revisa los permisos.');
+            } finally {
+              setSyncing(false);
+            }
           },
         },
       ],

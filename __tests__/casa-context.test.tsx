@@ -221,6 +221,43 @@ describe('CasaProvider', () => {
     expect(result.current.profiles).toEqual({ u1: profile });
   });
 
+  it('renameCasa actualiza el nombre y refresca', async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'casas') {
+        return queryChain({ data: [{ ...casa, name: 'Hogar renovado' }], error: null });
+      }
+      return queryChain({ data: [], error: null });
+    });
+    const { result } = renderHook(() => useCasa(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      const error = await result.current.renameCasa('c1', 'Hogar renovado');
+      expect(error).toBeNull();
+    });
+
+    expect(result.current.casas[0]?.name).toBe('Hogar renovado');
+  });
+
+  it('deleteCasa borra y refresca a null si era la actual', async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'casas') {
+        return queryChain({ data: [], error: null });
+      }
+      return queryChain({ data: [], error: null });
+    });
+    const { result } = renderHook(() => useCasa(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      const error = await result.current.deleteCasa('c1');
+      expect(error).toBeNull();
+    });
+
+    expect(result.current.casas).toEqual([]);
+    expect(result.current.currentCasa).toBeNull();
+  });
+
   it('useCasa lanza error fuera del provider', () => {
     expect(() => renderHook(() => useCasa())).toThrow(
       'useCasa debe usarse dentro de <CasaProvider>',

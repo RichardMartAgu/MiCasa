@@ -10,7 +10,7 @@ import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { removeCasaMember, setCasaMemberRole } from '@/lib/api';
 import { formatInviteCode, initials } from '@/lib/format';
-import type { CasaMember } from '@/lib/types';
+import type { Casa, CasaMember } from '@/lib/types';
 import { validateCasaName, validateInviteCode } from '@/lib/validation';
 
 export default function AjustesScreen() {
@@ -23,6 +23,8 @@ export default function AjustesScreen() {
     setCurrentCasa,
     createCasa,
     joinCasa,
+    renameCasa,
+    deleteCasa,
     refreshMembers,
   } = useCasa();
 
@@ -38,19 +40,29 @@ export default function AjustesScreen() {
 
   const [createModal, setCreateModal] = useState(false);
   const [joinModal, setJoinModal] = useState(false);
+  const [editingCasa, setEditingCasa] = useState<Casa | null>(null);
   const [casaName, setCasaName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleCreate() {
+  function openEditCasa(casa: Casa) {
+    setEditingCasa(casa);
+    setCasaName(casa.name);
+    setError(null);
+    setCreateModal(true);
+  }
+
+  async function handleSaveCasa() {
     const check = validateCasaName(casaName);
     if (!check.valid) {
       setError(check.message);
       return;
     }
     setLoading(true);
-    const err = await createCasa(casaName);
+    const err = editingCasa
+      ? await renameCasa(editingCasa.id, casaName)
+      : await createCasa(casaName);
     setLoading(false);
     if (err) {
       setError(err.message);
@@ -58,7 +70,33 @@ export default function AjustesScreen() {
     }
     setCasaName('');
     setError(null);
+    setEditingCasa(null);
     setCreateModal(false);
+  }
+
+  function handleDeleteCasa(casa: Casa) {
+    Alert.alert(
+      'Eliminar casa',
+      `Se borrarán «${casa.name}» y todos sus datos. Esta acción no se puede deshacer.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            const err = await deleteCasa(casa.id);
+            if (err) Alert.alert('Error', err.message);
+          },
+        },
+      ],
+    );
+  }
+
+  function openAddCasa() {
+    setEditingCasa(null);
+    setCasaName('');
+    setError(null);
+    setCreateModal(true);
   }
 
   async function handleJoin() {
@@ -213,10 +251,28 @@ export default function AjustesScreen() {
             {casa.id === currentCasa?.id ? (
               <Ionicons name="checkmark-circle" size={20} color={Palette.success} />
             ) : null}
+            {isOwner ? (
+              <View style={styles.casaRowActions}>
+                <Pressable
+                  onPress={() => openEditCasa(casa)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Editar casa ${casa.name}`}>
+                  <Ionicons name="pencil-outline" size={20} color={Palette.textSecondary} />
+                </Pressable>
+                <Pressable
+                  onPress={() => handleDeleteCasa(casa)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Eliminar casa ${casa.name}`}>
+                  <Ionicons name="trash-outline" size={20} color={Palette.danger} />
+                </Pressable>
+              </View>
+            ) : null}
           </Pressable>
         ))}
         <View style={styles.casaActions}>
-          <Button title="Nueva casa" onPress={() => setCreateModal(true)} />
+          <Button title="Nueva casa" onPress={openAddCasa} />
           <Button title="Unirme por código" variant="secondary" onPress={() => setJoinModal(true)} />
         </View>
       </Card>
@@ -229,7 +285,9 @@ export default function AjustesScreen() {
         onRequestClose={() => setCreateModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
-            <Text style={styles.modalTitle}>Crear nueva casa</Text>
+            <Text style={styles.modalTitle}>
+              {editingCasa ? 'Editar casa' : 'Crear nueva casa'}
+            </Text>
             <TextField
               label="Nombre de la casa"
               value={casaName}
@@ -239,7 +297,11 @@ export default function AjustesScreen() {
             />
             <View style={styles.modalActions}>
               <Button title="Cancelar" variant="secondary" onPress={() => setCreateModal(false)} />
-              <Button title="Crear" onPress={handleCreate} loading={loading} />
+              <Button
+                title={editingCasa ? 'Guardar cambios' : 'Crear'}
+                onPress={handleSaveCasa}
+                loading={loading}
+              />
             </View>
           </View>
         </View>
@@ -319,6 +381,7 @@ const styles = StyleSheet.create({
   },
   casaRowName: { flex: 1, fontSize: 15, color: Palette.textStrong },
   casaRowActive: { fontWeight: '700', color: Palette.primary },
+  casaRowActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   casaActions: { gap: Spacing.two, marginTop: Spacing.two },
   modalOverlay: { flex: 1, backgroundColor: Palette.overlay, justifyContent: 'flex-end' },
   modal: {

@@ -41,11 +41,18 @@ jest.mock('@/hooks/use-realtime-collection', () => ({
 const mockAddAppointment = jest.fn();
 const mockRemoveAppointment = jest.fn();
 const mockUpdateAppointment = jest.fn();
+const mockAddAppointmentKind = jest.fn();
+const mockRemoveAppointmentKind = jest.fn();
+const mockUpdateAppointmentKind = jest.fn();
 jest.mock('@/lib/api', () => ({
   addAppointment: (...args: unknown[]) => mockAddAppointment(...args),
+  addAppointmentKind: (...args: unknown[]) => mockAddAppointmentKind(...args),
   fetchAppointments: jest.fn(),
+  fetchAppointmentKinds: jest.fn(),
   removeAppointment: (...args: unknown[]) => mockRemoveAppointment(...args),
+  removeAppointmentKind: (...args: unknown[]) => mockRemoveAppointmentKind(...args),
   updateAppointment: (...args: unknown[]) => mockUpdateAppointment(...args),
+  updateAppointmentKind: (...args: unknown[]) => mockUpdateAppointmentKind(...args),
 }));
 
 const mockFormatDateTime = jest.fn();
@@ -91,13 +98,23 @@ const pastAppointment: Appointment = {
   created_at: '2026-08-01',
 };
 
-function setup(appointments: Appointment[] = [], currentCasa = casa) {
+const defaultKinds = [
+  { id: 'k1', casa_id: 'c1', name: 'medico', icon: 'medkit-outline', sort_order: 0, created_at: '' },
+  { id: 'k2', casa_id: 'c1', name: 'escuela', icon: 'school-outline', sort_order: 1, created_at: '' },
+  { id: 'k3', casa_id: 'c1', name: 'mascota', icon: 'paw-outline', sort_order: 2, created_at: '' },
+  { id: 'k4', casa_id: 'c1', name: 'personal', icon: 'person-outline', sort_order: 3, created_at: '' },
+  { id: 'k5', casa_id: 'c1', name: 'otro', icon: 'ellipsis-horizontal-outline', sort_order: 4, created_at: '' },
+];
+
+function setup(appointments: Appointment[] = [], currentCasa = casa, kinds = defaultKinds) {
   mockUseAuth.mockReturnValue({ user });
   mockUseCasa.mockReturnValue({ currentCasa });
   mockUseRealtimeCollection.mockImplementation((_fetchFn: unknown, table: string) =>
     table === 'appointments'
       ? { data: appointments, loading: false, error: null, reload: jest.fn() }
-      : { data: [], loading: false, error: null, reload: jest.fn() },
+      : table === 'appointment_kinds'
+        ? { data: kinds, loading: false, error: null, reload: jest.fn() }
+        : { data: [], loading: false, error: null, reload: jest.fn() },
   );
   return render(<CitasScreen />);
 }
@@ -107,6 +124,9 @@ beforeEach(() => {
   mockAddAppointment.mockResolvedValue(null);
   mockRemoveAppointment.mockResolvedValue(null);
   mockUpdateAppointment.mockResolvedValue(null);
+  mockAddAppointmentKind.mockResolvedValue(null);
+  mockRemoveAppointmentKind.mockResolvedValue(null);
+  mockUpdateAppointmentKind.mockResolvedValue(null);
   mockFormatDateTime.mockReturnValue('12 sep 2026, 10:00');
   mockValidateTitle.mockReturnValue({ valid: true });
   mockValidateDate.mockReturnValue({ valid: true });
@@ -239,6 +259,113 @@ describe('CitasScreen', () => {
       expect(mockRemoveAppointment).toHaveBeenCalledWith('a1');
     });
     alertSpy.mockRestore();
+  });
+
+  it('abre gestor de tipos y añade tipo nuevo', async () => {
+    const { getByText, getByLabelText } = setup();
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Gestionar tipos de cita'));
+    await waitFor(() =>
+      expect(getByText('Añadir tipo', { includeHiddenElements: true })).toBeTruthy(),
+    );
+
+    const kindInput = getByLabelText('Nuevo tipo', { includeHiddenElements: true });
+    fireEvent.changeText(kindInput, 'Reunión cole');
+    fireEvent.press(getByText('Añadir tipo', { includeHiddenElements: true }));
+
+    await waitFor(() => {
+      expect(mockAddAppointmentKind).toHaveBeenCalledWith({
+        casa_id: 'c1',
+        name: 'Reunión cole',
+      });
+    });
+  });
+
+  it('rechaza tipo de cita con más de 40 caracteres', async () => {
+    const { getByText, getByLabelText } = setup();
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+    fireEvent.press(getByLabelText('Gestionar tipos de cita'));
+    await waitFor(() =>
+      expect(getByText('Añadir tipo', { includeHiddenElements: true })).toBeTruthy(),
+    );
+
+    const kindInput = getByLabelText('Nuevo tipo', { includeHiddenElements: true });
+    fireEvent.changeText(kindInput, 'x'.repeat(41));
+    fireEvent.press(getByText('Añadir tipo', { includeHiddenElements: true }));
+
+    expect(
+      getByText('El nombre no puede superar 40 caracteres.', { includeHiddenElements: true }),
+    ).toBeTruthy();
+    expect(mockAddAppointmentKind).not.toHaveBeenCalled();
+  });
+
+  it('edita tipo de cita', async () => {
+    const { getByText, getByLabelText } = setup();
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+    fireEvent.press(getByLabelText('Gestionar tipos de cita'));
+    await waitFor(() =>
+      expect(getByText('Añadir tipo', { includeHiddenElements: true })).toBeTruthy(),
+    );
+
+    fireEvent.press(getByLabelText('Editar tipo medico', { includeHiddenElements: true }));
+    const kindInput = getByLabelText('Editar nombre', { includeHiddenElements: true });
+    fireEvent.changeText(kindInput, 'doctor');
+    fireEvent.press(getByText('Guardar tipo', { includeHiddenElements: true }));
+
+    await waitFor(() => {
+      expect(mockUpdateAppointmentKind).toHaveBeenCalledWith('k1', { name: 'doctor' });
+    });
+  });
+
+  it('elimina tipo de cita con confirmación', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const { getByText, getByLabelText } = setup();
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+    fireEvent.press(getByLabelText('Gestionar tipos de cita'));
+    await waitFor(() =>
+      expect(getByText('Añadir tipo', { includeHiddenElements: true })).toBeTruthy(),
+    );
+
+    fireEvent.press(getByLabelText('Eliminar tipo mascota', { includeHiddenElements: true }));
+    const buttons = alertSpy.mock.calls[0][2] as
+      | { text: string; onPress?: () => void }[]
+      | undefined;
+    buttons?.find((b) => b.text === 'Eliminar')?.onPress?.();
+
+    await waitFor(() => {
+      expect(mockRemoveAppointmentKind).toHaveBeenCalledWith('k3');
+    });
+    alertSpy.mockRestore();
+  });
+
+  it('usa tipo personalizado al crear cita', async () => {
+    const { getByText, getByLabelText } = setup([], casa, [
+      ...defaultKinds,
+      { id: 'k6', casa_id: 'c1', name: 'Reunión cole', icon: 'calendar-outline', sort_order: 5, created_at: '' },
+    ]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+
+    fireEvent.press(getByText('Reunión cole'));
+    const titleInput = getByLabelText('Título');
+    fireEvent.changeText(titleInput, 'Charla colegio');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockAddAppointment).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Charla colegio', kind: 'Reunión cole' }),
+      );
+    });
   });
 
   it('muestra aviso de crear casa cuando no hay casa', () => {

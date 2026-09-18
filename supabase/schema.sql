@@ -85,10 +85,22 @@ create table if not exists public.appointments (
   person text,
   location text,
   kind text not null default 'personal'
-    check (kind in ('medico', 'escuela', 'mascota', 'personal', 'otro')),
+    check (char_length(kind) between 1 and 40),
   starts_at timestamptz not null,
   reminder_at timestamptz,
   created_at timestamptz not null default now()
+);
+
+-- Tipos de cita editables por casa (los chips "médico, escuela…")
+create table if not exists public.appointment_kinds (
+  id uuid primary key default gen_random_uuid(),
+  casa_id uuid not null references public.casas (id) on delete cascade,
+  name text not null,
+  icon text not null default 'ellipsis-horizontal-outline',
+  sort_order int not null default 0,
+  created_at timestamptz not null default now(),
+  constraint appointment_kinds_casa_id_name_key unique (casa_id, name),
+  constraint appointment_kinds_name_len check (char_length(name) between 1 and 40)
 );
 
 -- ----------------------------------------------------------------------------
@@ -106,6 +118,7 @@ create table if not exists public.shopping_lists (
 create table if not exists public.shopping_items (
   id uuid primary key default gen_random_uuid(),
   list_id uuid not null references public.shopping_lists (id) on delete cascade,
+  casa_id uuid not null references public.casas (id) on delete cascade,
   name text not null,
   quantity numeric(10, 2),
   unit text,
@@ -139,6 +152,7 @@ create index if not exists idx_appointments_starts on public.appointments (start
 create index if not exists idx_categories_casa on public.categories (casa_id);
 create index if not exists idx_shopping_lists_casa on public.shopping_lists (casa_id);
 create index if not exists idx_shopping_items_list on public.shopping_items (list_id);
+create index if not exists idx_shopping_items_casa on public.shopping_items (casa_id);
 create index if not exists idx_contacts_casa on public.contacts (casa_id);
 -- FKs de user_id sin cobertura
 create index if not exists idx_appointments_user on public.appointments (user_id);
@@ -265,6 +279,7 @@ alter table public.casa_members enable row level security;
 alter table public.categories enable row level security;
 alter table public.expenses enable row level security;
 alter table public.appointments enable row level security;
+alter table public.appointment_kinds enable row level security;
 alter table public.shopping_lists enable row level security;
 alter table public.shopping_items enable row level security;
 alter table public.contacts enable row level security;
@@ -378,6 +393,11 @@ create policy "appointments_update_member" on public.appointments
 create policy "appointments_delete_member" on public.appointments
   for delete using (public.is_casa_member(casa_id));
 
+drop policy if exists "appointment_kinds_all_member" on public.appointment_kinds;
+create policy "appointment_kinds_all_member" on public.appointment_kinds
+  for all using (public.is_casa_member(casa_id))
+  with check (public.is_casa_member(casa_id));
+
 drop policy if exists "shopping_lists_all_member" on public.shopping_lists;
 drop policy if exists "shopping_lists_select_member" on public.shopping_lists;
 drop policy if exists "shopping_lists_insert_member" on public.shopping_lists;
@@ -396,20 +416,32 @@ create policy "shopping_lists_update_member" on public.shopping_lists
 create policy "shopping_lists_delete_member" on public.shopping_lists
   for delete using (public.is_casa_member(casa_id));
 
+-- shopping_items: casa_id denormalizado. El RLS usa casa_id propio de la fila,
+-- NO una subconsulta al padre (shopping_lists): si la subconsulta, el cascade
+-- delete de la lista fallaba porque el padre ya no existía al filtrar los hijos.
 drop policy if exists "shopping_items_all_member" on public.shopping_items;
-create policy "shopping_items_all_member" on public.shopping_items
-  for all using (
-    exists (
+drop policy if exists "shopping_items_select_member" on public.shopping_items;
+drop policy if exists "shopping_items_insert_member" on public.shopping_items;
+drop policy if exists "shopping_items_update_member" on public.shopping_items;
+drop policy if exists "shopping_items_delete_member" on public.shopping_items;
+create policy "shopping_items_select_member" on public.shopping_items
+  for select using (public.is_casa_member(casa_id));
+
+create policy "shopping_items_insert_member" on public.shopping_items
+  for insert with check (
+    public.is_casa_member(casa_id)
+    and exists (
       select 1 from public.shopping_lists sl
-      where sl.id = shopping_items.list_id and public.is_casa_member(sl.casa_id)
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.shopping_lists sl
-      where sl.id = shopping_items.list_id and public.is_casa_member(sl.casa_id)
+      where sl.id = shopping_items.list_id and sl.casa_id = shopping_items.casa_id
     )
   );
+
+create policy "shopping_items_update_member" on public.shopping_items
+  for update using (public.is_casa_member(casa_id))
+  with check (public.is_casa_member(casa_id));
+
+create policy "shopping_items_delete_member" on public.shopping_items
+  for delete using (public.is_casa_member(casa_id));
 
 drop policy if exists "contacts_all_member" on public.contacts;
 drop policy if exists "contacts_select_member" on public.contacts;
@@ -451,6 +483,7 @@ create trigger on_auth_user_created
   for each row execute procedure public.handle_new_user();
 
 -- Al crear una casa, su creador pasa a ser miembro owner
+-- y se siembran los tipos de cita por defecto.
 create or replace function public.handle_new_casa()
 returns trigger
 language plpgsql security definer set search_path = ''
@@ -460,6 +493,17 @@ begin
     insert into public.casa_members (casa_id, user_id, role)
     values (new.id, new.created_by, 'owner');
   end if;
+
+  insert into public.appointment_kinds (casa_id, name, icon, sort_order)
+  select new.id, k.name, k.icon, k.sort_order
+  from (values
+    ('medico', 'medkit-outline', 0),
+    ('escuela', 'school-outline', 1),
+    ('mascota', 'paw-outline', 2),
+    ('personal', 'person-outline', 3),
+    ('otro', 'ellipsis-horizontal-outline', 4)
+  ) as k(name, icon, sort_order);
+
   return new;
 end;
 $$;
@@ -595,6 +639,7 @@ alter table public.contacts add constraint contacts_phone_len
 -- ============================================================================
 alter publication supabase_realtime add table public.expenses;
 alter publication supabase_realtime add table public.appointments;
+alter publication supabase_realtime add table public.appointment_kinds;
 alter publication supabase_realtime add table public.shopping_lists;
 alter publication supabase_realtime add table public.shopping_items;
 alter publication supabase_realtime add table public.categories;
