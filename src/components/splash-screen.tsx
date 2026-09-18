@@ -13,13 +13,26 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
+import Svg, {
+  Circle,
+  Defs,
+  FeGaussianBlur,
+  FeMerge,
+  FeMergeNode,
+  Filter,
+  G,
+  Path,
+} from 'react-native-svg';
 
 import { Palette, Radius, Spacing } from '@/constants/theme';
 
 const WORD = 'MiCasa';
 const LETTER_DELAY_MS = 90;
 const RING_DURATION_MS = 2400;
-const COIN_SPIN_MS = 5600;
+const YIN_SPIN_MS = 5600;
+const NEON_SIZE = 84;
+const NEON_TUBE = '#DBEAFE';
+const NEON_CORE = '#FFFFFF';
 
 function SplashLetter({ char, index }: { char: string; index: number }) {
   const progress = useSharedValue(0);
@@ -167,7 +180,7 @@ function YinYangLoader() {
 
   useEffect(() => {
     spin.value = withRepeat(
-      withTiming(1, { duration: COIN_SPIN_MS, easing: Easing.linear, reduceMotion: ReduceMotion.System }),
+      withTiming(1, { duration: YIN_SPIN_MS, easing: Easing.linear, reduceMotion: ReduceMotion.System }),
       -1,
       false,
     );
@@ -181,25 +194,32 @@ function YinYangLoader() {
     <View
       style={[styles.loaderWrap, { bottom: insets.bottom + 44 }]}
       accessible
+      accessibilityRole="progressbar"
       accessibilityLabel="Cargando MiCasa">
-      <View style={styles.loaderStage}>
-        <View style={styles.coinHalo} />
-        <View style={styles.coinTilt}>
-          <Animated.View style={[styles.coinBody, spinStyle]}>
-            <View style={styles.coinEdge} />
-            <View style={styles.coinFace}>
-              <View style={styles.coinHalfDark} />
-              <View style={[styles.coinEye, styles.coinEyeDark]} />
-              <View style={[styles.coinEye, styles.coinEyeLight]} />
-            </View>
-          </Animated.View>
-          <View style={styles.coinGloss} pointerEvents="none">
-            <View style={[styles.glossBand, styles.glossDark]} />
-            <View style={[styles.glossBand, styles.glossLight]} />
-            <View style={[styles.glossBand, styles.glossCore]} />
-          </View>
-        </View>
-      </View>
+      <Animated.View style={[styles.neonStage, spinStyle]}>
+        <Svg width={NEON_SIZE} height={NEON_SIZE} viewBox="0 0 72 72">
+          <Defs>
+            <Filter id="yinGlow" x="-50%" y="-50%" width="200%" height="200%">
+              <FeGaussianBlur in="SourceGraphic" stdDeviation="2.4" result="blur" />
+              <FeMerge>
+                <FeMergeNode in="blur" />
+                <FeMergeNode in="SourceGraphic" />
+              </FeMerge>
+            </Filter>
+          </Defs>
+          <G
+            filter="url(#yinGlow)"
+            stroke={NEON_TUBE}
+            strokeWidth={3.4}
+            strokeLinecap="round"
+            fill="none">
+            <Circle cx={36} cy={36} r={34} />
+            <Path d="M 36 2 A 17 17 0 0 1 36 36 A 17 17 0 0 0 36 70" />
+            <Circle cx={36} cy={18} r={7.2} fill={NEON_CORE} stroke="none" />
+            <Circle cx={36} cy={54} r={7.2} fill={NEON_TUBE} stroke="none" />
+          </G>
+        </Svg>
+      </Animated.View>
     </View>
   );
 }
@@ -288,111 +308,10 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
   },
-  loaderStage: {
-    width: 90,
-    height: 90,
+  neonStage: {
+    width: NEON_SIZE,
+    height: NEON_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  coinHalo: {
-    position: 'absolute',
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-    backgroundColor: 'rgba(255, 255, 255, 0.10)',
-  },
-  coinTilt: {
-    width: 90,
-    height: 90,
-    transform: [
-      { perspective: 600 },
-      { rotateX: '45deg' },
-    ],
-  },
-  coinBody: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: 90,
-    height: 90,
-  },
-  coinEdge: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    borderWidth: 4,
-    borderColor: '#c7d2fe',
-    backgroundColor: '#4338ca',
-    shadowColor: '#1e1b4b',
-    shadowOpacity: 0.35,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 8,
-  },
-  coinFace: {
-    position: 'absolute',
-    top: 4,
-    left: 4,
-    width: 82,
-    height: 82,
-    borderRadius: 41,
-    backgroundColor: '#FFFFFF',
-    overflow: 'hidden',
-  },
-  coinHalfDark: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 41,
-    height: 82,
-    backgroundColor: '#312e81',
-  },
-  coinEye: {
-    position: 'absolute',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-  },
-  coinEyeDark: {
-    top: 3,
-    left: 19,
-    backgroundColor: '#312e81',
-  },
-  coinEyeLight: {
-    top: 57,
-    left: 41,
-    backgroundColor: '#FFFFFF',
-  },
-  coinGloss: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    overflow: 'hidden',
-  },
-  glossBand: {
-    position: 'absolute',
-    left: -18,
-    width: 128,
-    height: 40,
-    transform: [{ rotate: '105deg' }],
-  },
-  glossDark: {
-    top: 30,
-    backgroundColor: 'rgba(30, 27, 75, 0.10)',
-  },
-  glossLight: {
-    top: 52,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-  },
-  glossCore: {
-    top: 64,
-    height: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.30)',
   },
 });
