@@ -184,6 +184,29 @@ describe('CumpleanosScreen', () => {
     alertSpy.mockRestore();
   });
 
+  it('muestra error si syncBirthdays falla (Android sin permiso)', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockSyncBirthdays.mockRejectedValue(new Error('Permissions error'));
+    const { getByText } = setup([soonContact]);
+
+    fireEvent.press(getByText('Calendario'));
+
+    const confirmButton = alertSpy.mock.calls[0][2]?.find(
+      (btn) => btn.text === 'Sincronizar',
+    );
+    await act(async () => {
+      await confirmButton?.onPress?.();
+    });
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Error',
+        'No se pudo acceder al calendario. Revisa los permisos.',
+      );
+    });
+    alertSpy.mockRestore();
+  });
+
   it('muestra cumpleaños próximos', () => {
     mockUpcomingBirthdays.mockReturnValue(upcoming);
     const { getByText } = setup([soonContact]);

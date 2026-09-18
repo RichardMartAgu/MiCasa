@@ -1,5 +1,5 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { Alert, StyleSheet } from 'react-native';
 
 import ListasScreen from '@/app/(tabs)/listas';
 import type { ShoppingItem, ShoppingList } from '@/lib/types';
@@ -69,6 +69,7 @@ const list: ShoppingList = {
 const item: ShoppingItem = {
   id: 'i1',
   list_id: 'l1',
+  casa_id: 'c1',
   name: 'Leche',
   quantity: 2,
   unit: 'L',
@@ -201,11 +202,35 @@ describe('ListasScreen', () => {
       expect(mockAddShoppingItem).toHaveBeenCalledWith(
         expect.objectContaining({
           list_id: 'l1',
+          casa_id: 'c1',
           name: 'Manzanas',
           quantity: 3,
         }),
       );
     });
+  });
+
+  it('mantiene visible el botón + de añadir artículo en fila estrecha', async () => {
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => {
+      expect(getByLabelText('Añadir artículo')).toBeTruthy();
+    });
+
+    const addButton = getByLabelText('Añadir artículo');
+    expect(StyleSheet.flatten(addButton.props.style)).toEqual(
+      expect.objectContaining({ width: 44, height: 44 }),
+    );
+
+    const nameInput = getByLabelText('Nuevo artículo');
+    const qtyInput = getByLabelText('Cantidad');
+    expect(StyleSheet.flatten(nameInput.props.style)).toEqual(
+      expect.objectContaining({ flexShrink: 1, minWidth: 0 }),
+    );
+    expect(StyleSheet.flatten(qtyInput.props.style)).toEqual(
+      expect.objectContaining({ flexShrink: 1, minWidth: 0 }),
+    );
   });
 
   it('muestra aviso de crear casa cuando no hay casa', () => {

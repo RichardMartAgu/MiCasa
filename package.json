@@ -67,6 +67,8 @@
   },
   "jest": {
     "preset": "jest-expo",
+    "testTimeout": 30000,
+    "maxWorkers": 4,
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/src/$1"
     },

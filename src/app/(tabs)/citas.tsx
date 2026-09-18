@@ -27,22 +27,32 @@ import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
 import {
   addAppointment,
+  addAppointmentKind,
   fetchAppointments,
+  fetchAppointmentKinds,
   removeAppointment,
+  removeAppointmentKind,
   updateAppointment,
+  updateAppointmentKind,
 } from '@/lib/api';
 import { formatDateTime } from '@/lib/date';
 import { filterAppointments } from '@/lib/filter';
-import type { Appointment, AppointmentKind } from '@/lib/types';
+import type { Appointment, AppointmentKindRow } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
-const KINDS: { value: AppointmentKind; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { value: 'medico', label: 'Médico', icon: 'medkit-outline' },
-  { value: 'escuela', label: 'Escuela', icon: 'school-outline' },
-  { value: 'mascota', label: 'Mascota', icon: 'paw-outline' },
-  { value: 'personal', label: 'Personal', icon: 'person-outline' },
-  { value: 'otro', label: 'Otro', icon: 'ellipsis-horizontal-outline' },
+const DEFAULT_KINDS: { name: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { name: 'medico', icon: 'medkit-outline' },
+  { name: 'escuela', icon: 'school-outline' },
+  { name: 'mascota', icon: 'paw-outline' },
+  { name: 'personal', icon: 'person-outline' },
+  { name: 'otro', icon: 'ellipsis-horizontal-outline' },
 ];
+
+type KindUI = {
+  id: string | null;
+  name: string;
+  icon: keyof typeof Ionicons.glyphMap;
+};
 
 function toISOLocal(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -57,11 +67,24 @@ export default function CitasScreen() {
     'appointments',
     currentCasa?.id ?? null,
   );
+  const { data: kinds } = useRealtimeCollection<AppointmentKindRow>(
+    () => (currentCasa ? fetchAppointmentKinds(currentCasa.id) : Promise.resolve([])),
+    'appointment_kinds',
+    currentCasa?.id ?? null,
+  );
+  const kindRows: KindUI[] =
+    kinds && kinds.length > 0
+      ? kinds.map((k) => ({
+          id: k.id,
+          name: k.name,
+          icon: (k.icon as keyof typeof Ionicons.glyphMap) ?? 'ellipsis-horizontal-outline',
+        }))
+      : DEFAULT_KINDS.map((d) => ({ id: null, name: d.name, icon: d.icon }));
 
   const [modalVisible, setModalVisible] = useState(false);
   const [editingAppointmentId, setEditingAppointmentId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
-  const [kind, setKind] = useState<AppointmentKind>('medico');
+  const [kind, setKind] = useState('medico');
   const [person, setPerson] = useState('');
   const [location, setLocation] = useState('');
   const [date, setDate] = useState(new Date());
@@ -78,12 +101,18 @@ export default function CitasScreen() {
   const [searchText, setSearchText] = useState('');
   const [selectedKind, setSelectedKind] = useState('');
 
+  const [kindsModalVisible, setKindsModalVisible] = useState(false);
+  const [editingKindId, setEditingKindId] = useState<string | null>(null);
+  const [kindName, setKindName] = useState('');
+  const [kindError, setKindError] = useState<string | null>(null);
+  const [kindSaving, setKindSaving] = useState(false);
+
   const kindOptions = useMemo<FilterChipOption[]>(
     () => [
       { label: 'Todos', value: '' },
-      ...KINDS.map((k) => ({ label: k.label, value: k.value })),
+      ...kindRows.map((k) => ({ label: k.name, value: k.name })),
     ],
-    [],
+    [kindRows],
   );
 
   const visibleAppointments = useMemo(
@@ -108,7 +137,7 @@ export default function CitasScreen() {
   function openAdd() {
     setEditingAppointmentId(null);
     setTitle('');
-    setKind('medico');
+    setKind(kindRows[0]?.name ?? 'medico');
     setPerson('');
     setLocation('');
     setDate(new Date());
@@ -200,6 +229,65 @@ export default function CitasScreen() {
         },
       },
     ]);
+  }
+
+  function openKindsManager() {
+    setEditingKindId(null);
+    setKindName('');
+    setKindError(null);
+    setKindsModalVisible(true);
+  }
+
+  function openEditKind(k: KindUI) {
+    if (!k.id) return;
+    setEditingKindId(k.id);
+    setKindName(k.name);
+    setKindError(null);
+    setKindsModalVisible(true);
+  }
+
+  async function handleSaveKind() {
+    const name = kindName.trim();
+    if (!name) {
+      setKindError('Escribe un nombre para el tipo.');
+      return;
+    }
+    if (name.length > 40) {
+      setKindError('El nombre no puede superar 40 caracteres.');
+      return;
+    }
+    if (!currentCasa) return;
+    setKindSaving(true);
+    const error = editingKindId
+      ? await updateAppointmentKind(editingKindId, { name })
+      : await addAppointmentKind({ casa_id: currentCasa.id, name });
+    setKindSaving(false);
+    if (error) {
+      setKindError(error.message);
+      return;
+    }
+    setKindName('');
+    setKindError(null);
+    setEditingKindId(null);
+  }
+
+  function handleDeleteKind(k: KindUI) {
+    if (!k.id) return;
+    Alert.alert(
+      'Eliminar tipo',
+      `Se eliminará el tipo «${k.name}». Las citas existentes conservarán su tipo.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            const error = await removeAppointmentKind(k.id as string);
+            if (error) Alert.alert('Error', error.message);
+          },
+        },
+      ],
+    );
   }
 
   return (
@@ -304,24 +392,31 @@ export default function CitasScreen() {
               />
 
               <View style={styles.kindRow}>
-                {KINDS.map((k) => (
+                {kindRows.map((k) => (
                   <Pressable
-                    key={k.value}
-                    style={[styles.chip, kind === k.value && styles.chipSelected]}
+                    key={k.id ?? k.name}
+                    style={[styles.chip, kind === k.name && styles.chipSelected]}
                     accessibilityRole="radio"
-                    accessibilityState={{ checked: kind === k.value }}
-                    onPress={() => setKind(k.value)}>
+                    accessibilityState={{ checked: kind === k.name }}
+                    onPress={() => setKind(k.name)}>
                     <Ionicons
-                      name={k.icon}
+                      name={(k.icon as keyof typeof Ionicons.glyphMap) ?? 'ellipsis-horizontal-outline'}
                       size={16}
-                      color={kind === k.value ? Palette.onPrimary : Palette.textSecondary}
+                      color={kind === k.name ? Palette.onPrimary : Palette.textSecondary}
                     />
-                    <Text style={[styles.chipText, kind === k.value && styles.chipTextSelected]}>
-                      {k.label}
+                    <Text style={[styles.chipText, kind === k.name && styles.chipTextSelected]}>
+                      {k.name}
                     </Text>
                   </Pressable>
                 ))}
               </View>
+              <Pressable
+                onPress={openKindsManager}
+                accessibilityRole="button"
+                accessibilityLabel="Gestionar tipos de cita"
+                hitSlop={8}>
+                <Text style={styles.manageLinkText}>Gestionar tipos</Text>
+              </Pressable>
 
               <TextField
                 label="Persona"
@@ -403,6 +498,67 @@ export default function CitasScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={kindsModalVisible}
+        animationType="slide"
+        transparent
+        accessibilityViewIsModal
+        onRequestClose={() => setKindsModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modal}>
+            <Text style={styles.modalTitle}>Tipos de cita</Text>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
+              {kindRows.map((k) => (
+                <View
+                  key={k.id ?? k.name}
+                  style={styles.kindManageRow}
+                  accessibilityLabel={`Tipo ${k.name}`}>
+                  <Ionicons
+                    name={(k.icon as keyof typeof Ionicons.glyphMap) ?? 'ellipsis-horizontal-outline'}
+                    size={18}
+                    color={Palette.textStrong}
+                  />
+                  <Text style={styles.kindManageName}>{k.name}</Text>
+                  {k.id ? (
+                    <View style={styles.kindManageActions}>
+                      <Pressable
+                        onPress={() => openEditKind(k)}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Editar tipo ${k.name}`}>
+                        <Ionicons name="pencil-outline" size={20} color={Palette.textSecondary} />
+                      </Pressable>
+                      <Pressable
+                        onPress={() => handleDeleteKind(k)}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Eliminar tipo ${k.name}`}>
+                        <Ionicons name="trash-outline" size={20} color={Palette.danger} />
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              ))}
+              <TextField
+                label={editingKindId ? 'Editar nombre' : 'Nuevo tipo'}
+                value={kindName}
+                onChangeText={setKindName}
+                placeholder="P. ej. Reunión cole"
+                error={kindError}
+              />
+              <View style={styles.modalActions}>
+                <Button title="Cerrar" variant="secondary" onPress={() => setKindsModalVisible(false)} />
+                <Button
+                  title={editingKindId ? 'Guardar tipo' : 'Añadir tipo'}
+                  onPress={handleSaveKind}
+                  loading={kindSaving}
+                />
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -453,6 +609,17 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 20, fontWeight: '800', color: Palette.text, marginBottom: Spacing.three },
   form: { gap: Spacing.three },
   kindRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  manageLinkText: { fontSize: 13, fontWeight: '700', color: Palette.primary, marginTop: Spacing.two },
+  kindManageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.two,
+    borderBottomWidth: 1,
+    borderBottomColor: Palette.border,
+  },
+  kindManageName: { flex: 1, fontSize: 15, color: Palette.textStrong },
+  kindManageActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

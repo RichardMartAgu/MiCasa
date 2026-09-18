@@ -51,6 +51,33 @@ export type Database = {
         }
         Relationships: []
       }
+      appointment_kinds: {
+        Row: {
+          casa_id: string
+          created_at: string
+          icon: string
+          id: string
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          casa_id: string
+          created_at?: string
+          icon?: string
+          id?: string
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          casa_id?: string
+          created_at?: string
+          icon?: string
+          id?: string
+          name?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
       casa_members: {
         Row: {
           casa_id: string
@@ -215,6 +242,7 @@ export type Database = {
       }
       shopping_items: {
         Row: {
+          casa_id: string
           created_at: string
           done: boolean
           id: string
@@ -224,6 +252,7 @@ export type Database = {
           unit: string | null
         }
         Insert: {
+          casa_id: string
           created_at?: string
           done?: boolean
           id?: string
@@ -233,6 +262,7 @@ export type Database = {
           unit?: string | null
         }
         Update: {
+          casa_id?: string
           created_at?: string
           done?: boolean
           id?: string
