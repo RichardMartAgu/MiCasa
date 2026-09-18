@@ -32,6 +32,7 @@ import {
   toggleShoppingItem,
   toggleShoppingList,
 } from '@/lib/api';
+import { confirmDialog } from '@/lib/confirm';
 import type { ShoppingItem, ShoppingList } from '@/lib/types';
 import { validateTitle } from '@/lib/validation';
 
@@ -105,19 +106,16 @@ export default function ListasScreen() {
     setNewItemQty('');
   }
 
-  function handleDeleteList(id: string) {
-    Alert.alert('Eliminar lista', '¿Seguro que quieres eliminar esta lista y sus artículos?', [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Eliminar',
-        style: 'destructive',
-        onPress: async () => {
-          const err = await removeShoppingList(id);
-          if (err) Alert.alert('Error', err.message);
-          if (expandedId === id) setExpandedId(null);
-        },
-      },
-    ]);
+  async function handleDeleteList(id: string) {
+    const ok = await confirmDialog(
+      'Eliminar lista',
+      '¿Seguro que quieres eliminar esta lista y sus artículos?',
+      { confirmText: 'Eliminar', destructive: true },
+    );
+    if (!ok) return;
+    const err = await removeShoppingList(id);
+    if (err) Alert.alert('Error', err.message);
+    if (expandedId === id) setExpandedId(null);
   }
 
   return (

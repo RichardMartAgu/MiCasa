@@ -37,6 +37,7 @@ import {
 } from '@/lib/api';
 import { formatDateTime } from '@/lib/date';
 import { filterAppointments } from '@/lib/filter';
+import { confirmDialog } from '@/lib/confirm';
 import type { Appointment, AppointmentKindRow } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
@@ -218,17 +219,14 @@ export default function CitasScreen() {
 
   async function handleDelete(id: string) {
     if (!currentCasa) return;
-    Alert.alert('Eliminar cita', '¿Seguro que quieres eliminar esta cita?', [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Eliminar',
-        style: 'destructive',
-        onPress: async () => {
-          const error = await removeAppointment(id);
-          if (error) Alert.alert('Error', error.message);
-        },
-      },
-    ]);
+    const ok = await confirmDialog(
+      'Eliminar cita',
+      '¿Seguro que quieres eliminar esta cita?',
+      { confirmText: 'Eliminar', destructive: true },
+    );
+    if (!ok) return;
+    const error = await removeAppointment(id);
+    if (error) Alert.alert('Error', error.message);
   }
 
   function openKindsManager() {
@@ -271,23 +269,16 @@ export default function CitasScreen() {
     setEditingKindId(null);
   }
 
-  function handleDeleteKind(k: KindUI) {
+  async function handleDeleteKind(k: KindUI) {
     if (!k.id) return;
-    Alert.alert(
+    const ok = await confirmDialog(
       'Eliminar tipo',
       `Se eliminará el tipo «${k.name}». Las citas existentes conservarán su tipo.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: async () => {
-            const error = await removeAppointmentKind(k.id as string);
-            if (error) Alert.alert('Error', error.message);
-          },
-        },
-      ],
+      { confirmText: 'Eliminar', destructive: true },
     );
+    if (!ok) return;
+    const error = await removeAppointmentKind(k.id as string);
+    if (error) Alert.alert('Error', error.message);
   }
 
   return (
