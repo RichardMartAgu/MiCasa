@@ -143,7 +143,6 @@ describe('CRUD por tabla', () => {
     ['addExpense', () => addExpense({ casa_id: 'c', user_id: 'u', category_id: null, title: 't', amount: 1, spent_at: '2026-01-01' })],
     ['updateExpense', () => updateExpense('1', { category_id: null, title: 't', amount: 1, spent_at: '2026-01-01' })],
     ['removeExpense', () => removeExpense('1')],
-    ['addAppointment', () => addAppointment({ casa_id: 'c', user_id: 'u', title: 't', kind: 'otro', starts_at: '2026-01-01' })],
     ['updateAppointment', () => updateAppointment('1', { title: 't', kind: 'otro', starts_at: '2026-01-01' })],
     ['removeAppointment', () => removeAppointment('1')],
     ['addAppointmentKind', () => addAppointmentKind({ casa_id: 'c', name: 'reunion' })],
@@ -174,5 +173,71 @@ describe('CRUD por tabla', () => {
     setupFrom({ error: { message: 'duplicate key value violates unique constraint' } });
     const result = await fn();
     expect(result).toEqual({ message: 'Ese registro ya existe.' });
+  });
+});
+
+describe('addAppointment', () => {
+  it('devuelve la fila creada', async () => {
+    setupFrom({ error: null, data: { id: 'a1', title: 't' } });
+    const result = await addAppointment({
+      casa_id: 'c',
+      user_id: 'u',
+      title: 't',
+      kind: 'otro',
+      starts_at: '2026-01-01',
+    });
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual({ id: 'a1', title: 't' });
+  });
+
+  it('traduce errores de base de datos', async () => {
+    setupFrom({ error: { message: 'duplicate key value violates unique constraint' } });
+    const result = await addAppointment({
+      casa_id: 'c',
+      user_id: 'u',
+      title: 't',
+      kind: 'otro',
+      starts_at: '2026-01-01',
+    });
+    expect(result.error).toEqual({ message: 'Ese registro ya existe.' });
+    expect(result.data).toBeUndefined();
+  });
+
+  it('envía reminder_choice none por defecto si no se indica', async () => {
+    const query = setupFrom({ error: null, data: { id: 'a1' } });
+    await addAppointment({
+      casa_id: 'c',
+      user_id: 'u',
+      title: 't',
+      kind: 'otro',
+      starts_at: '2026-01-01',
+    });
+    expect((query as Record<string, jest.Mock>).insert).toHaveBeenCalledWith(
+      expect.objectContaining({ reminder_choice: 'none' }),
+    );
+  });
+
+  it('envía reminder_choice indicado en addAppointment', async () => {
+    const query = setupFrom({ error: null, data: { id: 'a1' } });
+    await addAppointment({
+      casa_id: 'c',
+      user_id: 'u',
+      title: 't',
+      kind: 'otro',
+      starts_at: '2026-01-01',
+      reminder_choice: 'day-before',
+      reminder_at: '2026-01-01T09:00:00',
+    });
+    expect((query as Record<string, jest.Mock>).insert).toHaveBeenCalledWith(
+      expect.objectContaining({ reminder_choice: 'day-before' }),
+    );
+  });
+
+  it('envía reminder_choice none por defecto en updateAppointment', async () => {
+    const query = setupFrom({ error: null });
+    await updateAppointment('1', { title: 't', kind: 'otro', starts_at: '2026-01-01' });
+    expect((query as Record<string, jest.Mock>).update).toHaveBeenCalledWith(
+      expect.objectContaining({ reminder_choice: 'none' }),
+    );
   });
 });

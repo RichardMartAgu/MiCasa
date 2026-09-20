@@ -61,6 +61,13 @@ jest.mock('@/lib/calendar-sync', () => ({
   syncBirthdays: (...args: unknown[]) => mockSyncBirthdays(...args),
 }));
 
+const mockGetBirthdayChoice = jest.fn();
+const mockScheduleBirthdays = jest.fn();
+jest.mock('@/lib/notifications', () => ({
+  getBirthdayChoice: (...args: unknown[]) => mockGetBirthdayChoice(...args),
+  scheduleBirthdays: (...args: unknown[]) => mockScheduleBirthdays(...args),
+}));
+
 const mockToISODate = jest.fn();
 jest.mock('@/lib/date', () => ({
   ...jest.requireActual('@/lib/date'),
@@ -121,6 +128,8 @@ beforeEach(() => {
   mockBirthdayLabel.mockReturnValue('en 5 días');
   mockUpcomingBirthdays.mockReturnValue([]);
   mockToISODate.mockReturnValue('2020-05-10');
+  mockGetBirthdayChoice.mockResolvedValue('both');
+  mockScheduleBirthdays.mockResolvedValue(undefined);
   mockValidateTitle.mockReturnValue({ valid: true });
   mockValidateDate.mockReturnValue({ valid: true });
   mockValidateOptionalText.mockReturnValue({ valid: true });
@@ -260,6 +269,9 @@ describe('CumpleanosScreen', () => {
           birth_date: '2020-05-10',
         }),
       );
+    });
+    await waitFor(() => {
+      expect(mockScheduleBirthdays).toHaveBeenCalledWith([], 'both');
     });
   });
 

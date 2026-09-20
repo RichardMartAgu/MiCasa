@@ -98,6 +98,17 @@ export async function removeExpense(id: string): Promise<ApiError | null> {
 
 // ---- Citas ------------------------------------------------------------------
 
+export type AppointmentInput = {
+  title: string;
+  description?: string | null;
+  person?: string | null;
+  location?: string | null;
+  kind: string;
+  starts_at: string;
+  reminder_at?: string | null;
+  reminder_choice?: string;
+};
+
 export async function fetchAppointments(casaId: string): Promise<Appointment[]> {
   const { data, error } = await supabase
     .from('appointments')
@@ -108,34 +119,25 @@ export async function fetchAppointments(casaId: string): Promise<Appointment[]> 
   return (data ?? []) as Appointment[];
 }
 
-export async function addAppointment(input: {
-  casa_id: string;
-  user_id: string;
-  title: string;
-  description?: string | null;
-  person?: string | null;
-  location?: string | null;
-  kind: string;
-  starts_at: string;
-  reminder_at?: string | null;
-}): Promise<ApiError | null> {
-  const { error } = await supabase.from('appointments').insert(input);
-  return toError(error);
+export async function addAppointment(
+  input: { casa_id: string; user_id: string } & AppointmentInput,
+): Promise<{ error: ApiError | null; data?: Appointment }> {
+  const { data, error } = await supabase
+    .from('appointments')
+    .insert({ ...input, reminder_choice: input.reminder_choice ?? 'none' })
+    .select()
+    .single();
+  return { error: toError(error), data: (data as Appointment | null) ?? undefined };
 }
 
 export async function updateAppointment(
   id: string,
-  input: {
-    title: string;
-    description?: string | null;
-    person?: string | null;
-    location?: string | null;
-    kind: string;
-    starts_at: string;
-    reminder_at?: string | null;
-  },
+  input: AppointmentInput,
 ): Promise<ApiError | null> {
-  const { error } = await supabase.from('appointments').update(input).eq('id', id);
+  const { error } = await supabase
+    .from('appointments')
+    .update({ ...input, reminder_choice: input.reminder_choice ?? 'none' })
+    .eq('id', id);
   return toError(error);
 }
 

@@ -5,6 +5,7 @@ import { Platform, StyleSheet, type ColorValue } from 'react-native';
 import { Palette, Radius, Shadow } from '@/constants/theme';
 import { Spinner } from '@/components/ui/spinner';
 import { useAuth } from '@/context/auth-context';
+import { useNotificationSync } from '@/hooks/use-notification-sync';
 
 function icon(name: keyof typeof Ionicons.glyphMap) {
   function TabIcon({ color, size }: { color: ColorValue; size: number }) {
@@ -15,6 +16,7 @@ function icon(name: keyof typeof Ionicons.glyphMap) {
 
 export default function TabsLayout() {
   const { session, loading } = useAuth();
+  useNotificationSync();
 
   if (loading) return <Spinner fullScreen />;
   if (!session) return <Redirect href="/login" />;

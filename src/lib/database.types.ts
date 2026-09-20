@@ -19,6 +19,7 @@ export type Database = {
           location: string | null
           person: string | null
           reminder_at: string | null
+          reminder_choice: string
           starts_at: string
           title: string
           user_id: string | null
@@ -32,6 +33,7 @@ export type Database = {
           location?: string | null
           person?: string | null
           reminder_at?: string | null
+          reminder_choice?: string
           starts_at: string
           title: string
           user_id?: string | null
@@ -45,6 +47,7 @@ export type Database = {
           location?: string | null
           person?: string | null
           reminder_at?: string | null
+          reminder_choice?: string
           starts_at?: string
           title?: string
           user_id?: string | null

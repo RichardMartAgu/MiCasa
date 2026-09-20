@@ -43,6 +43,9 @@ skills-lock.json
 # typescript
 *.tsbuildinfo
 
+# coverage
+coverage/
+
 example
 
 # generated native folders

@@ -36,8 +36,27 @@ jest.mock('@/hooks/use-realtime-collection', () => ({
 const mockRemoveCasaMember = jest.fn();
 const mockSetCasaMemberRole = jest.fn();
 jest.mock('@/lib/api', () => ({
+  fetchAppointments: jest.fn(),
+  fetchContacts: jest.fn(),
   removeCasaMember: (...args: unknown[]) => mockRemoveCasaMember(...args),
   setCasaMemberRole: (...args: unknown[]) => mockSetCasaMemberRole(...args),
+}));
+
+const mockAreNotificationsEnabled = jest.fn();
+const mockGetBirthdayChoice = jest.fn();
+const mockRequestPermissions = jest.fn();
+const mockScheduleBirthdays = jest.fn();
+const mockSetBirthdayChoice = jest.fn();
+const mockSetNotificationsEnabled = jest.fn();
+const mockSyncAll = jest.fn();
+jest.mock('@/lib/notifications', () => ({
+  areNotificationsEnabled: (...args: unknown[]) => mockAreNotificationsEnabled(...args),
+  getBirthdayChoice: (...args: unknown[]) => mockGetBirthdayChoice(...args),
+  requestPermissions: (...args: unknown[]) => mockRequestPermissions(...args),
+  scheduleBirthdays: (...args: unknown[]) => mockScheduleBirthdays(...args),
+  setBirthdayChoice: (...args: unknown[]) => mockSetBirthdayChoice(...args),
+  setNotificationsEnabled: (...args: unknown[]) => mockSetNotificationsEnabled(...args),
+  syncAll: (...args: unknown[]) => mockSyncAll(...args),
 }));
 
 const mockFormatInviteCode = jest.fn();
@@ -120,6 +139,11 @@ function setup(
     deleteCasa: mockDeleteCasa,
     refreshMembers: mockRefreshMembers,
   });
+  mockUseRealtimeCollection.mockImplementation((_fetchFn: unknown, table: string) =>
+    table === 'appointments' || table === 'contacts'
+      ? { data: [], loading: false, error: null, reload: jest.fn() }
+      : { data: [], loading: false, error: null, reload: jest.fn() },
+  );
   return render(<AjustesScreen />);
 }
 
@@ -135,6 +159,13 @@ beforeEach(() => {
   mockSetCasaMemberRole.mockResolvedValue(null);
   mockFormatInviteCode.mockReturnValue('ABCD1234');
   mockInitials.mockReturnValue('CA');
+  mockAreNotificationsEnabled.mockResolvedValue(true);
+  mockGetBirthdayChoice.mockResolvedValue('both');
+  mockRequestPermissions.mockResolvedValue(true);
+  mockScheduleBirthdays.mockResolvedValue(undefined);
+  mockSetBirthdayChoice.mockResolvedValue(undefined);
+  mockSetNotificationsEnabled.mockResolvedValue(undefined);
+  mockSyncAll.mockResolvedValue(undefined);
   mockValidateCasaName.mockReturnValue({ valid: true });
   mockValidateInviteCode.mockReturnValue({ valid: true });
 });
@@ -333,5 +364,59 @@ describe('AjustesScreen', () => {
     );
     expect(queryByLabelText('Hacer administrador')).toBeNull();
     expect(queryByLabelText('Eliminar a Carlos')).toBeNull();
+  });
+
+  it('renderiza sección Recordatorios con preferencias cargadas', async () => {
+    const { getByText, getByLabelText } = setup();
+    await waitFor(() => {
+      expect(getByText('Recordatorios')).toBeTruthy();
+      expect(getByText('Cumpleaños: avisar')).toBeTruthy();
+      expect(getByText('Día antes + mismo día')).toBeTruthy();
+    });
+    expect(getByLabelText('Activar notificaciones').props.value).toBe(true);
+  });
+
+  it('activa notificaciones pidiendo permiso y sincronizando', async () => {
+    mockAreNotificationsEnabled.mockResolvedValue(false);
+    const { getByLabelText } = setup();
+    await waitFor(() => {
+      expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+    });
+
+    fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', true);
+
+    await waitFor(() => {
+      expect(mockRequestPermissions).toHaveBeenCalled();
+      expect(mockSetNotificationsEnabled).toHaveBeenCalledWith(true);
+      expect(mockSyncAll).toHaveBeenCalled();
+    });
+  });
+
+  it('desactiva notificaciones y cancela todo', async () => {
+    const { getByLabelText } = setup();
+    await waitFor(() => {
+      expect(getByLabelText('Activar notificaciones').props.value).toBe(true);
+    });
+
+    fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', false);
+
+    await waitFor(() => {
+      expect(mockSetNotificationsEnabled).toHaveBeenCalledWith(false);
+    });
+    expect(mockSyncAll).not.toHaveBeenCalled();
+  });
+
+  it('cambia aviso de cumpleaños y reprograma', async () => {
+    const { getByText } = setup();
+    await waitFor(() => {
+      expect(getByText('Cumpleaños: avisar')).toBeTruthy();
+    });
+
+    fireEvent.press(getByText('Mismo día'));
+
+    await waitFor(() => {
+      expect(mockSetBirthdayChoice).toHaveBeenCalledWith('same-day');
+      expect(mockScheduleBirthdays).toHaveBeenCalledWith([], 'same-day');
+    });
   });
 });

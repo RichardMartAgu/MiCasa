@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -8,10 +8,30 @@ import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
-import { removeCasaMember, setCasaMemberRole } from '@/lib/api';
+import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
+import {
+  fetchAppointments,
+  fetchContacts,
+  removeCasaMember,
+  setCasaMemberRole,
+} from '@/lib/api';
 import { confirmDialog } from '@/lib/confirm';
 import { formatInviteCode, initials } from '@/lib/format';
-import type { Casa, CasaMember } from '@/lib/types';
+import {
+  areNotificationsEnabled,
+  getBirthdayChoice,
+  requestPermissions,
+  scheduleBirthdays,
+  setBirthdayChoice,
+  setNotificationsEnabled,
+  syncAll,
+} from '@/lib/notifications';
+import {
+  reminderChoiceLabels,
+  reminderChoices,
+  type ReminderChoice,
+} from '@/lib/notification-schedule';
+import type { Appointment, Casa, CasaMember, Contact } from '@/lib/types';
 import { validateCasaName, validateInviteCode } from '@/lib/validation';
 
 export default function AjustesScreen() {
@@ -46,6 +66,71 @@ export default function AjustesScreen() {
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const [notificationsEnabled, setNotificationsEnabledState] = useState(false);
+  const [birthdayChoice, setBirthdayChoiceState] = useState<ReminderChoice>('none');
+  const [prefsLoading, setPrefsLoading] = useState(true);
+
+  const { data: appointments } = useRealtimeCollection<Appointment>(
+    () => (currentCasa ? fetchAppointments(currentCasa.id) : Promise.resolve([])),
+    'appointments',
+    currentCasa?.id ?? null,
+  );
+  const { data: contacts } = useRealtimeCollection<Contact>(
+    () => (currentCasa ? fetchContacts(currentCasa.id) : Promise.resolve([])),
+    'contacts',
+    currentCasa?.id ?? null,
+  );
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const [enabled, choice] = await Promise.all([
+        areNotificationsEnabled(),
+        getBirthdayChoice(),
+      ]);
+      if (!active) return;
+      setNotificationsEnabledState(enabled);
+      setBirthdayChoiceState(choice);
+      setPrefsLoading(false);
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function handleToggleNotifications(next: boolean) {
+    try {
+      if (next) {
+        const granted = await requestPermissions();
+        if (!granted) {
+          Alert.alert(
+            'Permiso denegado',
+            'Activa las notificaciones desde los ajustes del sistema.',
+          );
+          return;
+        }
+        await setNotificationsEnabled(true);
+        setNotificationsEnabledState(true);
+        await syncAll(appointments, contacts, birthdayChoice);
+      } else {
+        await setNotificationsEnabled(false);
+        setNotificationsEnabledState(false);
+      }
+    } catch {
+      // el sync por realtime reintentará
+    }
+  }
+
+  async function handleBirthdayChoice(choice: ReminderChoice) {
+    try {
+      setBirthdayChoiceState(choice);
+      await setBirthdayChoice(choice);
+      await scheduleBirthdays(contacts, choice);
+    } catch {
+      // el sync por realtime reintentará
+    }
+  }
 
   function openEditCasa(casa: Casa) {
     setEditingCasa(casa);
@@ -175,6 +260,39 @@ export default function AjustesScreen() {
           </Text>
         </View>
         <Text style={styles.cardMeta}>Comparte el código para que tu pareja o familia entre.</Text>
+      </Card>
+
+      <Card>
+        <Text style={styles.sectionTitle}>Recordatorios</Text>
+        <View style={styles.settingRow}>
+          <View style={styles.settingText}>
+            <Text style={styles.settingLabel}>Notificaciones</Text>
+            <Text style={styles.cardMeta}>Avisos de citas y cumpleaños</Text>
+          </View>
+          <Switch
+            value={notificationsEnabled}
+            onValueChange={handleToggleNotifications}
+            disabled={prefsLoading}
+            trackColor={{ false: Palette.border, true: Palette.primary }}
+            thumbColor={Palette.onPrimary}
+            accessibilityLabel="Activar notificaciones"
+          />
+        </View>
+        <Text style={styles.settingLabel}>Cumpleaños: avisar</Text>
+        <View style={styles.chipRow}>
+          {reminderChoices.map((value) => (
+            <Pressable
+              key={value}
+              style={[styles.chip, birthdayChoice === value && styles.chipSelected]}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: birthdayChoice === value }}
+              onPress={() => handleBirthdayChoice(value)}>
+              <Text style={[styles.chipText, birthdayChoice === value && styles.chipTextSelected]}>
+                {reminderChoiceLabels[value]}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
       </Card>
 
       <Card>
@@ -373,6 +491,30 @@ const styles = StyleSheet.create({
   casaRowActive: { fontWeight: '700', color: Palette.primary },
   casaRowActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   casaActions: { gap: Spacing.two, marginTop: Spacing.two },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.three,
+    marginBottom: Spacing.three,
+  },
+  settingText: { flex: 1, gap: 2 },
+  settingLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
+  chip: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    minHeight: 44,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Palette.border,
+    backgroundColor: Palette.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chipSelected: { backgroundColor: Palette.primary, borderColor: Palette.primary },
+  chipText: { fontSize: 13, fontWeight: '600', color: Palette.textSecondary },
+  chipTextSelected: { color: Palette.onPrimary },
   modalOverlay: { flex: 1, backgroundColor: Palette.overlay, justifyContent: 'flex-end' },
   modal: {
     backgroundColor: Palette.surface,
