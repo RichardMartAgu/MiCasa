@@ -10,6 +10,7 @@ const mockGetItem = jest.fn();
 const mockSetItem = jest.fn();
 const mockChannel = jest.fn();
 const mockRemoveChannel = jest.fn();
+const mockUseAuth = jest.fn();
 
 let realtimeHandler: (() => void) | null = null;
 let lastRealtimeConfig: unknown = null;
@@ -25,9 +26,8 @@ jest.mock('@/lib/supabase', () => ({
   },
 }));
 
-let mockAuthUser: { id: string } | null = { id: 'u1' };
 jest.mock('@/context/auth-context', () => ({
-  useAuth: () => ({ user: mockAuthUser }),
+  useAuth: () => mockUseAuth(),
 }));
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
@@ -42,6 +42,23 @@ const user = { id: 'u1' };
 const casa = { id: 'c1', name: 'Mi Hogar', invite_code: 'ABCD1234' };
 const member = { user_id: 'u1', role: 'owner' };
 const profile = { id: 'u1', display_name: 'Ana' };
+const authDefaults: {
+  loading: boolean;
+  user: { id: string } | null;
+  session: null;
+  signIn: jest.Mock;
+  signUp: jest.Mock;
+  signInWithGoogle: jest.Mock;
+  signOut: jest.Mock;
+} = {
+  loading: false,
+  user: { id: 'u1' },
+  session: null,
+  signIn: jest.fn(),
+  signUp: jest.fn(),
+  signInWithGoogle: jest.fn(),
+  signOut: jest.fn(),
+};
 
 function queryChain(result: Record<string, unknown>) {
   const query: Record<string, unknown> & { then: (onfulfilled: (value: unknown) => unknown) => unknown } = {
@@ -65,6 +82,15 @@ function wrapper({ children }: PropsWithChildren) {
 beforeEach(() => {
   jest.clearAllMocks();
   realtimeHandler = null;
+  mockUseAuth.mockReturnValue({
+    loading: false,
+    user: { id: 'u1' },
+    session: null,
+    signIn: jest.fn(),
+    signUp: jest.fn(),
+    signInWithGoogle: jest.fn(),
+    signOut: jest.fn(),
+  });
   mockGetUser.mockResolvedValue({ data: { user } });
   mockGetItem.mockResolvedValue(null);
   mockSetItem.mockResolvedValue(undefined);
@@ -81,7 +107,6 @@ beforeEach(() => {
     };
     return lastChannel;
   });
-  mockAuthUser = { id: 'u1' };
 });
 
 describe('CasaProvider', () => {
@@ -290,7 +315,7 @@ describe('CasaProvider', () => {
     );
   });
 
-  it('suscribe a realtime de casas y refresca al recibir cambios', async () => {
+it('suscribe a realtime de casas y refresca al recibir cambios', async () => {
     mockFrom.mockReturnValue(queryChain({ data: [casa], error: null }));
     const { result } = renderHook(() => useCasa(), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -311,7 +336,7 @@ describe('CasaProvider', () => {
   });
 
   it('sin usuario no suscribe a realtime', async () => {
-    mockAuthUser = null;
+    mockUseAuth.mockReturnValue({ ...authDefaults, user: null });
     renderHook(() => useCasa(), { wrapper });
     await waitFor(() => expect(mockChannel).toHaveBeenCalledTimes(0));
   });
@@ -323,5 +348,70 @@ describe('CasaProvider', () => {
 
     unmount();
     expect(mockRemoveChannel).toHaveBeenCalledWith(lastChannel);
+  });
+
+  it('no carga casas mientras la autenticación está cargando', async () => {
+    mockUseAuth.mockReturnValue({ ...authDefaults, loading: true });
+    const { result } = renderHook(() => useCasa(), { wrapper });
+
+    await act(async () => {});
+
+    expect(result.current.loading).toBe(true);
+    expect(mockGetUser).not.toHaveBeenCalled();
+  });
+
+  it('recarga casas cuando cambia el usuario', async () => {
+    type AuthProps = { auth: typeof authDefaults };
+    const { result, rerender } = renderHook<ReturnType<typeof useCasa>, AuthProps>(
+      () => useCasa(),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mockFrom).toHaveBeenCalledWith('casas');
+
+    mockUseAuth.mockReturnValue({ ...authDefaults, user: { id: 'u2' } });
+    rerender({ auth: authDefaults });
+
+    await waitFor(() => {
+      const casaCalls = mockFrom.mock.calls.filter((call) => call[0] === 'casas');
+      expect(casaCalls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it('al restaurar sesión desde authLoading true carga casas del usuario', async () => {
+    type AuthProps = { auth: typeof authDefaults };
+    mockUseAuth.mockReturnValue({ ...authDefaults, loading: true, user: null });
+    const { result, rerender } = renderHook<ReturnType<typeof useCasa>, AuthProps>(
+      () => useCasa(),
+      { wrapper },
+    );
+
+    await act(async () => {});
+    expect(result.current.loading).toBe(true);
+    expect(mockFrom).not.toHaveBeenCalledWith('casas');
+
+    mockFrom.mockReturnValue(queryChain({ data: [casa], error: null }));
+    mockUseAuth.mockReturnValue({ ...authDefaults, user: { id: 'u1' } });
+    rerender({ auth: { ...authDefaults, user: { id: 'u1' } } });
+
+    await waitFor(() => expect(result.current.casas).toEqual([casa]));
+    expect(result.current.currentCasa).toEqual(casa);
+  });
+
+  it('al cerrar sesión limpia casas y casa actual', async () => {
+    type AuthProps = { auth: typeof authDefaults };
+    mockFrom.mockReturnValue(queryChain({ data: [casa], error: null }));
+    const { result, rerender } = renderHook<ReturnType<typeof useCasa>, AuthProps>(
+      () => useCasa(),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.casas).toEqual([casa]));
+
+    mockUseAuth.mockReturnValue({ ...authDefaults, user: null });
+    mockGetUser.mockResolvedValue({ data: { user: null } });
+    rerender({ auth: { ...authDefaults, user: null } });
+
+    await waitFor(() => expect(result.current.casas).toEqual([]));
+    expect(result.current.currentCasa).toBeNull();
   });
 });
