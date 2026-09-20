@@ -37,6 +37,7 @@ import { syncBirthdays } from '@/lib/calendar-sync';
 import { confirmDialog } from '@/lib/confirm';
 import { safeDate, toISODate } from '@/lib/date';
 import { filterContacts } from '@/lib/filter';
+import { getBirthdayChoice, scheduleBirthdays } from '@/lib/notifications';
 import type { Contact } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
@@ -120,6 +121,15 @@ export default function CumpleanosScreen() {
     setModalVisible(true);
   }
 
+  async function rescheduleBirthdays() {
+    try {
+      const choice = await getBirthdayChoice();
+      await scheduleBirthdays(contacts, choice);
+    } catch {
+      // el sync por realtime reintentará
+    }
+  }
+
   async function handleSave() {
     const nameCheck = validateTitle(name);
     const dateCheck = validateDate(toISODate(birthDate));
@@ -161,6 +171,7 @@ export default function CumpleanosScreen() {
     setPhone('');
     setEditingContactId(null);
     setModalVisible(false);
+    void rescheduleBirthdays();
   }
 
   async function handleDelete(id: string) {
@@ -172,6 +183,7 @@ export default function CumpleanosScreen() {
     if (!ok) return;
     const error = await removeContact(id);
     if (error) Alert.alert('Error', error.message);
+    else void rescheduleBirthdays();
   }
 
   function handleSync() {

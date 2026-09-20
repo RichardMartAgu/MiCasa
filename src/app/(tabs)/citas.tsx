@@ -38,6 +38,13 @@ import {
 import { formatDateTime } from '@/lib/date';
 import { filterAppointments } from '@/lib/filter';
 import { confirmDialog } from '@/lib/confirm';
+import {
+  appointmentReminderDates,
+  reminderChoiceLabels,
+  reminderChoices,
+  type ReminderChoice,
+} from '@/lib/notification-schedule';
+import { cancelEntityKey, scheduleAppointment } from '@/lib/notifications';
 import type { Appointment, AppointmentKindRow } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
@@ -90,6 +97,7 @@ export default function CitasScreen() {
   const [location, setLocation] = useState('');
   const [date, setDate] = useState(new Date());
   const [time, setTime] = useState(new Date());
+  const [reminderChoice, setReminderChoice] = useState<ReminderChoice>('none');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [errors, setErrors] = useState<{
@@ -143,6 +151,7 @@ export default function CitasScreen() {
     setLocation('');
     setDate(new Date());
     setTime(new Date());
+    setReminderChoice('none');
     setErrors({});
     setModalVisible(true);
   }
@@ -153,6 +162,11 @@ export default function CitasScreen() {
     setKind(appointment.kind);
     setPerson(appointment.person ?? '');
     setLocation(appointment.location ?? '');
+    setReminderChoice(
+      reminderChoices.includes(appointment.reminder_choice as ReminderChoice)
+        ? (appointment.reminder_choice as ReminderChoice)
+        : 'none',
+    );
     const parsed = new Date(appointment.starts_at);
     if (!Number.isNaN(parsed.getTime())) {
       setDate(new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
@@ -195,20 +209,41 @@ export default function CitasScreen() {
       return;
 
     setSaving(true);
+    const { reminderAtRaw, choice } = appointmentReminderDates(
+      new Date(date.getFullYear(), date.getMonth(), date.getDate(), time.getHours(), time.getMinutes()),
+      reminderChoice,
+    );
     const input = {
       title,
       kind,
       person: person.trim() || null,
       location: location.trim() || null,
       starts_at: startsAt,
+      reminder_at: reminderAtRaw,
+      reminder_choice: choice,
     };
-    const error = editingAppointmentId
-      ? await updateAppointment(editingAppointmentId, input)
-      : await addAppointment({ ...input, casa_id: currentCasa.id, user_id: user.id });
+    let error: { message: string } | null = null;
+    let saved: Appointment | null = null;
+    if (editingAppointmentId) {
+      error = await updateAppointment(editingAppointmentId, input);
+      const base = appointments.find((a) => a.id === editingAppointmentId);
+      if (!error && base) saved = { ...base, ...input };
+    } else {
+      const result = await addAppointment({ ...input, casa_id: currentCasa.id, user_id: user.id });
+      error = result.error;
+      saved = result.data ?? null;
+    }
     setSaving(false);
     if (error) {
       Alert.alert('Error', error.message);
       return;
+    }
+    if (saved) {
+      try {
+        await scheduleAppointment(saved, reminderChoice);
+      } catch {
+        // el sync por realtime reintentará
+      }
     }
     setTitle('');
     setPerson('');
@@ -227,6 +262,7 @@ export default function CitasScreen() {
     if (!ok) return;
     const error = await removeAppointment(id);
     if (error) Alert.alert('Error', error.message);
+    else void cancelEntityKey('appointment', id);
   }
 
   function openKindsManager() {
@@ -473,6 +509,23 @@ export default function CitasScreen() {
                 />
               )}
 
+              <Text style={styles.fieldLabel}>Recordar</Text>
+              <View style={styles.kindRow}>
+                {reminderChoices.map((value) => (
+                  <Pressable
+                    key={value}
+                    style={[styles.chip, reminderChoice === value && styles.chipSelected]}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: reminderChoice === value }}
+                    onPress={() => setReminderChoice(value)}>
+                    <Text
+                      style={[styles.chipText, reminderChoice === value && styles.chipTextSelected]}>
+                      {reminderChoiceLabels[value]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
               <View style={styles.modalActions}>
                 <Button
                   title="Cancelar"
@@ -637,6 +690,7 @@ const styles = StyleSheet.create({
     backgroundColor: Palette.surface,
   },
   dateButtonLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  fieldLabel: { fontSize: 14, fontWeight: '600', color: Palette.textStrong },
   error: { color: Palette.danger, fontSize: 13 },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
 });

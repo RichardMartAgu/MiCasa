@@ -5,9 +5,21 @@ import CitasScreen from '@/app/(tabs)/citas';
 import type { Appointment } from '@/lib/types';
 
 jest.mock('@react-native-community/datetimepicker', () => {
-  const { View } = require('react-native');
-  return function MockPicker() {
-    return <View testID="date-picker" />;
+  const { Pressable, Text } = require('react-native');
+  return function MockPicker({
+    onChange,
+    mode,
+  }: {
+    onChange?: (event: unknown, date?: Date) => void;
+    mode?: string;
+  }) {
+    return (
+      <Pressable
+        testID={`picker-${mode}`}
+        onPress={() => onChange?.({ type: 'set' }, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000))}>
+        <Text>{`picker-${mode}`}</Text>
+      </Pressable>
+    );
   };
 });
 
@@ -36,6 +48,13 @@ jest.mock('@/context/casa-context', () => ({
 const mockUseRealtimeCollection = jest.fn();
 jest.mock('@/hooks/use-realtime-collection', () => ({
   useRealtimeCollection: (...args: unknown[]) => mockUseRealtimeCollection(...args),
+}));
+
+const mockScheduleAppointment = jest.fn();
+const mockCancelEntityKey = jest.fn();
+jest.mock('@/lib/notifications', () => ({
+  scheduleAppointment: (...args: unknown[]) => mockScheduleAppointment(...args),
+  cancelEntityKey: (...args: unknown[]) => mockCancelEntityKey(...args),
 }));
 
 const mockAddAppointment = jest.fn();
@@ -82,6 +101,7 @@ const upcomingAppointment: Appointment = {
   kind: 'medico',
   starts_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   reminder_at: null,
+  reminder_choice: 'none',
   created_at: '2026-09-01',
 };
 const pastAppointment: Appointment = {
@@ -95,6 +115,7 @@ const pastAppointment: Appointment = {
   kind: 'personal',
   starts_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
   reminder_at: null,
+  reminder_choice: 'none',
   created_at: '2026-08-01',
 };
 
@@ -121,12 +142,14 @@ function setup(appointments: Appointment[] = [], currentCasa = casa, kinds = def
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockAddAppointment.mockResolvedValue(null);
+  mockAddAppointment.mockResolvedValue({ error: null, data: { id: 'a1' } });
   mockRemoveAppointment.mockResolvedValue(null);
   mockUpdateAppointment.mockResolvedValue(null);
   mockAddAppointmentKind.mockResolvedValue(null);
   mockRemoveAppointmentKind.mockResolvedValue(null);
   mockUpdateAppointmentKind.mockResolvedValue(null);
+  mockScheduleAppointment.mockResolvedValue(undefined);
+  mockCancelEntityKey.mockResolvedValue(undefined);
   mockFormatDateTime.mockReturnValue('12 sep 2026, 10:00');
   mockValidateTitle.mockReturnValue({ valid: true });
   mockValidateDate.mockReturnValue({ valid: true });
@@ -218,7 +241,7 @@ describe('CitasScreen', () => {
   it('muestra Alert si addAppointment falla', async () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockAddAppointment.mockResolvedValue({
-      message: 'Problema de conexión. Inténtalo de nuevo.',
+      error: { message: 'Problema de conexión. Inténtalo de nuevo.' },
     });
     const { getByText, getAllByDisplayValue } = setup([]);
 
@@ -258,7 +281,64 @@ describe('CitasScreen', () => {
     await waitFor(() => {
       expect(mockRemoveAppointment).toHaveBeenCalledWith('a1');
     });
+    await waitFor(() => {
+      expect(mockCancelEntityKey).toHaveBeenCalledWith('appointment', 'a1');
+    });
     alertSpy.mockRestore();
+  });
+
+  it('agenda recordatorio al crear cita', async () => {
+    mockAddAppointment.mockResolvedValue({
+      error: null,
+      data: { id: 'a1', title: 'Vacunación' },
+    });
+    const { getByText, getByLabelText, getByTestId } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+
+    fireEvent.press(getByText('Día antes + mismo día'));
+    const titleInput = getByLabelText('Título');
+    fireEvent.changeText(titleInput, 'Vacunación');
+    fireEvent.press(getByLabelText(/^Cambiar fecha/));
+    fireEvent.press(getByTestId('picker-date'));
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockAddAppointment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Vacunación',
+          reminder_at: expect.any(String),
+          reminder_choice: 'both',
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(mockScheduleAppointment).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'a1', title: 'Vacunación' }),
+        'both',
+      );
+    });
+  });
+
+  it('round-trip: editar cita day-before muestra chip Día antes, no both', async () => {
+    const startsAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const dayBeforeAppointment: Appointment = {
+      ...upcomingAppointment,
+      id: 'a3',
+      title: 'Vacunación',
+      reminder_choice: 'day-before',
+      reminder_at: new Date(startsAt.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+    };
+    const { getByText, getByRole } = setup([dayBeforeAppointment]);
+
+    fireEvent.press(getByText('pencil-outline'));
+    await waitFor(() => expect(getByText('Editar cita')).toBeTruthy());
+
+    expect(getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked).toBe(true);
+    expect(
+      getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState.checked,
+    ).toBe(false);
   });
 
   it('abre gestor de tipos y añade tipo nuevo', async () => {

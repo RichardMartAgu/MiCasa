@@ -88,6 +88,8 @@ create table if not exists public.appointments (
     check (char_length(kind) between 1 and 40),
   starts_at timestamptz not null,
   reminder_at timestamptz,
+  reminder_choice text not null default 'none'
+    check (reminder_choice in ('none', 'day-before', 'same-day', 'both')),
   created_at timestamptz not null default now()
 );
 

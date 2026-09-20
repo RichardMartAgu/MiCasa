@@ -129,6 +129,7 @@ function appointment(overrides: Partial<Appointment>): Appointment {
     kind: 'medico',
     starts_at: '2026-09-20T10:00:00',
     reminder_at: null,
+    reminder_choice: 'none',
     created_at: '2026-09-01T10:00:00',
     ...overrides,
   };
