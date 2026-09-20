@@ -14,9 +14,10 @@ MiCasa te permite llevar la **contabilidad de compras** por secciones (Bebé, Re
 - **Login con Google** (OAuth) vía `expo-auth-session` + `expo-web-browser`.
 - **Casas multi-usuario**: crea una casa, comparte su código de invitación y toda tu pareja/familia gestiona los mismos datos en tiempo real. El propietario puede promover a administrador o expulsar miembros.
 - **Gastos con secciones**: categorías con color, icono y presupuesto mensual, barras de progreso y aviso cuando se supera el presupuesto.
-- **Citas**: tipo (médico, escuela, mascota…), persona, lugar, fecha y hora.
+- **Citas**: tipo (médico, escuela, mascota…), persona, lugar, fecha y hora, con aviso configurable (día antes y/o mismo día a las 9:00, o sin aviso).
 - **Listas de la compra**: artículos con cantidad, marcado de completado y listas terminadas.
 - **Cumpleaños**: contactos con fecha de nacimiento y widget de «próximos 30 días».
+- **Recordatorios locales**: avisos de citas y cumpleaños en el dispositivo con `expo-notifications` (toggle en Ajustes, sin backend).
 - **Tiempo real**: los cambios de cualquier miembro se reflejan al instante (Supabase Realtime).
 - **Seguridad**: Row Level Security en toda la base de datos.
 
@@ -107,7 +108,7 @@ src/
 - `casa_members` — relación usuario ↔ casa (rol owner/member).
 - `categories` — secciones de gasto (nombre, color, icono, presupuesto).
 - `expenses` — gastos con importe, sección y fecha.
-- `appointments` — citas con tipo, persona, lugar y hora.
+- `appointments` — citas con tipo, persona, lugar, hora y aviso (`reminder_at` + `reminder_choice`).
 - `shopping_lists` / `shopping_items` — listas de la compra.
 - `contacts` — contactos con fecha de nacimiento.
 
@@ -115,7 +116,6 @@ Todas las tablas tienen **Row Level Security**: solo los miembros de una casa pu
 
 ## 🗺️ Siguientes pasos sugeridos
 
-- Notificaciones push de recordatorios (citas y cumpleaños) con `expo-notifications`.
 - Subida de justificantes/fotos de gastos a Supabase Storage.
 - Presupuestos compartidos y alertas por sección.
 - Vista de gastos por mes con gráficos.
