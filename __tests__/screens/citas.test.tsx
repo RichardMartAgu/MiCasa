@@ -117,9 +117,8 @@ const pastAppointment: Appointment = {
 const defaultKinds = [
   { id: 'k1', casa_id: 'c1', name: 'medico', icon: 'medkit-outline', sort_order: 0, created_at: '' },
   { id: 'k2', casa_id: 'c1', name: 'escuela', icon: 'school-outline', sort_order: 1, created_at: '' },
-  { id: 'k3', casa_id: 'c1', name: 'mascota', icon: 'paw-outline', sort_order: 2, created_at: '' },
-  { id: 'k4', casa_id: 'c1', name: 'personal', icon: 'person-outline', sort_order: 3, created_at: '' },
-  { id: 'k5', casa_id: 'c1', name: 'otro', icon: 'ellipsis-horizontal-outline', sort_order: 4, created_at: '' },
+  { id: 'k4', casa_id: 'c1', name: 'personal', icon: 'person-outline', sort_order: 2, created_at: '' },
+  { id: 'k5', casa_id: 'c1', name: 'otro', icon: 'ellipsis-horizontal-outline', sort_order: 3, created_at: '' },
 ];
 
 function setup(appointments: Appointment[] = [], currentCasa = casa, kinds = defaultKinds) {
@@ -155,7 +154,7 @@ describe('CitasScreen', () => {
   it('renderiza título y subtítulo', () => {
     const { getByText } = setup();
     expect(getByText('Citas')).toBeTruthy();
-    expect(getByText('Médico, escuela, mascotas y más')).toBeTruthy();
+    expect(getByText('Médico, escuela y más')).toBeTruthy();
   });
 
   it('muestra EmptyState sin citas próximas', () => {
@@ -351,9 +350,6 @@ describe('CitasScreen', () => {
   it('abre gestor de tipos y añade tipo nuevo', async () => {
     const { getByText, getByLabelText } = setup();
 
-    fireEvent.press(getByText('add'));
-    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
-
     fireEvent.press(getByLabelText('Gestionar tipos de cita'));
     await waitFor(() =>
       expect(getByText('Añadir tipo', { includeHiddenElements: true })).toBeTruthy(),
@@ -374,8 +370,6 @@ describe('CitasScreen', () => {
   it('rechaza tipo de cita con más de 40 caracteres', async () => {
     const { getByText, getByLabelText } = setup();
 
-    fireEvent.press(getByText('add'));
-    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
     fireEvent.press(getByLabelText('Gestionar tipos de cita'));
     await waitFor(() =>
       expect(getByText('Añadir tipo', { includeHiddenElements: true })).toBeTruthy(),
@@ -394,8 +388,6 @@ describe('CitasScreen', () => {
   it('edita tipo de cita', async () => {
     const { getByText, getByLabelText } = setup();
 
-    fireEvent.press(getByText('add'));
-    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
     fireEvent.press(getByLabelText('Gestionar tipos de cita'));
     await waitFor(() =>
       expect(getByText('Añadir tipo', { includeHiddenElements: true })).toBeTruthy(),
@@ -415,21 +407,19 @@ describe('CitasScreen', () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     const { getByText, getByLabelText } = setup();
 
-    fireEvent.press(getByText('add'));
-    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
     fireEvent.press(getByLabelText('Gestionar tipos de cita'));
     await waitFor(() =>
       expect(getByText('Añadir tipo', { includeHiddenElements: true })).toBeTruthy(),
     );
 
-    fireEvent.press(getByLabelText('Eliminar tipo mascota', { includeHiddenElements: true }));
+    fireEvent.press(getByLabelText('Eliminar tipo personal', { includeHiddenElements: true }));
     const buttons = alertSpy.mock.calls[0][2] as
       | { text: string; onPress?: () => void }[]
       | undefined;
     buttons?.find((b) => b.text === 'Eliminar')?.onPress?.();
 
     await waitFor(() => {
-      expect(mockRemoveAppointmentKind).toHaveBeenCalledWith('k3');
+      expect(mockRemoveAppointmentKind).toHaveBeenCalledWith('k4');
     });
     alertSpy.mockRestore();
   });

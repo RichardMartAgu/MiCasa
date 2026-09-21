@@ -74,7 +74,7 @@ create table if not exists public.expenses (
 );
 
 -- ----------------------------------------------------------------------------
--- Citas (médico, escuela, mascota, personal...)
+-- Citas (médico, escuela, personal...)
 -- ----------------------------------------------------------------------------
 create table if not exists public.appointments (
   id uuid primary key default gen_random_uuid(),
@@ -501,9 +501,8 @@ begin
   from (values
     ('medico', 'medkit-outline', 0),
     ('escuela', 'school-outline', 1),
-    ('mascota', 'paw-outline', 2),
-    ('personal', 'person-outline', 3),
-    ('otro', 'ellipsis-horizontal-outline', 4)
+    ('personal', 'person-outline', 2),
+    ('otro', 'ellipsis-horizontal-outline', 3)
   ) as k(name, icon, sort_order);
 
   return new;

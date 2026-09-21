@@ -50,7 +50,6 @@ import { validateDate, validateOptionalText, validateTitle } from '@/lib/validat
 const DEFAULT_KINDS: { name: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { name: 'medico', icon: 'medkit-outline' },
   { name: 'escuela', icon: 'school-outline' },
-  { name: 'mascota', icon: 'paw-outline' },
   { name: 'personal', icon: 'person-outline' },
   { name: 'otro', icon: 'ellipsis-horizontal-outline' },
 ];
@@ -319,15 +318,24 @@ export default function CitasScreen() {
       <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={styles.title}>Citas</Text>
-          <Text style={styles.subtitle}>Médico, escuela, mascotas y más</Text>
+          <Text style={styles.subtitle}>Médico, escuela y más</Text>
         </View>
-        <Pressable
-          style={styles.fab}
-          accessibilityRole="button"
-          accessibilityLabel="Nueva cita"
-          onPress={openAdd}>
-          <Ionicons name="add" size={28} color={Palette.onPrimary} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            style={styles.manageButton}
+            accessibilityRole="button"
+            accessibilityLabel="Gestionar tipos de cita"
+            onPress={openKindsManager}>
+            <Ionicons name="settings-outline" size={20} color={Palette.primary} />
+          </Pressable>
+          <Pressable
+            style={styles.fab}
+            accessibilityRole="button"
+            accessibilityLabel="Nueva cita"
+            onPress={openAdd}>
+            <Ionicons name="add" size={28} color={Palette.onPrimary} />
+          </Pressable>
+        </View>
       </View>
 
       <FilterBar
@@ -411,7 +419,7 @@ export default function CitasScreen() {
                 label="Título"
                 value={title}
                 onChangeText={setTitle}
-                placeholder="P. ej. Pediatría de Leo"
+                placeholder="P. ej. Revisión médica"
                 error={errors.title}
               />
 
@@ -437,7 +445,7 @@ export default function CitasScreen() {
               <Pressable
                 onPress={openKindsManager}
                 accessibilityRole="button"
-                accessibilityLabel="Gestionar tipos de cita"
+                accessibilityLabel="Gestionar tipos"
                 hitSlop={8}>
                 <Text style={styles.manageLinkText}>Gestionar tipos</Text>
               </Pressable>
@@ -595,6 +603,17 @@ const styles = StyleSheet.create({
   headerText: { gap: Spacing.one },
   title: { fontSize: 28, fontWeight: '800', color: Palette.text },
   subtitle: { fontSize: 14, color: Palette.textSecondary },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  manageButton: {
+    width: 44,
+    height: 44,
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.surface,
+    borderWidth: 1,
+    borderColor: Palette.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   fab: {
     width: 48,
     height: 48,
