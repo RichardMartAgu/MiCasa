@@ -5,9 +5,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
 import { friendlyError } from '@/lib/errors';
 import { removeCasa, updateCasa } from '@/lib/api';
+import { useAuth } from '@/context/auth-context';
 import type { Casa, CasaMember, Profile } from '@/lib/types';
 
 const CURRENT_CASA_KEY = 'micasa.current_casa_id';
+
+let channelSeq = 0;
 
 async function fetchMembersForCasa(casaId: string) {
   const { data } = await supabase
@@ -56,6 +59,7 @@ interface CasaContextValue {
 const CasaContext = createContext<CasaContextValue | undefined>(undefined);
 
 export function CasaProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [casas, setCasas] = useState<Casa[]>([]);
   const [currentCasa, setCurrentCasaState] = useState<Casa | null>(null);
   const [membersByCasa, setMembersByCasa] = useState<Record<string, CasaMember[]>>({});
@@ -104,6 +108,26 @@ export function CasaProvider({ children }: { children: ReactNode }) {
       await refresh();
     })();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channelName = `realtime-casas-${channelSeq++}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'casas' },
+        () => {
+          void refresh();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, refresh]);
 
   const setCurrentCasa = useCallback(async (casa: Casa) => {
     await AsyncStorage.setItem(CURRENT_CASA_KEY, casa.id);
