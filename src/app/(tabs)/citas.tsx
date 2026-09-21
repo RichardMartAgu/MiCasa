@@ -43,7 +43,12 @@ import {
   reminderChoices,
   type ReminderChoice,
 } from '@/lib/notification-schedule';
-import { cancelEntityKey, scheduleAppointment } from '@/lib/notifications';
+import {
+  areNotificationsEnabled,
+  askEnableNotifications,
+  cancelEntityKey,
+  scheduleAppointment,
+} from '@/lib/notifications';
 import type { Appointment, AppointmentKindRow } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
@@ -236,7 +241,16 @@ export default function CitasScreen() {
     }
     if (saved) {
       try {
-        await scheduleAppointment(saved, reminderChoice);
+        if (reminderChoice !== 'none' && !(await areNotificationsEnabled())) {
+          const result = await askEnableNotifications(
+            'Esta cita tiene recordatorio, pero las notificaciones están apagadas. No recibirás el aviso.',
+          );
+          if (result === 'enabled') {
+            await scheduleAppointment(saved, reminderChoice);
+          }
+        } else {
+          await scheduleAppointment(saved, reminderChoice);
+        }
       } catch {
         // el sync por realtime reintentará
       }

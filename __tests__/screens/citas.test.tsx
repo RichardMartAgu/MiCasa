@@ -47,9 +47,13 @@ jest.mock('@/hooks/use-realtime-collection', () => ({
 
 const mockScheduleAppointment = jest.fn();
 const mockCancelEntityKey = jest.fn();
+const mockAreNotificationsEnabled = jest.fn();
+const mockAskEnableNotifications = jest.fn();
 jest.mock('@/lib/notifications', () => ({
   scheduleAppointment: (...args: unknown[]) => mockScheduleAppointment(...args),
   cancelEntityKey: (...args: unknown[]) => mockCancelEntityKey(...args),
+  areNotificationsEnabled: (...args: unknown[]) => mockAreNotificationsEnabled(...args),
+  askEnableNotifications: (...args: unknown[]) => mockAskEnableNotifications(...args),
 }));
 
 const mockAddAppointment = jest.fn();
@@ -144,6 +148,8 @@ beforeEach(() => {
   mockUpdateAppointmentKind.mockResolvedValue(null);
   mockScheduleAppointment.mockResolvedValue(undefined);
   mockCancelEntityKey.mockResolvedValue(undefined);
+  mockAreNotificationsEnabled.mockResolvedValue(true);
+  mockAskEnableNotifications.mockResolvedValue('enabled');
   mockFormatDateTime.mockReturnValue('12 sep 2026, 10:00');
   mockValidateTitle.mockReturnValue({ valid: true });
   mockValidateDate.mockReturnValue({ valid: true });
@@ -319,6 +325,58 @@ describe('CitasScreen', () => {
         }),
       );
     });
+    await waitFor(() => {
+      expect(mockScheduleAppointment).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'a1', title: 'Vacunación' }),
+        'both',
+      );
+    });
+  });
+
+  it('avisa si recordatorio sin notif activadas y no agenda si cancela', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    mockAreNotificationsEnabled.mockResolvedValue(false);
+    mockAskEnableNotifications.mockResolvedValue('cancelled');
+    mockAddAppointment.mockResolvedValue({
+      error: null,
+      data: { id: 'a1', title: 'Vacunación' },
+    });
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+
+    fireEvent.press(getByText('Día antes + mismo día'));
+    const titleInput = getByLabelText('Título');
+    fireEvent.changeText(titleInput, 'Vacunación');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockAskEnableNotifications).toHaveBeenCalledWith(
+        expect.stringContaining('recordatorio'),
+      );
+    });
+    expect(mockScheduleAppointment).not.toHaveBeenCalled();
+  });
+
+  it('agenda recordatorio tras activar notificaciones desde el aviso', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    mockAreNotificationsEnabled.mockResolvedValue(false);
+    mockAskEnableNotifications.mockResolvedValue('enabled');
+    mockAddAppointment.mockResolvedValue({
+      error: null,
+      data: { id: 'a1', title: 'Vacunación' },
+    });
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+
+    fireEvent.press(getByText('Día antes + mismo día'));
+    const titleInput = getByLabelText('Título');
+    fireEvent.changeText(titleInput, 'Vacunación');
+    fireEvent.press(getByText('Guardar'));
+
     await waitFor(() => {
       expect(mockScheduleAppointment).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'a1', title: 'Vacunación' }),

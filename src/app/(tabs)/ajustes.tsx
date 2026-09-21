@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -19,6 +19,8 @@ import { confirmDialog } from '@/lib/confirm';
 import { formatInviteCode, initials } from '@/lib/format';
 import {
   areNotificationsEnabled,
+  askEnableNotifications,
+  canRequestPermissionAgain,
   getBirthdayChoice,
   requestPermissions,
   scheduleBirthdays,
@@ -104,9 +106,19 @@ export default function AjustesScreen() {
       if (next) {
         const granted = await requestPermissions();
         if (!granted) {
+          const canAsk = await canRequestPermissionAgain();
           Alert.alert(
             'Permiso denegado',
-            'Activa las notificaciones desde los ajustes del sistema.',
+            'Activa las notificaciones desde los ajustes del sistema para recibir avisos.',
+            canAsk
+              ? [{ text: 'OK' }]
+              : [
+                  { text: 'Cancelar', style: 'cancel' },
+                  {
+                    text: 'Abrir ajustes',
+                    onPress: () => void Linking.openSettings().catch(() => undefined),
+                  },
+                ],
           );
           return;
         }
@@ -118,12 +130,19 @@ export default function AjustesScreen() {
         setNotificationsEnabledState(false);
       }
     } catch {
-      // el sync por realtime reintentará
+      Alert.alert('Error', 'No se pudo cambiar el estado de las notificaciones.');
     }
   }
 
   async function handleBirthdayChoice(choice: ReminderChoice) {
     try {
+      if (choice !== 'none' && !notificationsEnabled) {
+        const result = await askEnableNotifications(
+          'Activa las notificaciones para recibir avisos de cumpleaños.',
+        );
+        if (result !== 'enabled') return;
+        setNotificationsEnabledState(true);
+      }
       setBirthdayChoiceState(choice);
       await setBirthdayChoice(choice);
       await scheduleBirthdays(contacts, choice);
