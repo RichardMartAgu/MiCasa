@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Alert,
@@ -13,6 +12,7 @@ import {
   View,
 } from 'react-native';
 
+import { AppDatePicker } from '@/components/ui/app-date-picker';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -56,7 +56,6 @@ export default function CumpleanosScreen() {
   const [birthDate, setBirthDate] = useState(new Date());
   const [relationship, setRelationship] = useState('');
   const [phone, setPhone] = useState('');
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const [errors, setErrors] = useState<{
     name?: string;
     date?: string;
@@ -369,29 +368,19 @@ export default function CumpleanosScreen() {
             </Text>
             <View style={styles.form}>
               <TextField label="Nombre" value={name} onChangeText={setName} error={errors.name} />
-              <Pressable
-                style={styles.dateButton}
-                accessibilityRole="button"
+              <AppDatePicker
+                value={birthDate}
+                mode="date"
+                icon="🎂"
+                formatValue={toISODate}
                 accessibilityLabel={`Cambiar fecha de nacimiento: ${toISODate(birthDate)}`}
-                onPress={() => setShowDatePicker(true)}>
-                <Text style={styles.dateButtonLabel}>🎂 {toISODate(birthDate)}</Text>
-              </Pressable>
+                onChange={setBirthDate}
+              />
               {errors.date ? (
                 <Text style={styles.error} accessibilityRole="alert">
                   {errors.date}
                 </Text>
               ) : null}
-              {showDatePicker && (
-                <DateTimePicker
-                  value={birthDate}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={(_, selected) => {
-                    setShowDatePicker(false);
-                    if (selected) setBirthDate(selected);
-                  }}
-                />
-              )}
               <TextField
                 label="Parentesco"
                 value={relationship}
@@ -495,15 +484,6 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 20, fontWeight: '800', color: Palette.text, marginBottom: Spacing.three },
   form: { gap: Spacing.three },
-  dateButton: {
-    borderWidth: 1,
-    borderColor: Palette.border,
-    borderRadius: Radius.md,
-    paddingVertical: Spacing.three,
-    alignItems: 'center',
-    backgroundColor: Palette.surface,
-  },
-  dateButtonLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
   error: { color: Palette.danger, fontSize: 13 },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
 });

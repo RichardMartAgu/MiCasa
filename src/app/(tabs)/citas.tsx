@@ -1,10 +1,8 @@
 import { useMemo, useState } from 'react';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Alert,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +10,7 @@ import {
   View,
 } from 'react-native';
 
+import { AppDatePicker } from '@/components/ui/app-date-picker';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -98,8 +97,6 @@ export default function CitasScreen() {
   const [date, setDate] = useState(new Date());
   const [time, setTime] = useState(new Date());
   const [reminderChoice, setReminderChoice] = useState<ReminderChoice>('none');
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
   const [errors, setErrors] = useState<{
     title?: string;
     date?: string;
@@ -461,53 +458,32 @@ export default function CitasScreen() {
               />
 
               <View style={styles.dateRow}>
-                <Pressable
-                  style={styles.dateButton}
-                  accessibilityRole="button"
+                <AppDatePicker
+                  value={date}
+                  mode="date"
+                  icon="📅"
+                  formatValue={(d) => d.toLocaleDateString('es-ES')}
                   accessibilityLabel={`Cambiar fecha: ${date.toLocaleDateString('es-ES')}`}
-                  onPress={() => setShowDatePicker(true)}>
-                  <Text style={styles.dateButtonLabel}>
-                    📅 {date.toLocaleDateString('es-ES')}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={styles.dateButton}
-                  accessibilityRole="button"
+                  onChange={setDate}
+                  style={styles.datePicker}
+                />
+                <AppDatePicker
+                  value={time}
+                  mode="time"
+                  icon="🕐"
+                  formatValue={(d) =>
+                    d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+                  }
                   accessibilityLabel={`Cambiar hora: ${time.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`}
-                  onPress={() => setShowTimePicker(true)}>
-                  <Text style={styles.dateButtonLabel}>
-                    🕐 {time.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
-                  </Text>
-                </Pressable>
+                  onChange={setTime}
+                  style={styles.datePicker}
+                />
               </View>
               {errors.date ? (
                 <Text style={styles.error} accessibilityRole="alert">
                   {errors.date}
                 </Text>
               ) : null}
-
-              {showDatePicker && (
-                <DateTimePicker
-                  value={date}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={(_, selected) => {
-                    setShowDatePicker(false);
-                    if (selected) setDate(selected);
-                  }}
-                />
-              )}
-              {showTimePicker && (
-                <DateTimePicker
-                  value={time}
-                  mode="time"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={(_, selected) => {
-                    setShowTimePicker(false);
-                    if (selected) setTime(selected);
-                  }}
-                />
-              )}
 
               <Text style={styles.fieldLabel}>Recordar</Text>
               <View style={styles.kindRow}>
@@ -680,16 +656,7 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: '600', color: Palette.textSecondary },
   chipTextSelected: { color: Palette.onPrimary },
   dateRow: { flexDirection: 'row', gap: Spacing.two },
-  dateButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: Palette.border,
-    borderRadius: Radius.md,
-    paddingVertical: Spacing.three,
-    alignItems: 'center',
-    backgroundColor: Palette.surface,
-  },
-  dateButtonLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  datePicker: { flex: 1 },
   fieldLabel: { fontSize: 14, fontWeight: '600', color: Palette.textStrong },
   error: { color: Palette.danger, fontSize: 13 },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
