@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
 
 import { safeDate } from './date';
 import {
@@ -84,6 +84,64 @@ export async function requestPermissions(): Promise<boolean> {
   return requested.granted;
 }
 
+export async function canRequestPermissionAgain(): Promise<boolean> {
+  if (Platform.OS === 'web') return false;
+  const current = await Notifications.getPermissionsAsync();
+  return current.canAskAgain !== false;
+}
+
+export async function ensureNotificationsEnabled(): Promise<boolean> {
+  if (Platform.OS === 'web') return false;
+  if (await areNotificationsEnabled()) return true;
+  const granted = await requestPermissions();
+  if (!granted) return false;
+  await setNotificationsEnabled(true);
+  return true;
+}
+
+export function askEnableNotifications(message: string): Promise<'enabled' | 'cancelled'> {
+  if (Platform.OS === 'web') return Promise.resolve('cancelled');
+  return new Promise((resolve) => {
+    Alert.alert('Notificaciones desactivadas', message, [
+      { text: 'Ahora no', style: 'cancel', onPress: () => resolve('cancelled') },
+      {
+        text: 'Activar',
+        onPress: () => {
+          void (async () => {
+            try {
+              const ok = await ensureNotificationsEnabled();
+              if (ok) {
+                resolve('enabled');
+                return;
+              }
+            } catch {
+              resolve('cancelled');
+              return;
+            }
+            const canAsk = await canRequestPermissionAgain();
+            Alert.alert(
+              'Permiso denegado',
+              'Activa las notificaciones desde los ajustes del sistema para recibir avisos.',
+              canAsk
+                ? [{ text: 'OK', onPress: () => resolve('cancelled') }]
+                : [
+                    { text: 'Cancelar', style: 'cancel', onPress: () => resolve('cancelled') },
+                    {
+                      text: 'Abrir ajustes',
+                      onPress: () => {
+                        void Linking.openSettings().catch(() => undefined);
+                        resolve('cancelled');
+                      },
+                    },
+                  ],
+            );
+          })();
+        },
+      },
+    ]);
+  });
+}
+
 export async function areNotificationsEnabled(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
   const value = await AsyncStorage.getItem(ENABLED_KEY);
@@ -135,6 +193,7 @@ export async function scheduleAppointment(
   choice: ReminderChoice,
 ): Promise<void> {
   if (Platform.OS === 'web') return;
+  if (!(await areNotificationsEnabled())) return;
   await enqueue(async () => {
     const map = await readMap();
     const keys = [
@@ -168,6 +227,7 @@ export async function scheduleBirthdays(
   choice: ReminderChoice,
 ): Promise<void> {
   if (Platform.OS === 'web') return;
+  if (!(await areNotificationsEnabled())) return;
   await enqueue(async () => {
     const map = await readMap();
     const birthdayKeys = Object.keys(map).filter((key) => key.startsWith('birthday:'));
@@ -218,6 +278,7 @@ export async function syncAll(
   now = new Date(),
 ): Promise<void> {
   if (Platform.OS === 'web') return;
+  if (!(await areNotificationsEnabled())) return;
   await enqueue(async () => {
     const map = await readMap();
     const seenKeys = new Set<string>();

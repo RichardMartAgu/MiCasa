@@ -1,11 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
 
 import {
   areNotificationsEnabled,
+  askEnableNotifications,
+  canRequestPermissionAgain,
   cancelEntityKey,
   ensureChannel,
+  ensureNotificationsEnabled,
   getBirthdayChoice,
   requestPermissions,
   scheduleAppointment,
@@ -103,6 +106,7 @@ beforeEach(async () => {
   notifCounter = 0;
   mockSchedule.mockImplementation(() => Promise.resolve(`notif-id-${++notifCounter}`));
   mockStorage.clear();
+  mockStorage.set('notifications_enabled', 'true');
 });
 
 describe('setupNotificationHandler', () => {
@@ -163,6 +167,7 @@ describe('requestPermissions', () => {
 
 describe('preferencias', () => {
   it('notificaciones deshabilitadas por defecto', async () => {
+    mockStorage.delete('notifications_enabled');
     expect(await areNotificationsEnabled()).toBe(false);
   });
 
@@ -335,5 +340,178 @@ describe('syncAll', () => {
     expect(mockCancel).toHaveBeenCalledTimes(2);
     const map = JSON.parse((await AsyncStorage.getItem('notification_map_v1')) ?? '{}');
     expect(Object.keys(map)).toHaveLength(0);
+  });
+
+  it('syncAll no agenda si desactivadas', async () => {
+    mockStorage.delete('notifications_enabled');
+    await syncAll([{ ...appointment, reminder_choice: 'both' }], [contact], 'both', NOW);
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+});
+
+describe('gate cuando notificaciones desactivadas', () => {
+  it('scheduleAppointment no agenda si desactivadas', async () => {
+    mockStorage.delete('notifications_enabled');
+    await scheduleAppointment(appointment, 'both');
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it('scheduleBirthdays no agenda si desactivadas', async () => {
+    mockStorage.delete('notifications_enabled');
+    await scheduleBirthdays([contact], 'both');
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+});
+
+describe('ensureNotificationsEnabled', () => {
+  it('activa cuando desactivadas y permiso concedido', async () => {
+    mockStorage.delete('notifications_enabled');
+    mockGetPermissions.mockResolvedValue({ granted: false, canAskAgain: true });
+    mockRequestPermissions.mockResolvedValue({ granted: true });
+    const ok = await ensureNotificationsEnabled();
+    expect(ok).toBe(true);
+    expect(await areNotificationsEnabled()).toBe(true);
+    expect(mockRequestPermissions).toHaveBeenCalled();
+  });
+
+  it('no activa si permiso denegado', async () => {
+    mockStorage.delete('notifications_enabled');
+    mockGetPermissions.mockResolvedValue({ granted: false, canAskAgain: true });
+    mockRequestPermissions.mockResolvedValue({ granted: false });
+    const ok = await ensureNotificationsEnabled();
+    expect(ok).toBe(false);
+    expect(await areNotificationsEnabled()).toBe(false);
+  });
+
+  it('ya activadas: no pide permiso', async () => {
+    const ok = await ensureNotificationsEnabled();
+    expect(ok).toBe(true);
+    expect(mockRequestPermissions).not.toHaveBeenCalled();
+  });
+});
+
+describe('canRequestPermissionAgain', () => {
+  it('false si canAskAgain false', async () => {
+    mockGetPermissions.mockResolvedValue({ granted: false, canAskAgain: false });
+    expect(await canRequestPermissionAgain()).toBe(false);
+  });
+
+  it('true si canAskAgain true', async () => {
+    mockGetPermissions.mockResolvedValue({ granted: false, canAskAgain: true });
+    expect(await canRequestPermissionAgain()).toBe(true);
+  });
+
+  it('web: false', async () => {
+    jest.replaceProperty(Platform, 'OS', 'web');
+    expect(await canRequestPermissionAgain()).toBe(false);
+  });
+});
+
+describe('askEnableNotifications', () => {
+  let alertSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+  });
+
+  function pressLastButton() {
+    const calls = alertSpy.mock.calls;
+    const buttons = calls[calls.length - 1][2] as unknown as {
+      text: string;
+      onPress?: () => void;
+    }[];
+    buttons[buttons.length - 1].onPress?.();
+  }
+
+  it('web: cancelled sin alert', async () => {
+    jest.replaceProperty(Platform, 'OS', 'web');
+    expect(await askEnableNotifications('msg')).toBe('cancelled');
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it('Ahora no: cancelled', async () => {
+    const p = askEnableNotifications('msg');
+    const calls = alertSpy.mock.calls;
+    const buttons = calls[0][2] as unknown as {
+      text: string;
+      onPress?: () => void;
+    }[];
+    expect(buttons[0].text).toBe('Ahora no');
+    buttons[0].onPress?.();
+    expect(await p).toBe('cancelled');
+  });
+
+  it('Activar con permiso concedido: enabled y activadas', async () => {
+    mockStorage.delete('notifications_enabled');
+    mockGetPermissions.mockResolvedValue({ granted: false, canAskAgain: true });
+    mockRequestPermissions.mockResolvedValue({ granted: true });
+    const p = askEnableNotifications('msg');
+    pressLastButton();
+    expect(await p).toBe('enabled');
+    expect(await areNotificationsEnabled()).toBe(true);
+  });
+
+  it('Activar con permiso denegado y canAskAgain false: ofrece abrir ajustes', async () => {
+    mockStorage.delete('notifications_enabled');
+    mockGetPermissions.mockResolvedValue({ granted: false, canAskAgain: false });
+    mockRequestPermissions.mockResolvedValue({ granted: false });
+    const p = askEnableNotifications('msg');
+    pressLastButton();
+    await new Promise((r) => setTimeout(r, 0));
+    const calls = alertSpy.mock.calls;
+    expect(calls).toHaveLength(2);
+    const buttons = calls[1][2] as unknown as {
+      text: string;
+      onPress?: () => void;
+    }[];
+    expect(buttons.some((b) => b.text === 'Abrir ajustes')).toBe(true);
+    buttons.find((b) => b.text === 'Cancelar')?.onPress?.();
+    expect(await p).toBe('cancelled');
+  });
+
+  it('Activar con error de storage: cancelled sin colgar', async () => {
+    const getItem = AsyncStorage.getItem as jest.Mock;
+    getItem.mockRejectedValueOnce(new Error('storage boom'));
+    const p = askEnableNotifications('msg');
+    pressLastButton();
+    expect(await p).toBe('cancelled');
+  });
+
+  it('Abrir ajustes: abre ajustes del sistema y resuelve cancelled', async () => {
+    const openSettingsSpy = jest.spyOn(Linking, 'openSettings').mockResolvedValue(undefined);
+    mockStorage.delete('notifications_enabled');
+    mockGetPermissions.mockResolvedValue({ granted: false, canAskAgain: false });
+    mockRequestPermissions.mockResolvedValue({ granted: false });
+    const p = askEnableNotifications('msg');
+    pressLastButton();
+    await new Promise((r) => setTimeout(r, 0));
+    const calls = alertSpy.mock.calls;
+    const buttons = calls[1][2] as unknown as {
+      text: string;
+      onPress?: () => void;
+    }[];
+    buttons.find((b) => b.text === 'Abrir ajustes')?.onPress?.();
+    expect(await p).toBe('cancelled');
+    expect(openSettingsSpy).toHaveBeenCalled();
+    openSettingsSpy.mockRestore();
+  });
+
+  it('Activar denegado y canAskAgain true: segundo alert solo con OK', async () => {
+    mockStorage.delete('notifications_enabled');
+    mockGetPermissions.mockResolvedValue({ granted: false, canAskAgain: true });
+    mockRequestPermissions.mockResolvedValue({ granted: false });
+    const p = askEnableNotifications('msg');
+    pressLastButton();
+    await new Promise((r) => setTimeout(r, 0));
+    const calls = alertSpy.mock.calls;
+    expect(calls).toHaveLength(2);
+    const buttons = calls[1][2] as unknown as {
+      text: string;
+      onPress?: () => void;
+    }[];
+    expect(buttons.some((b) => b.text === 'Abrir ajustes')).toBe(false);
+    expect(buttons.some((b) => b.text === 'OK')).toBe(true);
+    buttons.find((b) => b.text === 'OK')?.onPress?.();
+    expect(await p).toBe('cancelled');
   });
 });

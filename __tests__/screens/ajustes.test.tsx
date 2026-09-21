@@ -43,6 +43,8 @@ jest.mock('@/lib/api', () => ({
 }));
 
 const mockAreNotificationsEnabled = jest.fn();
+const mockAskEnableNotifications = jest.fn();
+const mockCanRequestPermissionAgain = jest.fn();
 const mockGetBirthdayChoice = jest.fn();
 const mockRequestPermissions = jest.fn();
 const mockScheduleBirthdays = jest.fn();
@@ -51,6 +53,8 @@ const mockSetNotificationsEnabled = jest.fn();
 const mockSyncAll = jest.fn();
 jest.mock('@/lib/notifications', () => ({
   areNotificationsEnabled: (...args: unknown[]) => mockAreNotificationsEnabled(...args),
+  askEnableNotifications: (...args: unknown[]) => mockAskEnableNotifications(...args),
+  canRequestPermissionAgain: (...args: unknown[]) => mockCanRequestPermissionAgain(...args),
   getBirthdayChoice: (...args: unknown[]) => mockGetBirthdayChoice(...args),
   requestPermissions: (...args: unknown[]) => mockRequestPermissions(...args),
   scheduleBirthdays: (...args: unknown[]) => mockScheduleBirthdays(...args),
@@ -160,6 +164,8 @@ beforeEach(() => {
   mockFormatInviteCode.mockReturnValue('ABCD1234');
   mockInitials.mockReturnValue('CA');
   mockAreNotificationsEnabled.mockResolvedValue(true);
+  mockAskEnableNotifications.mockResolvedValue('enabled');
+  mockCanRequestPermissionAgain.mockResolvedValue(true);
   mockGetBirthdayChoice.mockResolvedValue('both');
   mockRequestPermissions.mockResolvedValue(true);
   mockScheduleBirthdays.mockResolvedValue(undefined);
@@ -404,6 +410,73 @@ describe('AjustesScreen', () => {
       expect(mockSetNotificationsEnabled).toHaveBeenCalledWith(false);
     });
     expect(mockSyncAll).not.toHaveBeenCalled();
+  });
+
+  it('toggle: error muestra Alert y switch no se mueve (regresión catch silencioso)', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockAreNotificationsEnabled.mockResolvedValue(false);
+    mockRequestPermissions.mockRejectedValue(new Error('boom'));
+    const { getByLabelText } = setup();
+    await waitFor(() => {
+      expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+    });
+
+    fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', true);
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Error',
+        'No se pudo cambiar el estado de las notificaciones.',
+      );
+    });
+    expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+    expect(mockSetNotificationsEnabled).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it('toggle: permiso denegado sin canAskAgain ofrece Abrir ajustes y switch no se mueve', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockAreNotificationsEnabled.mockResolvedValue(false);
+    mockRequestPermissions.mockResolvedValue(false);
+    mockCanRequestPermissionAgain.mockResolvedValue(false);
+    const { getByLabelText } = setup();
+    await waitFor(() => {
+      expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+    });
+
+    fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', true);
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Permiso denegado',
+        expect.any(String),
+        expect.any(Array),
+      );
+    });
+    const buttons = alertSpy.mock.calls[0][2] as
+      | { text: string; onPress?: () => void }[]
+      | undefined;
+    expect(buttons?.some((b) => b.text === 'Abrir ajustes')).toBe(true);
+    expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+    expect(mockSetNotificationsEnabled).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it('elegir cumpleaños sin notif activadas pide activar y no cambia si cancela', async () => {
+    mockAreNotificationsEnabled.mockResolvedValue(false);
+    mockAskEnableNotifications.mockResolvedValue('cancelled');
+    const { getByText } = setup();
+    await waitFor(() => {
+      expect(getByText('Cumpleaños: avisar')).toBeTruthy();
+    });
+
+    fireEvent.press(getByText('Mismo día'));
+
+    await waitFor(() => {
+      expect(mockAskEnableNotifications).toHaveBeenCalled();
+    });
+    expect(mockSetBirthdayChoice).not.toHaveBeenCalled();
+    expect(mockScheduleBirthdays).not.toHaveBeenCalled();
   });
 
   it('cambia aviso de cumpleaños y reprograma', async () => {
