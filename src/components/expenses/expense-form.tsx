@@ -1,8 +1,6 @@
 import { useState } from 'react';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,6 +8,7 @@ import {
   View,
 } from 'react-native';
 
+import { AppDatePicker } from '@/components/ui/app-date-picker';
 import { Button } from '@/components/ui/button';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Spacing } from '@/constants/theme';
@@ -45,7 +44,6 @@ export function ExpenseForm({
   const [amount, setAmount] = useState(expense ? String(expense.amount) : '');
   const [categoryId, setCategoryId] = useState<string | null>(expense?.category_id ?? null);
   const [date, setDate] = useState(expense ? safeDate(expense.spent_at) ?? new Date() : new Date());
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const [errors, setErrors] = useState<{ title?: string; amount?: string }>({});
 
   function handleSave() {
@@ -120,24 +118,14 @@ export function ExpenseForm({
               </View>
             </View>
 
-            <Pressable
-              style={styles.dateButton}
-              accessibilityRole="button"
+            <AppDatePicker
+              value={date}
+              mode="date"
+              onChange={setDate}
+              icon="📅"
+              formatValue={toISODate}
               accessibilityLabel={`Cambiar fecha: ${toISODate(date)}`}
-              onPress={() => setShowDatePicker(true)}>
-              <Text style={styles.dateButtonLabel}>📅 {toISODate(date)}</Text>
-            </Pressable>
-            {showDatePicker && (
-              <DateTimePicker
-                value={date}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_, selected) => {
-                  setShowDatePicker(false);
-                  if (selected) setDate(selected);
-                }}
-              />
-            )}
+            />
 
             <View style={styles.modalActions}>
               <Button title="Cancelar" variant="secondary" onPress={onClose} />
@@ -181,14 +169,5 @@ const styles = StyleSheet.create({
   chipSelected: { backgroundColor: Palette.primary, borderColor: Palette.primary },
   chipText: { fontSize: 13, fontWeight: '600', color: Palette.textSecondary },
   chipTextSelected: { color: Palette.onPrimary },
-  dateButton: {
-    borderWidth: 1,
-    borderColor: Palette.border,
-    borderRadius: Radius.md,
-    paddingVertical: Spacing.three,
-    alignItems: 'center',
-    backgroundColor: Palette.surface,
-  },
-  dateButtonLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
 });

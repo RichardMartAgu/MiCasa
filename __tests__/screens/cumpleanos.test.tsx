@@ -7,8 +7,14 @@ import type { UpcomingBirthday } from '@/lib/birthdays';
 
 jest.mock('@react-native-community/datetimepicker', () => {
   const { View } = require('react-native');
-  return function MockPicker() {
-    return <View testID="date-picker" />;
+  return {
+    __esModule: true,
+    default: function MockPicker() {
+      return <View testID="date-picker" />;
+    },
+    DateTimePickerAndroid: {
+      open: jest.fn(),
+    },
   };
 });
 

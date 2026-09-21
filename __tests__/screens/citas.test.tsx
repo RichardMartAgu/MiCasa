@@ -1,25 +1,20 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { Alert, Platform } from 'react-native';
 
 import CitasScreen from '@/app/(tabs)/citas';
 import type { Appointment } from '@/lib/types';
 
+const mockDateTimePickerAndroidOpen = jest.fn();
 jest.mock('@react-native-community/datetimepicker', () => {
-  const { Pressable, Text } = require('react-native');
-  return function MockPicker({
-    onChange,
-    mode,
-  }: {
-    onChange?: (event: unknown, date?: Date) => void;
-    mode?: string;
-  }) {
-    return (
-      <Pressable
-        testID={`picker-${mode}`}
-        onPress={() => onChange?.({ type: 'set' }, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000))}>
-        <Text>{`picker-${mode}`}</Text>
-      </Pressable>
-    );
+  const { View } = require('react-native');
+  return {
+    __esModule: true,
+    default: function MockPicker() {
+      return <View />;
+    },
+    DateTimePickerAndroid: {
+      open: (...args: unknown[]) => mockDateTimePickerAndroidOpen(...args),
+    },
   };
 });
 
@@ -288,11 +283,12 @@ describe('CitasScreen', () => {
   });
 
   it('agenda recordatorio al crear cita', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
     mockAddAppointment.mockResolvedValue({
       error: null,
       data: { id: 'a1', title: 'Vacunación' },
     });
-    const { getByText, getByLabelText, getByTestId } = setup([]);
+    const { getByText, getByLabelText } = setup([]);
 
     fireEvent.press(getByText('add'));
     await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
@@ -301,7 +297,18 @@ describe('CitasScreen', () => {
     const titleInput = getByLabelText('Título');
     fireEvent.changeText(titleInput, 'Vacunación');
     fireEvent.press(getByLabelText(/^Cambiar fecha/));
-    fireEvent.press(getByTestId('picker-date'));
+    expect(mockDateTimePickerAndroidOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'date', is24Hour: true }),
+    );
+    const openArgs = mockDateTimePickerAndroidOpen.mock.calls[0][0] as {
+      onChange?: (event: { type: string }, date?: Date) => void;
+    };
+    act(() => {
+      openArgs.onChange?.(
+        { type: 'set' },
+        new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      );
+    });
     fireEvent.press(getByText('Guardar'));
 
     await waitFor(() => {
