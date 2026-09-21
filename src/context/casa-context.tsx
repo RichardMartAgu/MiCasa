@@ -2,10 +2,10 @@ import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { useAuth } from '@/context/auth-context';
 import { supabase } from '@/lib/supabase';
 import { friendlyError } from '@/lib/errors';
 import { removeCasa, updateCasa } from '@/lib/api';
-import { useAuth } from '@/context/auth-context';
 import type { Casa, CasaMember, Profile } from '@/lib/types';
 
 const CURRENT_CASA_KEY = 'micasa.current_casa_id';
@@ -59,7 +59,7 @@ interface CasaContextValue {
 const CasaContext = createContext<CasaContextValue | undefined>(undefined);
 
 export function CasaProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { loading: authLoading, user } = useAuth();
   const [casas, setCasas] = useState<Casa[]>([]);
   const [currentCasa, setCurrentCasaState] = useState<Casa | null>(null);
   const [membersByCasa, setMembersByCasa] = useState<Record<string, CasaMember[]>>({});
@@ -104,10 +104,11 @@ export function CasaProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    (async () => {
+    if (authLoading) return;
+    void (async () => {
       await refresh();
     })();
-  }, [refresh]);
+  }, [authLoading, user?.id, refresh]);
 
   useEffect(() => {
     if (!user?.id) return;
