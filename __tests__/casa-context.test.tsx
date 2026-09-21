@@ -8,13 +8,26 @@ const mockFrom = jest.fn();
 const mockRpc = jest.fn();
 const mockGetItem = jest.fn();
 const mockSetItem = jest.fn();
+const mockChannel = jest.fn();
+const mockRemoveChannel = jest.fn();
+
+let realtimeHandler: (() => void) | null = null;
+let lastRealtimeConfig: unknown = null;
+let lastChannel: { on: jest.Mock; subscribe: jest.Mock } | null = null;
 
 jest.mock('@/lib/supabase', () => ({
   supabase: {
     auth: { getUser: (...args: unknown[]) => mockGetUser(...args) },
     from: (...args: unknown[]) => mockFrom(...args),
     rpc: (...args: unknown[]) => mockRpc(...args),
+    channel: (...args: unknown[]) => mockChannel(...args),
+    removeChannel: (...args: unknown[]) => mockRemoveChannel(...args),
   },
+}));
+
+let mockAuthUser: { id: string } | null = { id: 'u1' };
+jest.mock('@/context/auth-context', () => ({
+  useAuth: () => ({ user: mockAuthUser }),
 }));
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
@@ -51,11 +64,24 @@ function wrapper({ children }: PropsWithChildren) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  realtimeHandler = null;
   mockGetUser.mockResolvedValue({ data: { user } });
   mockGetItem.mockResolvedValue(null);
   mockSetItem.mockResolvedValue(undefined);
   mockFrom.mockReturnValue(queryChain({ data: [], error: null }));
   mockRpc.mockResolvedValue({ data: { ...casa }, error: null });
+  mockChannel.mockImplementation(() => {
+    lastChannel = {
+      on: jest.fn((_event: string, _config: unknown, callback: () => void) => {
+        realtimeHandler = callback;
+        lastRealtimeConfig = _config;
+        return lastChannel;
+      }),
+      subscribe: jest.fn(() => lastChannel),
+    };
+    return lastChannel;
+  });
+  mockAuthUser = { id: 'u1' };
 });
 
 describe('CasaProvider', () => {
@@ -262,5 +288,40 @@ describe('CasaProvider', () => {
     expect(() => renderHook(() => useCasa())).toThrow(
       'useCasa debe usarse dentro de <CasaProvider>',
     );
+  });
+
+  it('suscribe a realtime de casas y refresca al recibir cambios', async () => {
+    mockFrom.mockReturnValue(queryChain({ data: [casa], error: null }));
+    const { result } = renderHook(() => useCasa(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(mockChannel).toHaveBeenCalledTimes(1);
+    expect(mockChannel).toHaveBeenCalledWith(expect.stringMatching(/^realtime-casas-/));
+    expect(lastRealtimeConfig).toEqual({ event: '*', schema: 'public', table: 'casas' });
+    expect(realtimeHandler).not.toBeNull();
+
+    mockFrom.mockReturnValue(
+      queryChain({ data: [{ ...casa, name: 'Renombrada en vivo' }], error: null }),
+    );
+    await act(async () => {
+      realtimeHandler?.();
+    });
+
+    await waitFor(() => expect(result.current.casas[0]?.name).toBe('Renombrada en vivo'));
+  });
+
+  it('sin usuario no suscribe a realtime', async () => {
+    mockAuthUser = null;
+    renderHook(() => useCasa(), { wrapper });
+    await waitFor(() => expect(mockChannel).toHaveBeenCalledTimes(0));
+  });
+
+  it('desuscribe realtime al desmontar', async () => {
+    mockFrom.mockReturnValue(queryChain({ data: [casa], error: null }));
+    const { unmount } = renderHook(() => useCasa(), { wrapper });
+    await waitFor(() => expect(mockChannel).toHaveBeenCalledTimes(1));
+
+    unmount();
+    expect(mockRemoveChannel).toHaveBeenCalledWith(lastChannel);
   });
 });
