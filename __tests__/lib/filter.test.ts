@@ -138,7 +138,7 @@ function appointment(overrides: Partial<Appointment>): Appointment {
 describe('filterAppointments', () => {
   it('filtra por search en title', () => {
     const appointments = [
-      appointment({ id: '1', title: 'Pediatría de Leo' }),
+      appointment({ id: '1', title: 'Pediatría' }),
       appointment({ id: '2', title: 'Dentista' }),
     ];
     const result = filterAppointments(appointments, { search: 'pediatría' });
@@ -160,7 +160,7 @@ describe('filterAppointments', () => {
     const appointments = [
       appointment({ id: '1', kind: 'medico' }),
       appointment({ id: '2', kind: 'escuela' }),
-      appointment({ id: '3', kind: 'mascota' }),
+      appointment({ id: '3', kind: 'personal' }),
     ];
     expect(filterAppointments(appointments, { kind: 'escuela' }).map((a) => a.id)).toEqual(['2']);
   });

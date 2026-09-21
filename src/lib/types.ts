@@ -4,7 +4,7 @@ type Tables = Database['public']['Tables'];
 
 export type Role = 'owner' | 'admin' | 'member';
 
-export type AppointmentKind = 'medico' | 'escuela' | 'mascota' | 'personal' | 'otro';
+export type AppointmentKind = 'medico' | 'escuela' | 'personal' | 'otro';
 
 export type AppointmentKindRow = Tables['appointment_kinds']['Row'];
 
