@@ -47,7 +47,7 @@
     "@types/react": "~19.2.2",
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.2",
-    "jest": "~30.5.1",
+    "jest": "~30.5.2",
     "jest-expo": "57.0.3",
     "react-test-renderer": "^19.2.8",
     "typescript": "~6.0.3"
