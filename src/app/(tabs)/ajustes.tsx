@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -283,35 +283,45 @@ export default function AjustesScreen() {
 
       <Card>
         <Text style={styles.sectionTitle}>Recordatorios</Text>
-        <View style={styles.settingRow}>
-          <View style={styles.settingText}>
-            <Text style={styles.settingLabel}>Notificaciones</Text>
-            <Text style={styles.cardMeta}>Avisos de citas y cumpleaños</Text>
-          </View>
-          <Switch
-            value={notificationsEnabled}
-            onValueChange={handleToggleNotifications}
-            disabled={prefsLoading}
-            trackColor={{ false: Palette.border, true: Palette.primary }}
-            thumbColor={Palette.onPrimary}
-            accessibilityLabel="Activar notificaciones"
-          />
-        </View>
-        <Text style={styles.settingLabel}>Cumpleaños: avisar</Text>
-        <View style={styles.chipRow}>
-          {reminderChoices.map((value) => (
-            <Pressable
-              key={value}
-              style={[styles.chip, birthdayChoice === value && styles.chipSelected]}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: birthdayChoice === value }}
-              onPress={() => handleBirthdayChoice(value)}>
-              <Text style={[styles.chipText, birthdayChoice === value && styles.chipTextSelected]}>
-                {reminderChoiceLabels[value]}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        {Platform.OS === 'web' ? (
+          <Text style={styles.cardMeta}>
+            No disponibles en web. Descarga la app móvil para activar avisos de citas y
+            cumpleaños.
+          </Text>
+        ) : (
+          <>
+            <View style={styles.settingRow}>
+              <View style={styles.settingText}>
+                <Text style={styles.settingLabel}>Notificaciones</Text>
+                <Text style={styles.cardMeta}>Avisos de citas y cumpleaños</Text>
+              </View>
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={handleToggleNotifications}
+                disabled={prefsLoading}
+                trackColor={{ false: Palette.border, true: Palette.primary }}
+                thumbColor={Palette.onPrimary}
+                accessibilityLabel="Activar notificaciones"
+              />
+            </View>
+            <Text style={styles.settingLabel}>Cumpleaños: avisar</Text>
+            <View style={styles.chipRow}>
+              {reminderChoices.map((value) => (
+                <Pressable
+                  key={value}
+                  style={[styles.chip, birthdayChoice === value && styles.chipSelected]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: birthdayChoice === value }}
+                  onPress={() => handleBirthdayChoice(value)}>
+                  <Text
+                    style={[styles.chipText, birthdayChoice === value && styles.chipTextSelected]}>
+                    {reminderChoiceLabels[value]}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </>
+        )}
       </Card>
 
       <Card>

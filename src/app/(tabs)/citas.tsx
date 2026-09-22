@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   Alert,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -507,22 +508,29 @@ export default function CitasScreen() {
                 </Text>
               ) : null}
 
-              <Text style={styles.fieldLabel}>Recordar</Text>
-              <View style={styles.kindRow}>
-                {reminderChoices.map((value) => (
-                  <Pressable
-                    key={value}
-                    style={[styles.chip, reminderChoice === value && styles.chipSelected]}
-                    accessibilityRole="radio"
-                    accessibilityState={{ checked: reminderChoice === value }}
-                    onPress={() => setReminderChoice(value)}>
-                    <Text
-                      style={[styles.chipText, reminderChoice === value && styles.chipTextSelected]}>
-                      {reminderChoiceLabels[value]}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
+              {Platform.OS !== 'web' ? (
+                <>
+                  <Text style={styles.fieldLabel}>Recordar</Text>
+                  <View style={styles.kindRow}>
+                    {reminderChoices.map((value) => (
+                      <Pressable
+                        key={value}
+                        style={[styles.chip, reminderChoice === value && styles.chipSelected]}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: reminderChoice === value }}
+                        onPress={() => setReminderChoice(value)}>
+                        <Text
+                          style={[
+                            styles.chipText,
+                            reminderChoice === value && styles.chipTextSelected,
+                          ]}>
+                          {reminderChoiceLabels[value]}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              ) : null}
 
               <View style={styles.modalActions}>
                 <Button

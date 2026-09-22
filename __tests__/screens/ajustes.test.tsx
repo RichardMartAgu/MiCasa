@@ -1,5 +1,5 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 
 import AjustesScreen from '@/app/(tabs)/ajustes';
 import type { Casa, CasaMember, Profile } from '@/lib/types';
@@ -191,6 +191,19 @@ describe('AjustesScreen', () => {
     expect(getByText('Miembros (2)')).toBeTruthy();
     expect(getByText('Administrador')).toBeTruthy();
     expect(getByText('Ana')).toBeTruthy();
+  });
+
+  it('web: oculta controles de notificaciones y muestra aviso', async () => {
+    try {
+      jest.replaceProperty(Platform, 'OS', 'web');
+      const { getByText, queryByLabelText, queryByText } = setup();
+      await waitFor(() => expect(getByText('Recordatorios')).toBeTruthy());
+      expect(getByText(/No disponibles en web/)).toBeTruthy();
+      expect(queryByLabelText('Activar notificaciones')).toBeNull();
+      expect(queryByText('Cumpleaños: avisar')).toBeNull();
+    } finally {
+      jest.restoreAllMocks();
+    }
   });
 
   it('cambia de casa activa al pulsar', async () => {

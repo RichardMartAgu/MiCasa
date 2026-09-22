@@ -385,6 +385,19 @@ describe('CitasScreen', () => {
     });
   });
 
+  it('web: no muestra opciones de recordatorio', async () => {
+    try {
+      jest.replaceProperty(Platform, 'OS', 'web');
+      const { getByText, queryByText } = setup([]);
+      fireEvent.press(getByText('add'));
+      await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+      expect(queryByText('Recordar')).toBeNull();
+      expect(queryByText('Día antes + mismo día')).toBeNull();
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
   it('round-trip: editar cita day-before muestra chip Día antes, no both', async () => {
     const startsAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const dayBeforeAppointment: Appointment = {
