@@ -2,16 +2,15 @@
 
 ## Sesión actual — 2026-09-25
 
-- Rama: `feat/appointment-kind-manager`
-- Worktree: `/home/richard/MiCasa-feat-appointment-kind-manager`
-- Objetivo: gestor de tipos de cita con iconos editables.
-- Archivos incluidos en commit: `INDEX.md`, `__tests__/api.test.ts`, `__tests__/lib/notifications.test.ts`, `__tests__/screens/citas.test.tsx`, `src/app/(tabs)/citas.tsx`, `src/lib/api.ts`, `supabase/schema.sql`, `__tests__/components/ui/icon-picker.test.tsx`, `__tests__/lib/appointment-icons.test.ts`, `docs/estado-proyecto.md`, `src/components/ui/icon-picker.tsx`, `src/lib/appointment-icons.ts`, `supabase/migrations/20260922_appointment_kinds_icon_check.sql`.
+- Estado funcional: completo. PR #49 `feat(citas): permitir iconos editables en tipos` mergeado a `develop` en `015bd53f000312fc22c0c63a859c3b7cd5afba1d`.
+- Commit de implementación: `481b81c`.
 - Security: APROBADO.
 - QA: PASA. Typecheck OK, lint OK, 42/42 suites, 497/497 tests, 145/145 dirigidos, cobertura 100%, diff check OK.
-- Commit: `481b81c`.
-- Push: completado; upstream `origin/feat/appointment-kind-manager` sincronizado.
-- Worktree: se conserva hasta merge.
-- Siguiente acción: crear PR contra `develop`.
+- CI: verde.
+- Migración Supabase producción: proyecto `sxgsqvwvugdklycpqxiu`; constraint `appointment_kinds_icon_check` válido; 0 iconos inválidos; migración remota `20260925133317_appointment_kinds_icon_check` aplicada desde `supabase/migrations/20260922_appointment_kinds_icon_check.sql`.
+- Deploy Vercel producción: READY; deployment `dpl_EvSbKmYouscFa67eBWwHCvnSnSJf`; alias `https://micasa-demo.vercel.app`; HTTP 200.
+- Acción funcional pendiente: ninguna.
+- Worktree: conservar. Eliminar solo después de confirmar merge de PR en `develop`.
 
 ## Reglas de cierre
 

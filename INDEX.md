@@ -2,13 +2,7 @@
 
 App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md`.
 
-## Estado Git — 2026-09-25
-
-- Rama: `feat/appointment-kind-manager`
-- Worktree: `/home/richard/MiCasa-feat-appointment-kind-manager`
-- Estado Git tras push: limpio y sincronizado con `origin/feat/appointment-kind-manager`.
-- `docs/estado-proyecto.md` ya está versionado.
-- Worktree principal `/home/richard/MiCasa`: rama `develop`; `app.json` tiene modificación ajena. No tocarla.
+> Warning: `/home/richard/MiCasa` contiene una modificación ajena en `app.json`, en rama `develop`. No tocarla.
 
 ## Inventario completo
 
