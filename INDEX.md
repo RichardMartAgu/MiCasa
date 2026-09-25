@@ -35,7 +35,7 @@ App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `
 | [`docs/calendar-sync-plan.md`](docs/calendar-sync-plan.md) | Plan de sincronización anual de cumpleaños con calendario nativo. | Implementado parcialmente; requiere build nativo y revisión manual. |
 | [`docs/list-filtering-plan.md`](docs/list-filtering-plan.md) | Búsqueda y filtros reutilizables en Gastos, Citas y Cumpleaños. | Completado; security APROBADO y QA PASA en bloques registrados. |
 | [`docs/oauth-google-pendiente.md`](docs/oauth-google-pendiente.md) | Estado y pasos de configuración de OAuth Google. | Código listo; faltan credenciales, configuración dashboard y PR. |
-| [`docs/web-push.md`](docs/web-push.md) | Web Push: recordatorios de citas y cumpleaños enviados por el servidor, con service worker, Edge Function y cron. | Implementado y verificado; security APROBADO tras dos rondas. Falta PR, deploy y prueba en navegador. |
+| [`docs/web-push.md`](docs/web-push.md) | Web Push: recordatorios de citas y cumpleaños enviados por el servidor, con service worker, Edge Function y cron. | Mergeado en `develop` (#54) y desplegado; security APROBADO tras dos rondas. Falta prueba en navegador. |
 
 ## Orden de acceso
 

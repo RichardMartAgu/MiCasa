@@ -1,5 +1,15 @@
 
-## Sesión actual — 2026-09-25 (Web Push)
+## Sesión actual — 2026-09-25 (PWA + Web Push, mergeados y desplegados)
+
+- PR #51 `feat(pwa): hacer la web instalable como PWA` mergeado en `c18b1c4`.
+- PR #54 `feat(push): recordatorios por Web Push en la web` mergeado en `30c8534`.
+- Mergeados con `--admin`: la protección de `develop` exige una revisión aprobatoria, el auto-merge está deshabilitado en el repo y un bot no puede aprobar su propio PR. Autorizado expresamente por el usuario.
+- Deploy a producción: `npm run deploy:vercel` desde `develop`. Alias `https://micasa-demo.vercel.app`, HTTP 200.
+- Verificado en producción: `/manifest.webmanifest` (200, `application/manifest+json`), `/sw.js` (200, `no-store`), iconos 192/512/maskable y `apple-touch-icon` (200), rutas profundas `/citas` y `/gastos` (200), el HTML enlaza manifest y registra el SW, y el SW desplegado lleva los handlers `push` y `notificationclick` con la allowlist, sin imports ESM y sin `skipWaiting`.
+- Limpieza: worktree de `feat/web-push` eliminado y ramas locales `feat/web-push`, `feat/notifications-fix` y `fix/realtime-shopping-delete` borradas (las tres ya mergeadas). Pasa de 2,2 G a 1,1 G.
+- Sigue pendiente: aprobar #48 o cerrarlo (choca con Web Push, oculta las notificaciones en web), y la prueba en navegador real.
+
+## Sesión anterior — 2026-09-25 (Web Push)
 
 - Objetivo: que la web de MiCasa reciba recordatorios de citas y cumpleaños aunque la app esté cerrada, en Android y escritorio sin necesidad de instalar.
 - Worktree: `/home/richard/MiCasa-web-push`, rama `feat/web-push` sobre `5f0c373` (PWA). Detalle completo, hallazgos de security y pendientes: [`docs/web-push.md`](docs/web-push.md).
