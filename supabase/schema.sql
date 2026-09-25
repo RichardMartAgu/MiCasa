@@ -102,7 +102,23 @@ create table if not exists public.appointment_kinds (
   sort_order int not null default 0,
   created_at timestamptz not null default now(),
   constraint appointment_kinds_casa_id_name_key unique (casa_id, name),
-  constraint appointment_kinds_name_len check (char_length(name) between 1 and 40)
+  constraint appointment_kinds_name_len check (char_length(name) between 1 and 40),
+  constraint appointment_kinds_icon_check check (icon in (
+    'medkit-outline',
+    'school-outline',
+    'briefcase-outline',
+    'person-outline',
+    'call-outline',
+    'chatbubble-ellipses-outline',
+    'car-outline',
+    'home-outline',
+    'cart-outline',
+    'restaurant-outline',
+    'fitness-outline',
+    'gift-outline',
+    'calendar-outline',
+    'ellipsis-horizontal-outline'
+  ))
 );
 
 -- ----------------------------------------------------------------------------

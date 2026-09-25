@@ -1,92 +1,61 @@
 # INDEX — MiCasa
 
-App móvil Expo + web Astro para gestionar el hogar. 10 md, ~570 líneas (skills duplicados eliminados). Actualizar al crear/modificar/borrar cualquier .md.
+App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `.md` (14 versionados + `docs/estado-proyecto.md` nuevo, sin commit). Este índice se actualiza al crear, modificar o borrar cualquier `.md`.
 
-## Orden de acceso (menos tokens)
+## Estado Git — 2026-09-25
 
-1. `AGENTS.md` — reglas proyecto, stack, email, flujo agentes
-2. `INDEX.md` — este índice
-3. `README.md` (120L) — funcionalidades, stack, puesta en marcha, estructura datos
-4. `CLAUDE.md` (1L) → redirige a AGENTS.md
-5. Agentes: tabla abajo → invocar solo el que aplica. Flujo: `orquestador` → `back`/`front` → `security` → `qa-test`
-6. Skills: 19 viven en global `~/.config/opencode/skills/` (no en repo). Cargar solo el aplicable.
-7. Código: grep/glob antes de Read. `src/lib/` = lógica pura testeable.
+- Rama: `feat/appointment-kind-manager`
+- Worktree: `/home/richard/MiCasa-feat-appointment-kind-manager`
+- Cambios locales: 7 modificados y 6 nuevos, sin commit ni push.
+- Modificados: `INDEX.md`, `__tests__/api.test.ts`, `__tests__/lib/notifications.test.ts`, `__tests__/screens/citas.test.tsx`, `src/app/(tabs)/citas.tsx`, `src/lib/api.ts`, `supabase/schema.sql`.
+- Nuevos: `__tests__/components/ui/icon-picker.test.tsx`, `__tests__/lib/appointment-icons.test.ts`, `docs/estado-proyecto.md`, `src/components/ui/icon-picker.tsx`, `src/lib/appointment-icons.ts`, `supabase/migrations/20260922_appointment_kinds_icon_check.sql`.
+- Worktree principal `/home/richard/MiCasa`: rama `develop`; `app.json` tiene modificación ajena. No tocarla.
 
-## Core
+## Inventario completo
 
-| Archivo | Líneas | Propósito |
+### Reglas y entrada
+
+| Archivo | Propósito | Estado |
 |---|---|---|
-| `AGENTS.md` | 71 | Reglas proyecto, Expo v57, stack, flujo agentes, deploy. LEER primero |
-| `README.md` | 120 | Funcionalidades, stack, estructura, modelo datos, npm scripts |
-| `CLAUDE.md` | 1 | Redirige a AGENTS.md |
+| [`AGENTS.md`](AGENTS.md) | Reglas del proyecto, Expo v57, stack, agentes, calidad, deploy y worktrees. | Vigente; leer primero. |
+| [`CLAUDE.md`](CLAUDE.md) | Redirección a reglas de `AGENTS.md`. | Vigente; 1 línea. |
+| [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-09-25. |
+| [`README.md`](README.md) | Descripción del producto, funcionalidades, stack, puesta en marcha, calidad, estructura y modelo de datos. | Vigente. |
+| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global accionable para continuar sesiones. | Nuevo 2026-09-25; sin commit. |
 
-## Agentes `.opencode/agents/` (6)
+### Bugs resueltos o documentados
 
-| Agente | Líneas | Rol | Cuándo invocar |
-|---|---|---|---|
-| `orquestador` | 49 | Descompone objetivos, asigna bloques, coordina todo | Al inicio de cada tarea grande |
-| `back` | 52 | Supabase (PostgreSQL, RLS, Realtime, Edge Functions, Resend) | Bloques backend, schema, emails |
-| `front` | 54 | UI móvil Expo `src/` + web Astro `web/`, paleta Dusk | Bloques frontend, componentes, pantallas |
-| `security` | 105 | Auditoría read-only, veredicto APROBADO/REVISAR/BLOQUEADO + preguntas | Tras cada bloque back/front |
-| `qa-test` | 65 | Typecheck, lint, tests Jest/Vitest/Playwright, cobertura | Tras security en cada bloque |
-| `devops` | 39 | CI/CD GitHub Actions, deploys Vercel/EAS, migraciones, secrets | Pipeline, deploy, salud entorno |
-
-**Flujo**: orquestador → back/front → security (read-only) → qa-test → commit.
-Ningún bloque se da por terminado sin **APROBADO** de security + **PASA** de qa-test.
-
-## Skills globales (19, borrados del repo — idénticos a globales `~/.config/opencode/skills/`)
-
-| Skill | Cuándo usar |
-|---|---|
-| `building-native-ui` | UI nativa Expo: componentes, pantallas, layout |
-| `expo-api-routes` | API routes Expo con EAS Hosting |
-| `expo-cicd-workflows` | CI/CD Expo, EAS workflows YAML |
-| `expo-deployment` | Deploy App Store, Play Store, web |
-| `expo-dev-client` | Dev builds Expo locales/TestFlight |
-| `expo-tailwind-setup` | Tailwind v4 en Expo con NativeWind v5 |
-| `native-data-fetching` | Fetch/red: fetch API, React Query, SWR, offline |
-| `upgrading-expo` | Upgrade SDK Expo, fix dependencias |
-| `use-dom` | DOM components en Expo, migración web incremental |
-| `design-mobile-apps` | Diseño UI móvil (sleek) |
-| `react-native-mobile` | App React Native producción: UI, performance, platform-specific |
-| `accessibility` | WCAG 2.2, a11y audit, screen reader |
-| `frontend-design` | UI web producción, diseño de interfaces |
-| `seo` | SEO técnico, structured data, sitemap |
-| `composition-patterns` | React: compound components, refactor boolean props |
-| `react-best-practices` | React 19/Next 16 performance: RSC, cache, memo |
-| `supabase-postgres-best-practices` | Postgres: queries, RLS, índices, locks |
-| `nodejs-best-practices` | Node.js: async, seguridad, arquitectura |
-| `typescript-advanced-types` | TS avanzado: generics, utility types |
-
-## Código
-
-```
-src/
-├── app/          # Rutas expo-router ((tabs)/Inicio, Citas, Gastos, Listas, Cumpleaños, Ajustes)
-├── components/   # splash-screen.tsx (animado), expenses/, ui/ (Button, Card, TextField, EmptyState)
-├── constants/    # theme.ts (colores Dusk, espaciados)
-├── context/      # AuthProvider, CasaProvider
-├── hooks/        # useRealtimeCollection
-└── lib/          # Lógica pura testeable: validation, date, finance, birthdays, format, api, supabase
-```
-
-`web/` — frontend Astro (AGENTS.md lo referencia; verificar existencia antes de usar).
-
-## Infraestructura
-
-| Ruta | Propósito |
+| Archivo | Propósito | Estado |
 |---|---|---|
-| `supabase/schema.sql` | Esquema completo: tablas, RLS, triggers, realtime |
-| `supabase/functions/send-email/` | Edge Function Deno: emails Resend (invitación casa, bienvenida, recordatorios, avisos presupuesto, cumpleaños). Deployada en prod v1 |
-| `docs/micasa-agents-workflow.json` | Flujo de agentes (64L) |
-| `docs/micasa-architecture.json` | Arquitectura del proyecto (49L) |
-| `docs/calendar-sync-plan.md` | Plan sync cumpleaños con calendario del dispositivo (Expo Calendar + deep link) |
-| `docs/oauth-google-pendiente.md` | Estado OAuth Google: pasos config dashboard, archivos, pendientes |
-| `scripts/` | serve-demo.sh, notify-telegram.sh |
-| `.github/workflows/` | CI/CD |
+| [`docs/bug-01-listas-boton-portrait.md`](docs/bug-01-listas-boton-portrait.md) | Botón de añadir visible en listas en portrait. | Corregido; test pasa. |
+| [`docs/bug-02-tipos-cita-editables.md`](docs/bug-02-tipos-cita-editables.md) | Tipos de cita editables, borrables y persistidos por casa. | Corregido; test pasa. Decisión security member-wide. |
+| [`docs/bug-03-calendario-android.md`](docs/bug-03-calendario-android.md) | Sincronización de cumpleaños y manejo de permisos Android. | Corregido; falta revisión en dispositivo real. |
+| [`docs/bug-04-lista-compra-cascade.md`](docs/bug-04-lista-compra-cascade.md) | RLS y cascade al borrar ítems de listas. | Corregido; test pasa. |
+| [`docs/bug-05-gastos-delete-test.md`](docs/bug-05-gastos-delete-test.md) | Regresión de test al confirmar eliminación de gasto. | Corregido; test pasa. Queda warning no bloqueante de keys. |
+| [`docs/bug-06-casas-editar-eliminar.md`](docs/bug-06-casas-editar-eliminar.md) | Edición y eliminación de casas por owner. | Corregido; tests pasan. |
+| [`docs/bug-07-shopping-realtime-delete.md`](docs/bug-07-shopping-realtime-delete.md) | Refresco realtime al borrar ítems/listas. | Corregido y aplicado en producción; verificación manual registrada. |
 
-## Git reciente (últimos hits)
+### Planes y pendientes
 
-`feat(auth): email verify Vercel` → `feat(ui): login warm + error banner` → `fix(a11y): a11y audit` → `fix(security): audit findings` → `chore(deploy): Vercel static export`
+| Archivo | Propósito | Estado |
+|---|---|---|
+| [`docs/calendar-sync-plan.md`](docs/calendar-sync-plan.md) | Plan de sincronización anual de cumpleaños con calendario nativo. | Implementado parcialmente; requiere build nativo y revisión manual. |
+| [`docs/list-filtering-plan.md`](docs/list-filtering-plan.md) | Búsqueda y filtros reutilizables en Gastos, Citas y Cumpleaños. | Completado; security APROBADO y QA PASA en bloques registrados. |
+| [`docs/oauth-google-pendiente.md`](docs/oauth-google-pendiente.md) | Estado y pasos de configuración de OAuth Google. | Código listo; faltan credenciales, configuración dashboard y PR. |
 
-241 tests, deploy en `micasa-demo.vercel.app`.
+## Orden de acceso
+
+1. `AGENTS.md`
+2. Este `INDEX.md`
+3. `README.md` bajo demanda
+4. `docs/estado-proyecto.md` para estado de sesión
+5. Agentes: consultar tabla de `AGENTS.md`; invocar solo el aplicable.
+6. Código: `grep`/`glob` antes de leer; `src/lib/` contiene lógica pura testeable.
+
+## Proyecto
+
+- Móvil: `src/`, Expo Router, paleta Dusk.
+- Web: `web/`, Astro y componentes compartidos.
+- Datos: Supabase, PostgreSQL, RLS y Realtime.
+- Calidad: `npx tsc --noEmit`, `npx expo lint`, `npx jest`.
+- Deploy Vercel: manual con `npm run deploy:vercel`; nunca asumir auto-deploy tras push.
