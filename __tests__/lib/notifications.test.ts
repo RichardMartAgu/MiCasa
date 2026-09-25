@@ -537,4 +537,55 @@ describe('askEnableNotifications', () => {
     buttons.find((b) => b.text === 'OK')?.onPress?.();
     expect(await p).toBe('cancelled');
   });
+
+  it('descartar el diálogo con onDismiss resuelve cancelled sin colgarse', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    const p = askEnableNotifications('msg');
+    const options = alertSpy.mock.calls[0][3] as unknown as {
+      cancelable?: boolean;
+      onDismiss?: () => void;
+    } | undefined;
+    expect(options?.cancelable).toBe(true);
+    options?.onDismiss?.();
+    expect(await p).toBe('cancelled');
+  });
+
+  it('descartar el segundo diálogo (permiso denegado) también resuelve', async () => {
+    mockStorage.delete('notifications_enabled');
+    mockGetPermissions.mockResolvedValue({ granted: false, canAskAgain: false });
+    mockRequestPermissions.mockResolvedValue({ granted: false });
+    const p = askEnableNotifications('msg');
+    pressLastButton();
+    await new Promise((r) => setTimeout(r, 0));
+    const options = alertSpy.mock.calls[1][3] as unknown as {
+      cancelable?: boolean;
+      onDismiss?: () => void;
+    } | undefined;
+    expect(options?.cancelable).toBe(true);
+    options?.onDismiss?.();
+    expect(await p).toBe('cancelled');
+  });
+});
+
+describe('cola: recuperación ante tarea colgada', () => {
+  it('una operación colgada no bloquea las siguientes', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    mockStorage.set('notifications_enabled', 'true');
+
+    // Primera operación se cuelga para siempre (expo-notifications no responde).
+    mockSchedule.mockImplementationOnce(() => new Promise<string>(() => undefined));
+    const hung = scheduleAppointment({ ...appointment, reminder_choice: 'both' }, 'both');
+    const hungSettled = jest.fn();
+    void hung.then(hungSettled, hungSettled);
+
+    // La segunda debe ejecutarse igual gracias al corte por tiempo de la cola.
+    mockSchedule.mockImplementation(() => Promise.resolve('notif-luego'));
+    await expect(scheduleAppointment({ ...appointment, id: 'a2' }, 'both')).resolves.toBeUndefined();
+    expect(mockSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.objectContaining({ data: expect.objectContaining({ id: 'a2' }) }),
+      }),
+    );
+    expect(hungSettled).toHaveBeenCalled();
+  });
 });

@@ -385,6 +385,31 @@ describe('CitasScreen', () => {
     });
   });
 
+  it('el modal se cierra aunque el aviso de notificaciones nunca resuelva', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    mockAreNotificationsEnabled.mockResolvedValue(false);
+    // Promise Eternal: simula el Alert que en Android quedaba detrás del Modal.
+    mockAskEnableNotifications.mockImplementation(() => new Promise(() => undefined));
+    mockAddAppointment.mockResolvedValue({
+      error: null,
+      data: { id: 'a1', title: 'Vacunación' },
+    });
+    const { getByText, getByLabelText, queryByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+
+    fireEvent.press(getByText('Día antes + mismo día'));
+    fireEvent.changeText(getByLabelText('Título'), 'Vacunación');
+    fireEvent.press(getByText('Guardar'));
+
+    // El guardado no depende del aviso: el modal se reinicia y se cierra aunque
+    // askEnableNotifications nunca resuelva (Promise Eternal).
+    await waitFor(() => expect(mockAddAppointment).toHaveBeenCalled());
+    await waitFor(() => expect(mockAskEnableNotifications).toHaveBeenCalled());
+    await waitFor(() => expect(queryByLabelText('Título')).toBeNull());
+  });
+
   it('round-trip: editar cita day-before muestra chip Día antes, no both', async () => {
     const startsAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const dayBeforeAppointment: Appointment = {
