@@ -421,6 +421,7 @@ describe('CitasScreen', () => {
       expect(mockAddAppointmentKind).toHaveBeenCalledWith({
         casa_id: 'c1',
         name: 'Reunión cole',
+        icon: 'ellipsis-horizontal-outline',
       });
     });
   });
@@ -457,8 +458,79 @@ describe('CitasScreen', () => {
     fireEvent.press(getByText('Guardar tipo', { includeHiddenElements: true }));
 
     await waitFor(() => {
-      expect(mockUpdateAppointmentKind).toHaveBeenCalledWith('k1', { name: 'doctor' });
+      expect(mockUpdateAppointmentKind).toHaveBeenCalledWith('k1', {
+        name: 'doctor',
+        icon: 'medkit-outline',
+      });
     });
+  });
+
+  it('crea tipo de cita con el icono elegido', async () => {
+    const { getByText, getByLabelText, getByRole } = setup();
+
+    fireEvent.press(getByLabelText('Gestionar tipos de cita'));
+    await waitFor(() =>
+      expect(getByText('Añadir tipo', { includeHiddenElements: true })).toBeTruthy(),
+    );
+
+    fireEvent.press(getByRole('radio', { name: 'Deporte', includeHiddenElements: true }));
+    fireEvent.changeText(getByLabelText('Nuevo tipo', { includeHiddenElements: true }), 'Gimnasio');
+    fireEvent.press(getByText('Añadir tipo', { includeHiddenElements: true }));
+
+    await waitFor(() => {
+      expect(mockAddAppointmentKind).toHaveBeenCalledWith({
+        casa_id: 'c1',
+        name: 'Gimnasio',
+        icon: 'fitness-outline',
+      });
+    });
+  });
+
+  it('cambia el icono al editar un tipo de cita', async () => {
+    const { getByText, getByLabelText, getByRole } = setup();
+
+    fireEvent.press(getByLabelText('Gestionar tipos de cita'));
+    await waitFor(() =>
+      expect(getByText('Añadir tipo', { includeHiddenElements: true })).toBeTruthy(),
+    );
+
+    fireEvent.press(getByLabelText('Editar tipo medico', { includeHiddenElements: true }));
+    expect(getByRole('radio', { name: 'Salud', includeHiddenElements: true }).props
+      .accessibilityState.checked).toBe(true);
+    fireEvent.press(getByRole('radio', { name: 'Coche', includeHiddenElements: true }));
+    fireEvent.press(getByText('Guardar tipo', { includeHiddenElements: true }));
+
+    await waitFor(() => {
+      expect(mockUpdateAppointmentKind).toHaveBeenCalledWith('k1', {
+        name: 'medico',
+        icon: 'car-outline',
+      });
+    });
+  });
+
+  it('usa el icono por defecto en tipos con icono desconocido', () => {
+    const { getByText, getAllByText, queryByText } = setup([], casa, [
+      { ...defaultKinds[0], icon: 'pricetag' },
+      ...defaultKinds.slice(1),
+    ]);
+
+    fireEvent.press(getByText('add'));
+
+    expect(getAllByText('ellipsis-horizontal-outline').length).toBe(2);
+    expect(queryByText('pricetag')).toBeNull();
+  });
+
+  it('renderiza el icono guardado en el chip del tipo', async () => {
+    const { getByText, getByRole } = setup([], casa, [
+      { ...defaultKinds[0], icon: 'car-outline' },
+      ...defaultKinds.slice(1),
+    ]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+
+    expect(getByRole('radio', { name: 'medico' })).toBeTruthy();
+    expect(getByText('car-outline')).toBeTruthy();
   });
 
   it('elimina tipo de cita con confirmación', async () => {

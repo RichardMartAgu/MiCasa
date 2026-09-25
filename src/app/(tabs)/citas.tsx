@@ -17,6 +17,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { FilterBar } from '@/components/ui/filter-bar';
 import type { FilterChipOption } from '@/components/ui/filter-chips';
+import { IconPicker } from '@/components/ui/icon-picker';
 import { NoCasaState } from '@/components/ui/no-casa-state';
 import { Spinner } from '@/components/ui/spinner';
 import { TextField } from '@/components/ui/text-field';
@@ -24,6 +25,12 @@ import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
+import {
+  APPOINTMENT_ICON_OPTIONS,
+  type AppointmentIcon,
+  DEFAULT_APPOINTMENT_ICON,
+  resolveAppointmentIcon,
+} from '@/lib/appointment-icons';
 import {
   addAppointment,
   addAppointmentKind,
@@ -52,7 +59,7 @@ import {
 import type { Appointment, AppointmentKindRow } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
-const DEFAULT_KINDS: { name: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+const DEFAULT_KINDS: { name: string; icon: AppointmentIcon }[] = [
   { name: 'medico', icon: 'medkit-outline' },
   { name: 'escuela', icon: 'school-outline' },
   { name: 'personal', icon: 'person-outline' },
@@ -62,7 +69,7 @@ const DEFAULT_KINDS: { name: string; icon: keyof typeof Ionicons.glyphMap }[] = 
 type KindUI = {
   id: string | null;
   name: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: AppointmentIcon;
 };
 
 function toISOLocal(date: Date): string {
@@ -88,7 +95,7 @@ export default function CitasScreen() {
       ? kinds.map((k) => ({
           id: k.id,
           name: k.name,
-          icon: (k.icon as keyof typeof Ionicons.glyphMap) ?? 'ellipsis-horizontal-outline',
+          icon: resolveAppointmentIcon(k.icon),
         }))
       : DEFAULT_KINDS.map((d) => ({ id: null, name: d.name, icon: d.icon }));
 
@@ -114,6 +121,7 @@ export default function CitasScreen() {
   const [kindsModalVisible, setKindsModalVisible] = useState(false);
   const [editingKindId, setEditingKindId] = useState<string | null>(null);
   const [kindName, setKindName] = useState('');
+  const [kindIcon, setKindIcon] = useState<AppointmentIcon>(DEFAULT_APPOINTMENT_ICON);
   const [kindError, setKindError] = useState<string | null>(null);
   const [kindSaving, setKindSaving] = useState(false);
 
@@ -278,6 +286,7 @@ export default function CitasScreen() {
   function openKindsManager() {
     setEditingKindId(null);
     setKindName('');
+    setKindIcon(DEFAULT_APPOINTMENT_ICON);
     setKindError(null);
     setKindsModalVisible(true);
   }
@@ -286,6 +295,7 @@ export default function CitasScreen() {
     if (!k.id) return;
     setEditingKindId(k.id);
     setKindName(k.name);
+    setKindIcon(k.icon);
     setKindError(null);
     setKindsModalVisible(true);
   }
@@ -303,14 +313,15 @@ export default function CitasScreen() {
     if (!currentCasa) return;
     setKindSaving(true);
     const error = editingKindId
-      ? await updateAppointmentKind(editingKindId, { name })
-      : await addAppointmentKind({ casa_id: currentCasa.id, name });
+      ? await updateAppointmentKind(editingKindId, { name, icon: kindIcon })
+      : await addAppointmentKind({ casa_id: currentCasa.id, name, icon: kindIcon });
     setKindSaving(false);
     if (error) {
       setKindError(error.message);
       return;
     }
     setKindName('');
+    setKindIcon(DEFAULT_APPOINTMENT_ICON);
     setKindError(null);
     setEditingKindId(null);
   }
@@ -446,7 +457,7 @@ export default function CitasScreen() {
                     accessibilityState={{ checked: kind === k.name }}
                     onPress={() => setKind(k.name)}>
                     <Ionicons
-                      name={(k.icon as keyof typeof Ionicons.glyphMap) ?? 'ellipsis-horizontal-outline'}
+                      name={k.icon as keyof typeof Ionicons.glyphMap}
                       size={16}
                       color={kind === k.name ? Palette.onPrimary : Palette.textSecondary}
                     />
@@ -557,7 +568,7 @@ export default function CitasScreen() {
                   style={styles.kindManageRow}
                   accessibilityLabel={`Tipo ${k.name}`}>
                   <Ionicons
-                    name={(k.icon as keyof typeof Ionicons.glyphMap) ?? 'ellipsis-horizontal-outline'}
+                    name={k.icon as keyof typeof Ionicons.glyphMap}
                     size={18}
                     color={Palette.textStrong}
                   />
@@ -582,6 +593,12 @@ export default function CitasScreen() {
                   ) : null}
                 </View>
               ))}
+              <IconPicker
+                label="Icono"
+                value={kindIcon}
+                options={APPOINTMENT_ICON_OPTIONS}
+                onChange={setKindIcon}
+              />
               <TextField
                 label={editingKindId ? 'Editar nombre' : 'Nuevo tipo'}
                 value={kindName}

@@ -1,3 +1,4 @@
+import type { AppointmentIcon } from '@/lib/appointment-icons';
 import {
   addAppointment,
   addAppointmentKind,
@@ -133,6 +134,32 @@ describe('mutaciones con error', () => {
     });
 
     expect(error).toBeNull();
+  });
+});
+
+describe('validación de iconos de tipos de cita', () => {
+  beforeEach(() => {
+    mockFrom.mockClear();
+  });
+
+  it('rechaza iconos fuera del catálogo al crear', async () => {
+    const result = await addAppointmentKind({
+      casa_id: 'casa-1',
+      name: 'reunion',
+      icon: 'pricetag' as AppointmentIcon,
+    });
+
+    expect(result).toEqual({ message: 'Icono de tipo de cita no válido.' });
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('rechaza iconos fuera del catálogo al actualizar', async () => {
+    const result = await updateAppointmentKind('1', {
+      icon: 'pricetag' as AppointmentIcon,
+    });
+
+    expect(result).toEqual({ message: 'Icono de tipo de cita no válido.' });
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 });
 

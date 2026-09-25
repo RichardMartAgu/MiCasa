@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { friendlyError } from './errors';
+import { isAppointmentIcon, type AppointmentIcon } from './appointment-icons';
 import type {
   Appointment,
   AppointmentKindRow,
@@ -159,17 +160,25 @@ export async function fetchAppointmentKinds(casaId: string): Promise<Appointment
 export async function addAppointmentKind(input: {
   casa_id: string;
   name: string;
-  icon?: string;
+  icon?: AppointmentIcon;
   sort_order?: number;
 }): Promise<ApiError | null> {
+  if (input.icon !== undefined && !isAppointmentIcon(input.icon)) {
+    return { message: 'Icono de tipo de cita no válido.' };
+  }
+
   const { error } = await supabase.from('appointment_kinds').insert(input);
   return toError(error);
 }
 
 export async function updateAppointmentKind(
   id: string,
-  input: { name?: string; icon?: string; sort_order?: number },
+  input: { name?: string; icon?: AppointmentIcon; sort_order?: number },
 ): Promise<ApiError | null> {
+  if (input.icon !== undefined && !isAppointmentIcon(input.icon)) {
+    return { message: 'Icono de tipo de cita no válido.' };
+  }
+
   const { error } = await supabase.from('appointment_kinds').update(input).eq('id', id);
   return toError(error);
 }

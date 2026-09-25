@@ -74,6 +74,23 @@ function toISOLocal(date: Date): string {
 const NOW = new Date(2026, 8, 20, 8, 0);
 const START = new Date(2026, 8, 25, 10, 0);
 
+const REAL_TIMER_APIS = [
+  'hrtime',
+  'nextTick',
+  'performance',
+  'queueMicrotask',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'requestIdleCallback',
+  'cancelIdleCallback',
+  'setImmediate',
+  'clearImmediate',
+  'setInterval',
+  'clearInterval',
+  'setTimeout',
+  'clearTimeout',
+] as const;
+
 const appointment: Appointment = {
   id: 'a1',
   casa_id: 'c1',
@@ -101,12 +118,18 @@ const contact: Contact = {
 };
 
 beforeEach(async () => {
+  jest.useFakeTimers({ doNotFake: [...REAL_TIMER_APIS] });
+  jest.setSystemTime(NOW);
   jest.restoreAllMocks();
   jest.clearAllMocks();
   notifCounter = 0;
   mockSchedule.mockImplementation(() => Promise.resolve(`notif-id-${++notifCounter}`));
   mockStorage.clear();
   mockStorage.set('notifications_enabled', 'true');
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 describe('setupNotificationHandler', () => {
