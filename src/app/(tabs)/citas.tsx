@@ -247,27 +247,41 @@ export default function CitasScreen() {
       Alert.alert('Error', error.message);
       return;
     }
-    if (saved) {
-      try {
-        if (reminderChoice !== 'none' && !(await areNotificationsEnabled())) {
-          const result = await askEnableNotifications(
-            'Esta cita tiene recordatorio, pero las notificaciones están apagadas. No recibirás el aviso.',
-          );
-          if (result === 'enabled') {
-            await scheduleAppointment(saved, reminderChoice);
-          }
-        } else {
-          await scheduleAppointment(saved, reminderChoice);
-        }
-      } catch {
-        // el sync por realtime reintentará
-      }
-    }
+
+    // Cerrar el modal antes de tocar notificaciones: el aviso de permisos se
+    // presenta en una ventana distinta y, con el Modal abierto en Android,
+    // quedaba detrás (invisible) y su Promise sin resolver bloqueaba el guardado.
     setTitle('');
     setPerson('');
     setLocation('');
     setEditingAppointmentId(null);
     setModalVisible(false);
+
+    if (saved) {
+      void scheduleAppointmentAfterSave(saved, reminderChoice);
+    }
+  }
+
+  // El agendado nunca debe bloquear el guardado: se ejecuta en segundo plano
+  // y cualquier fallo lo absorbe el sync por realtime.
+  async function scheduleAppointmentAfterSave(
+    appointment: Appointment,
+    choice: ReminderChoice,
+  ): Promise<void> {
+    try {
+      if (choice !== 'none' && !(await areNotificationsEnabled())) {
+        const result = await askEnableNotifications(
+          'Esta cita tiene recordatorio, pero las notificaciones están apagadas. No recibirás el aviso.',
+        );
+        if (result === 'enabled') {
+          await scheduleAppointment(appointment, choice);
+        }
+        return;
+      }
+      await scheduleAppointment(appointment, choice);
+    } catch {
+      // el sync por realtime reintentará
+    }
   }
 
   async function handleDelete(id: string) {

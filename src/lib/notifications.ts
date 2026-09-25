@@ -29,8 +29,32 @@ type NotificationMap = Record<string, { identifiers: string[]; fingerprint: stri
 // y programan notificaciones. Evita races entre syncAll (realtime) y el resto.
 let queue: Promise<void> = Promise.resolve();
 
+// Una tarea colgada (expo-notifications sin resolver) envenenaría la cola para
+// siempre: cada enqueue() posterior quedaría esperando. El corte por tiempo
+// libera la cola y degrada solo esa operación.
+const QUEUE_TIMEOUT_MS = 5_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Notificación: la operación tardó demasiado.')), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 function enqueue<T>(fn: () => Promise<T>): Promise<T> {
-  const run = queue.then(fn, fn);
+  const run = queue.then(
+    () => withTimeout(Promise.resolve().then(fn), QUEUE_TIMEOUT_MS),
+    () => withTimeout(Promise.resolve().then(fn), QUEUE_TIMEOUT_MS),
+  );
   queue = run.then(
     () => undefined,
     () => undefined,
@@ -102,43 +126,62 @@ export async function ensureNotificationsEnabled(): Promise<boolean> {
 export function askEnableNotifications(message: string): Promise<'enabled' | 'cancelled'> {
   if (Platform.OS === 'web') return Promise.resolve('cancelled');
   return new Promise((resolve) => {
-    Alert.alert('Notificaciones desactivadas', message, [
-      { text: 'Ahora no', style: 'cancel', onPress: () => resolve('cancelled') },
-      {
-        text: 'Activar',
-        onPress: () => {
-          void (async () => {
-            try {
-              const ok = await ensureNotificationsEnabled();
-              if (ok) {
-                resolve('enabled');
+    // Android permite descartar el diálogo con el botón atrás o tocando fuera.
+    // Sin onDismiss el Promise quedaba colgado y bloqueaba el flujo que lo espera.
+    let settled = false;
+    const settle = (value: 'enabled' | 'cancelled') => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    Alert.alert(
+      'Notificaciones desactivadas',
+      message,
+      [
+        { text: 'Ahora no', style: 'cancel', onPress: () => settle('cancelled') },
+        {
+          text: 'Activar',
+          onPress: () => {
+            void (async () => {
+              try {
+                const ok = await ensureNotificationsEnabled();
+                if (ok) {
+                  settle('enabled');
+                  return;
+                }
+              } catch {
+                settle('cancelled');
                 return;
               }
-            } catch {
-              resolve('cancelled');
-              return;
-            }
-            const canAsk = await canRequestPermissionAgain();
-            Alert.alert(
-              'Permiso denegado',
-              'Activa las notificaciones desde los ajustes del sistema para recibir avisos.',
-              canAsk
-                ? [{ text: 'OK', onPress: () => resolve('cancelled') }]
-                : [
-                    { text: 'Cancelar', style: 'cancel', onPress: () => resolve('cancelled') },
-                    {
-                      text: 'Abrir ajustes',
-                      onPress: () => {
-                        void Linking.openSettings().catch(() => undefined);
-                        resolve('cancelled');
-                      },
-                    },
-                  ],
-            );
-          })();
+              try {
+                const canAsk = await canRequestPermissionAgain();
+                Alert.alert(
+                  'Permiso denegado',
+                  'Activa las notificaciones desde los ajustes del sistema para recibir avisos.',
+                  canAsk
+                    ? [{ text: 'OK', onPress: () => settle('cancelled') }]
+                    : [
+                        { text: 'Cancelar', style: 'cancel', onPress: () => settle('cancelled') },
+                        {
+                          text: 'Abrir ajustes',
+                          onPress: () => {
+                            void Linking.openSettings().catch(() => undefined);
+                            settle('cancelled');
+                          },
+                        },
+                      ],
+                  { cancelable: true, onDismiss: () => settle('cancelled') },
+                );
+              } catch {
+                settle('cancelled');
+              }
+            })();
+          },
         },
-      },
-    ]);
+      ],
+      { cancelable: true, onDismiss: () => settle('cancelled') },
+    );
   });
 }
 
