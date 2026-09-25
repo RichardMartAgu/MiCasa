@@ -47,6 +47,15 @@ Seis agentes especializados viven en `.opencode/agents/` e intervienen en el flu
 6. Si `security` o `qa-test` formulan preguntas, el orquestador las transmite al usuario y espera decisión si afectan al bloque.
 7. Verificar antes de entregar: `npx tsc --noEmit`, `npx expo lint`, `npx jest` (+ checks de `web/` si aplica).
 
+# Git
+
+Antes de cualquier commit, push, merge, rebase o limpieza de ramas, carga la skill `.opencode/skills/micasa-git/SKILL.md`. Recoge el flujo obligatorio de este repo y los comandos que ya han causado pérdida de trabajo aquí.
+
+Dos avisos concretos:
+
+- `develop` exige revisión aprobatoria y el repositorio tiene `allow_auto_merge = false`. Un bot no puede aprobar su propio PR: hace falta que apruebe una persona, o autorización explícita del usuario para usar `--admin`.
+- `develop` es la rama de trabajo. `master` es la rama por defecto, y por eso **dependabot mergea en `master`**: un PR suyo no llega a lo que se despliega hasta que se lleva a `develop` a mano.
+
 # Regla dura (no negociable)
 
 Ningún bloque de código se da por terminado ni se commitea si el `security` devuelve **BLOQUEADO** o `qa-test` **FALLA**. Si la auditoría falla, primero se corrigen los hallazgos y después se vuelve a auditar hasta obtener **APROBADO**/**PASA**.

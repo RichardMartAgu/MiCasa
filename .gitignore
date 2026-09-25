@@ -37,7 +37,8 @@ yarn-error.*
 # autoskills (regenerables con `npx autoskills`)
 .claude/skills/
 .agents/
-.opencode/
+.opencode/*
+!.opencode/skills/
 skills-lock.json
 
 # typescript

@@ -1,6 +1,6 @@
 # INDEX — MiCasa
 
-App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md`.
+App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill.
 
 > Warning: `/home/richard/MiCasa` contiene una modificación ajena en `app.json`, en rama `develop`. No tocarla.
 
@@ -10,6 +10,7 @@ App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `
 
 | Archivo | Propósito | Estado |
 |---|---|---|
+| [`.opencode/skills/micasa-git/SKILL.md`](.opencode/skills/micasa-git/SKILL.md) | Buenas prácticas de git para este repo: flujo de worktree por rama, comandos destructivos que ya han perdido trabajo, y por qué dependabot mergea en `master` y no en `develop`. | Vigente; leer antes de commitear, pushear, mergear o limpiar ramas. |
 | [`AGENTS.md`](AGENTS.md) | Reglas del proyecto, Expo v57, stack, agentes, calidad, deploy y worktrees. | Vigente; leer primero. |
 | [`CLAUDE.md`](CLAUDE.md) | Redirección a reglas de `AGENTS.md`. | Vigente; 1 línea. |
 | [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-09-25. |
