@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
+    />
+    <title>%WEB_TITLE%</title>
+    <meta
+      name="description"
+      content="Gestiona tu hogar: casas, inventario, citas, cumpleaños, gastos y listas."
+    />
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0B1220" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="MiCasa" />
+
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* These styles make the body full-height */
+      html,
+      body {
+        height: 100%;
+      }
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+
+    <script>
+      // El service worker solo existe en builds de producción. En `expo start`
+      // esta ruta devuelve el index.html del dev server, así que se comprueba
+      // el Content-Type antes de registrar para no instalar un SW inválido.
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          fetch('/sw.js', { method: 'HEAD' })
+            .then(function (res) {
+              var type = res.headers.get('content-type') || '';
+              if (res.ok && type.indexOf('javascript') !== -1) {
+                return navigator.serviceWorker.register('/sw.js');
+              }
+            })
+            .catch(function (error) {
+              console.error('MiCasa: no se pudo registrar el service worker', error);
+            });
+        });
+      }
+    </script>
+  </head>
+
+  <body>
+    <!-- Use static rendering with Expo Router to support running without JavaScript. -->
+    <noscript>
+      Necesitas JavaScript para usar MiCasa.
+    </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+  </body>
+</html>

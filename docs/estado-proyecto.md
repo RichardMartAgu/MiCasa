@@ -1,6 +1,19 @@
-# Estado del proyecto
 
-## Sesión actual — 2026-09-25 (bloque citas/notificaciones)
+## Sesión actual — 2026-09-25 (PWA instalable)
+
+- Objetivo: que la web de MiCasa sea instalable como PWA desde el navegador. Opción elegida por el usuario: PWA (descartadas links a tiendas y APK directo).
+- Worktree: `/home/richard/MiCasa-pwa-installable`, rama `feat/pwa-installable` desde `3d3492d`.
+- Detalle completo, decisiones, hallazgos de security y pendientes: [`docs/pwa-installable.md`](pwa-installable.md).
+- Implementado: `public/manifest.webmanifest`, cuatro iconos PWA, `public/index.html` como plantilla del export web (metas PWA + registro del SW protegido por HEAD/Content-Type), `workbox-config.js`, `scripts/verify-pwa.cjs`, scripts `build:pwa` y `verify:pwa`, `build:web` encadenado, `serve-demo.sh` y `vercel.json` (buildCommand + headers de seguridad y de no-cache para `sw.js`).
+- Gotcha discovered: con `web.output: "single"` el HTML sale de `public/index.html`, no de `+html.tsx`; ver doc.
+- Security: APROBADO. Remediados F1 (sin `skipWaiting`/`clientsClaim` para evitar version-skew con deploys que borran el anterior), F2 (rewrite revertido al original) y F3 (headers `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`). F4 (CSP) queda fuera, en iteración aparte.
+- QA: PASA. `npx tsc --noEmit` limpio, `npx expo lint` limpio, `npx jest` 42/42 suites y 497/497 tests, `npm run verify:pwa` 57/57.
+- Límite conocido: "instalable" no es "offline con datos". El SW sirve shell y assets; los datos van siempre a Supabase.
+- No verificado: prueba en navegador real (Playwright no arranca en esta máquina: falta `libnspr4.so` y no hay sudo) y prueba en dispositivo.
+- Pendiente: commit, push, PR a `develop`, deploy con `npm run deploy:vercel` y verificación en dispositivo.
+- Commit/push: pendiente.
+
+## Sesión anterior — 2026-09-25 (bloque citas/notificaciones)
 
 - PR #52 `fix(citas): desbloquea el guardado cuando el aviso de notificaciones no resuelve` mergeado a `develop` en `ff4bbcae1a65163bad96348c606d9ef4965b2086`.
 - Commit de implementación: `f3e8d34`.
