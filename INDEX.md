@@ -1,14 +1,13 @@
 # INDEX — MiCasa
 
-App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `.md` (14 versionados + `docs/estado-proyecto.md` nuevo, sin commit). Este índice se actualiza al crear, modificar o borrar cualquier `.md`.
+App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md`.
 
 ## Estado Git — 2026-09-25
 
 - Rama: `feat/appointment-kind-manager`
 - Worktree: `/home/richard/MiCasa-feat-appointment-kind-manager`
-- Cambios locales: 7 modificados y 6 nuevos, sin commit ni push.
-- Modificados: `INDEX.md`, `__tests__/api.test.ts`, `__tests__/lib/notifications.test.ts`, `__tests__/screens/citas.test.tsx`, `src/app/(tabs)/citas.tsx`, `src/lib/api.ts`, `supabase/schema.sql`.
-- Nuevos: `__tests__/components/ui/icon-picker.test.tsx`, `__tests__/lib/appointment-icons.test.ts`, `docs/estado-proyecto.md`, `src/components/ui/icon-picker.tsx`, `src/lib/appointment-icons.ts`, `supabase/migrations/20260922_appointment_kinds_icon_check.sql`.
+- Estado Git tras push: limpio y sincronizado con `origin/feat/appointment-kind-manager`.
+- `docs/estado-proyecto.md` ya está versionado.
 - Worktree principal `/home/richard/MiCasa`: rama `develop`; `app.json` tiene modificación ajena. No tocarla.
 
 ## Inventario completo
@@ -21,7 +20,7 @@ App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `
 | [`CLAUDE.md`](CLAUDE.md) | Redirección a reglas de `AGENTS.md`. | Vigente; 1 línea. |
 | [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-09-25. |
 | [`README.md`](README.md) | Descripción del producto, funcionalidades, stack, puesta en marcha, calidad, estructura y modelo de datos. | Vigente. |
-| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global accionable para continuar sesiones. | Nuevo 2026-09-25; sin commit. |
+| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global accionable para continuar sesiones. | Versionado; actualizado 2026-09-25. |
 
 ### Bugs resueltos o documentados
 
