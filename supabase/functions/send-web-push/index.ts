@@ -223,6 +223,119 @@ async function buildDispatches(
   return out;
 }
 
+/** Envía un payload ya construido a las suscripciones de un usuario. */
+async function sendToUser(
+  db: Db,
+  secrets: PushSecrets,
+  userId: string,
+  payload: { title: string; body: string; tag: string; url: string },
+): Promise<{ delivered: number; removed: number }> {
+  const { data: subs, error } = await db
+    .from("push_subscriptions")
+    .select("id, endpoint, p256dh, auth, failure_count")
+    .eq("user_id", userId)
+    .eq("active", true);
+
+  if (error) {
+    console.error("send-web-push: no se pudieron leer las suscripciones del usuario", error);
+    return { delivered: 0, removed: 0 };
+  }
+
+  let delivered = 0;
+  const dead: string[] = [];
+
+  for (const sub of (subs ?? []) as { id: string; endpoint: string; p256dh: string; auth: string }[]) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        JSON.stringify({
+          title: payload.title,
+          body: payload.body,
+          icon: "/icon-192.png",
+          badge: "/icon-192.png",
+          tag: payload.tag,
+          renotify: true,
+          data: { type: "test", url: payload.url },
+        }),
+        { TTL: 300, urgency: "normal" },
+      );
+      delivered++;
+      await db
+        .from("push_subscriptions")
+        .update({ last_success_at: new Date().toISOString(), failure_count: 0 })
+        .eq("id", sub.id);
+    } catch (error) {
+      const status = (error as { statusCode?: number }).statusCode;
+      if (status === 404 || status === 410) {
+        dead.push(sub.id);
+        continue;
+      }
+      console.error("send-web-push: fallo enviando el aviso de prueba", error);
+    }
+  }
+
+  if (dead.length > 0) await db.from("push_subscriptions").delete().in("id", dead);
+  return { delivered, removed: dead.length };
+}
+
+/**
+ * Aviso de prueba que pide el propio usuario desde Ajustes.
+ *
+ * Se autentica con el JWT de la sesión y solo puede llegar a las suscripciones de
+ * quien lo pide: no hay forma de usarlo para avisar a otra cuenta ni de elegir el
+ * contenido, que es fijo.
+ *
+ * El enfriamiento se apoya en la clave única de `push_log` en vez de en un
+ * marca de tiempo: así funciona entre réplicas de la función sin estado propio, y
+ * no hay que tocar `push_preferences` (escribir ahí el instante del envío
+ * reactivaría el interruptor maestro de quien lo pulses).
+ */
+const TEST_PUSH_COOLDOWN_MS = 5 * 60_000;
+
+async function runTestPush(
+  db: Db,
+  secrets: PushSecrets,
+  userId: string,
+): Promise<Record<string, unknown>> {
+  const bucket = Math.floor(Date.now() / TEST_PUSH_COOLDOWN_MS);
+  const { error: claimError } = await db
+    .from("push_log")
+    .insert({ user_id: userId, dedupe_key: `test:${userId}:${bucket}` });
+
+  if (claimError) {
+    if (claimError.code !== "23505") {
+      console.error("send-web-push: no se pudo registrar el aviso de prueba", claimError);
+      return { ok: false, error: "no se pudo registrar el aviso" };
+    }
+    return {
+      ok: false,
+      error: "demasiado rapido",
+      retryInSeconds: Math.ceil(
+        ((bucket + 1) * TEST_PUSH_COOLDOWN_MS - Date.now()) / 1000,
+      ),
+    };
+  }
+
+  const result = await sendToUser(db, secrets, userId, {
+    title: "MiCasa: aviso de prueba",
+    body: "Si lees esto, los avisos de verdad te llegaran con el movil bloqueado.",
+    tag: `test:${userId}`,
+    url: "/",
+  });
+
+  if (result.delivered === 0) {
+    // Se libera la reserva para que un reintento inmediato no espere 5 minutos.
+    await db
+      .from("push_log")
+      .delete()
+      .eq("user_id", userId)
+      .eq("dedupe_key", `test:${userId}:${bucket}`);
+    return { ok: false, error: "sin suscripciones activas en este navegador" };
+  }
+
+  return { ok: true, delivered: result.delivered, removedSubscriptions: result.removed };
+}
+
 /** Reparte y envía todos los recordatorios pendientes. */
 async function runDispatch(db: Db, secrets: PushSecrets): Promise<Record<string, unknown>> {
   const now = new Date();
@@ -379,6 +492,17 @@ Deno.serve(async (req) => {
   if (!secrets.publicKey || !secrets.privateKey) {
     console.error("send-web-push: faltan las claves VAPID en Vault o en el entorno");
     return json({ error: "no autorizado" }, 401);
+  }
+
+  // Aviso de prueba: lo pide el usuario con su propia sesión, no el dispatcher.
+  if (new URL(req.url).searchParams.get("mode") === "test") {
+    const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+    if (token.length === 0) return json({ error: "falta la sesion" }, 401);
+
+    const { data: userData, error: userError } = await db.auth.getUser(token);
+    if (userError || !userData?.user) return json({ error: "sesion no valida" }, 401);
+
+    return json(await runTestPush(db, secrets, userData.user.id));
   }
 
   const sync = new URL(req.url).searchParams.get("sync") === "1";
