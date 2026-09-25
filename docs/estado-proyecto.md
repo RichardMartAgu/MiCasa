@@ -1,5 +1,18 @@
 
-## Sesión actual — 2026-09-25 (PWA instalable)
+## Sesión actual — 2026-09-25 (Web Push)
+
+- Objetivo: que la web de MiCasa reciba recordatorios de citas y cumpleaños aunque la app esté cerrada, en Android y escritorio sin necesidad de instalar.
+- Worktree: `/home/richard/MiCasa-web-push`, rama `feat/web-push` sobre `5f0c373` (PWA). Detalle completo, hallazgos de security y pendientes: [`docs/web-push.md`](docs/web-push.md).
+- Implementado: migraciones de `push_subscriptions`/`push_preferences`/`push_log` con RLS, RPC de secretos en Vault, `pg_cron` + `pg_net` cada 5 min, Edge Function `send-web-push` v5, service worker con handlers `push` y `notificationclick`, `src/lib/web-push.ts` y el interruptor en Ajustes.
+- Decisión del usuario: recordatorios programados desde el servidor, no avisos de eventos ni push solo con la pestaña abierta. En iPhone no funciona sin instalar (lo exige iOS).
+- Security: dos rondas. La primera dio BLOQUEADO y la segunda REVISAR sin bloqueantes. Remediados, entre otros, el interruptor maestro que no frenaba las citas, el filtrado de citas por pertenencia a la casa, la lectura de secretos antes de autenticar, y un `verify_jwt = false` que este mismo bloque introducía para `send-email` en `supabase/config.toml` y que la convertía en un relay de correo abierto.
+- QA: PASA. `deno check` limpio, `deno test` 28/28, `npx tsc --noEmit` limpio, `npx expo lint` limpio, `npx jest` 43/43 suites y 514/514 tests, `npm run verify:pwa` 64/64.
+- Verificado en producción: RLS contra dos usuarios reales (insert/upsert/update/delete ajenos rechazados, `anon` sin acceso), guarda de estado de la suscripción, 401 sin secreto, 202 encolando, cron ejecutando.
+- No verificado: navegador real. Playwright no arranca en esta máquina (falta `libnspr4.so`, sin sudo).
+- Pendiente: merge de `#51`, PR de este bloque, deploy a Vercel, prueba en navegador y decidir qué hacer con el PR `#48`, que choca con esta implementación.
+- Commit/push: pendiente.
+
+## Sesión anterior — 2026-09-25 (PWA instalable)
 
 - Objetivo: que la web de MiCasa sea instalable como PWA desde el navegador. Opción elegida por el usuario: PWA (descartadas links a tiendas y APK directo).
 - Worktree: `/home/richard/MiCasa-pwa-installable`, rama `feat/pwa-installable` desde `3d3492d`.

@@ -46,13 +46,17 @@
     "@testing-library/react-native": "^13.3.3",
     "@types/jest": "30.0.0",
     "@types/react": "~19.2.2",
+    "esbuild": "^0.25.0",
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.2",
     "jest": "~30.5.1",
     "jest-expo": "57.0.4",
     "react-test-renderer": "19.2.8",
     "typescript": "~6.0.3",
-    "workbox-cli": "^7.3.0"
+    "workbox-cli": "^7.3.0",
+    "workbox-core": "^7.3.0",
+    "workbox-precaching": "^7.3.0",
+    "workbox-routing": "^7.3.0"
   },
   "scripts": {
     "start": "expo start",
@@ -61,14 +65,15 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:web": "expo export --platform web && npm run build:pwa",
-    "build:pwa": "workbox generateSW workbox-config.js",
+    "build:pwa": "npm run build:sw && workbox injectManifest workbox-config.js",
     "verify:pwa": "node scripts/verify-pwa.cjs",
     "demo": "bash scripts/serve-demo.sh",
     "deploy:vercel": "npx vercel --prod --yes",
     "lint": "expo lint",
     "test": "jest",
     "test:watch": "jest --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:sw": "esbuild sw-src.js --bundle --format=iife --target=es2020 --outfile=sw-bundle.js"
   },
   "jest": {
     "preset": "jest-expo",
@@ -83,6 +88,10 @@
     "collectCoverageFrom": [
       "src/lib/**/*.ts",
       "!src/lib/supabase.ts"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "<rootDir>/supabase/"
     ]
   },
   "private": true
