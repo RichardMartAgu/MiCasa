@@ -278,3 +278,58 @@ function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   return 'error desconocido';
 }
+
+export type TestPushResult =
+  | { ok: true; delivered: number }
+  | { ok: false; error: string; retryInSeconds?: number };
+
+/**
+ * Pide un aviso de prueba a la Edge Function. Sirve para comprobar que la
+ * suscripción está viva y que el service worker pinta la notificación, sin
+ * esperar a que llegue un recordatorio real.
+ *
+ * La función se autentica con el JWT de esta sesión y solo puede avisar a este
+ * usuario, así que no hay forma de llegar a nadie más. Enfrenta un enfriamiento
+ * de 5 minutos por si alguien lo pulsa en bucle.
+ */
+export async function sendTestPush(): Promise<TestPushResult> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) return { ok: false, error: 'sesión no válida' };
+
+  const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/functions/v1/send-web-push?mode=test`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+    });
+  } catch {
+    return { ok: false, error: 'sin conexión' };
+  }
+
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await response.json()) as Record<string, unknown>;
+  } catch {
+    return { ok: false, error: 'respuesta ilegible' };
+  }
+
+  if (!response.ok) {
+    return { ok: false, error: typeof body.error === 'string' ? body.error : 'error inesperado' };
+  }
+  if (body.ok === true) {
+    return { ok: true, delivered: typeof body.delivered === 'number' ? body.delivered : 0 };
+  }
+  if (body.error === 'demasiado rapido') {
+    return {
+      ok: false,
+      error: 'demasiado rapido',
+      retryInSeconds: typeof body.retryInSeconds === 'number' ? body.retryInSeconds : 60,
+    };
+  }
+  return { ok: false, error: typeof body.error === 'string' ? body.error : 'error inesperado' };
+}

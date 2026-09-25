@@ -1,5 +1,15 @@
 
-## Sesión actual — 2026-09-25 (PWA + Web Push, mergeados y desplegados)
+## Sesión actual — 2026-09-25 (aviso de prueba, limpieza)
+
+- Objetivo: poder verificar el push en un minuto, sin esperar a las 09:00, y limpiar ramas y jobs obsoletos.
+- Botón "Aviso de prueba" en Ajustes (solo web y solo si el navegador soporta push) que llama a la Edge Function con `?mode=test`. La Edge Function v6 valida el JWT de la sesión con `db.auth.getUser()` y solo busca suscripciones de ese usuario; el contenido es fijo y hay enfriamiento de 5 min apoyado en la clave única de `push_log`.
+- Verificado en producción: sin sesión 401, token inválido 401, y el secreto del dispatcher no sirve para esa vía (401). El dispatcher sigue en 202.
+- Limpieza: PR #48 cerrado sin merge (chocaba con Web Push), worktree y rama `feat/web-notif-hide` eliminados, 11 ramas remotas ya mergeadas borradas y `feat/web-notif-hide` remota eliminada. De 2,2 G a 1,1 G de espacio.
+- Job `check-reminders` de `cron` eliminado: fallaba cada 5 min desde antes de este trabajo y apuntaba a una URL nula porque `app.settings.supabase_url` no está definido. Queda solo `dispatch-web-push`.
+- QA: `npx tsc --noEmit` limpio, `npx expo lint` limpio, `npx jest` 43/43 suites y 517/517 tests, `deno check` limpio, `deno test` 28/28, `npm run verify:pwa` 64/64.
+- Pendiente: probar el botón en un navegador real. Es la única forma de cerrar la entrega sin hacerlo yo desde aquí (Playwright no arranca: falta `libnspr4.so` y no hay sudo).
+
+## Sesión anterior — 2026-09-25 (PWA + Web Push, mergeados y desplegados)
 
 - PR #51 `feat(pwa): hacer la web instalable como PWA` mergeado en `c18b1c4`.
 - PR #54 `feat(push): recordatorios por Web Push en la web` mergeado en `30c8534`.

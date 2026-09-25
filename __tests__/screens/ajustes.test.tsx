@@ -57,6 +57,8 @@ const mockNotificationPermission = jest.fn(() => 'default' as const);
 const mockSyncPushPreferences = jest.fn(async () => undefined);
 const mockEnableWebPush = jest.fn();
 const mockDisableWebPush = jest.fn();
+const mockSendTestPush: jest.Mock<Promise<{ ok: boolean; error?: string; retryInSeconds?: number; delivered?: number }>> =
+  jest.fn(async () => ({ ok: true, delivered: 1 }));
 
 jest.mock('@/lib/web-push', () => ({
   isPushSupported: () => mockIsPushSupported(),
@@ -65,6 +67,7 @@ jest.mock('@/lib/web-push', () => ({
   syncPushPreferences: (_user: unknown, _params: unknown) => mockSyncPushPreferences(),
   enableWebPush: (user: unknown) => mockEnableWebPush(user),
   disableWebPush: (user: unknown) => mockDisableWebPush(user),
+  sendTestPush: () => mockSendTestPush(),
 }));
 
 jest.mock('@/lib/notifications', () => ({
@@ -281,6 +284,63 @@ describe('AjustesScreen', () => {
     const { getByText } = setup();
     fireEvent.press(getByText('Cerrar sesión'));
     expect(signOut).toHaveBeenCalled();
+  });
+
+  it('envía un aviso de prueba y lo confirma', async () => {
+    const originalOs = Platform.OS;
+    Platform.OS = 'web';
+    mockIsPushSupported.mockReturnValue(true);
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+
+    try {
+      const { getByText } = setup();
+      fireEvent.press(getByText('Enviar'));
+
+      await waitFor(() => {
+        expect(mockSendTestPush).toHaveBeenCalled();
+      });
+      expect(alertSpy).toHaveBeenCalledWith('Aviso enviado', 'Enviado a 1 navegador(es).');
+    } finally {
+      alertSpy.mockRestore();
+      Platform.OS = originalOs;
+    }
+  });
+
+  it('avisa de que hay que esperar si pides el aviso muy seguido', async () => {
+    const originalOs = Platform.OS;
+    Platform.OS = 'web';
+    mockIsPushSupported.mockReturnValue(true);
+    mockSendTestPush.mockResolvedValueOnce({
+      ok: false,
+      error: 'demasiado rapido',
+      retryInSeconds: 180,
+    });
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+
+    try {
+      const { getByText } = setup();
+      fireEvent.press(getByText('Enviar'));
+
+      await waitFor(() => {
+        expect(alertSpy).toHaveBeenCalledWith('Espera un momento', 'Puedes pedir otro aviso en 3 minuto(s).');
+      });
+    } finally {
+      alertSpy.mockRestore();
+      Platform.OS = originalOs;
+    }
+  });
+
+  it('no ofrece el botón de prueba cuando el navegador no soporta push', () => {
+    const originalOs = Platform.OS;
+    Platform.OS = 'web';
+    mockIsPushSupported.mockReturnValue(false);
+
+    try {
+      const { queryByText } = setup();
+      expect(queryByText('Enviar')).toBeNull();
+    } finally {
+      Platform.OS = originalOs;
+    }
   });
 
   it('da de baja la suscripción push antes de cerrar sesión', async () => {

@@ -51,6 +51,7 @@ import {
   getActiveSubscription,
   isPushSupported,
   notificationPermission,
+  sendTestPush,
   syncPushPreferences,
 } from '@/lib/web-push';
 import { validateCasaName, validateInviteCode } from '@/lib/validation';
@@ -97,6 +98,7 @@ export default function AjustesScreen() {
   const [pushSupported, setPushSupported] = useState(false);
   const [pushBlocked, setPushBlocked] = useState(false);
   const [webPushBusy, setWebPushBusy] = useState(false);
+  const [testPushBusy, setTestPushBusy] = useState(false);
 
   const { data: appointments } = useRealtimeCollection<Appointment>(
     () => (currentCasa ? fetchAppointments(currentCasa.id) : Promise.resolve([])),
@@ -178,6 +180,28 @@ export default function AjustesScreen() {
       setWebPushBusy(false);
       Alert.alert('Error', 'No se pudo cambiar el estado de los avisos.');
     }
+  }
+
+  /**
+   * Pide un aviso de prueba a la Edge Function. Es la forma rápida de comprobar
+   * que la suscripción está viva y que el service worker pinta la notificación,
+   * sin esperar a un recordatorio real.
+   */
+  async function handleTestPush() {
+    setTestPushBusy(true);
+    const result = await sendTestPush();
+    setTestPushBusy(false);
+
+    if (result.ok) {
+      Alert.alert('Aviso enviado', `Enviado a ${result.delivered} navegador(es).`);
+      return;
+    }
+    if (result.error === 'demasiado rapido') {
+      const minutes = Math.max(1, Math.ceil((result.retryInSeconds ?? 60) / 60));
+      Alert.alert('Espera un momento', `Puedes pedir otro aviso en ${minutes} minuto(s).`);
+      return;
+    }
+    Alert.alert('No se pudo enviar', result.error);
   }
 
   /**
@@ -420,6 +444,22 @@ export default function AjustesScreen() {
             accessibilityLabel="Activar notificaciones"
           />
         </View>
+        {isWeb && pushSupported ? (
+          <View style={styles.settingRow}>
+            <View style={styles.settingText}>
+              <Text style={styles.settingLabel}>Aviso de prueba</Text>
+              <Text style={styles.cardMeta}>
+                Comprueba que los avisos llegan con el móvil bloqueado
+              </Text>
+            </View>
+            <Button
+              title={testPushBusy ? 'Enviando…' : 'Enviar'}
+              variant="secondary"
+              disabled={testPushBusy || webPushBusy}
+              onPress={() => void handleTestPush()}
+            />
+          </View>
+        ) : null}
         <Text style={styles.settingLabel}>Cumpleaños: avisar</Text>
         <View style={styles.chipRow}>
           {reminderChoices.map((value) => (

@@ -110,12 +110,26 @@ Verificado empíricamente en producción, simulando los roles `anon` y `authenti
 - **`notificationclick` enfoca la primera pestaña del mismo origen** que encuentra, no la de la casa que corresponde. Molesto, no inseguro.
 - **El service worker no sanea `title`/`body` del payload.** Hoy es inocuo porque el productor es nuestro backend; si el gateway de push se comprometiera, el texto podría ir sin sanear (las rutas sí pasan por la allowlist).
 
+## Aviso de prueba
+
+Ajustes tiene un botón **Enviar** junto a "Aviso de prueba" que pide un push de prueba a la Edge Function (`?mode=test`). Sirve para comprobar que la suscripción está viva y que el service worker pinta la notificación, sin esperar a que llegue un recordatorio real, que solo salta en la ventana de 3 h tras las 09:00 locales.
+
+Cómo está protegido:
+
+- Se autentica con el **JWT de la sesión** de quien lo pulsa, no con el secreto del dispatcher. La función lo valida con `db.auth.getUser(token)` y solo busca suscripciones de ese `user_id`.
+- El contenido es fijo. No hay forma de usarlo para avisar a otra cuenta ni de elegir el texto.
+- Enfriamiento de 5 minutos, apoyado en la clave única de `push_log` (`test:<userId>:<bucket>`) para que funcione entre réplicas de la función. Si no queda ninguna suscripción activa se libera la reserva, para que un reintento no espere.
+- `renotify: true` a diferencia de los recordatorios: dos pruebas seguidas deben sonar, que es justo lo que se quiere comprobar.
+- Solo se muestra en web y cuando el navegador soporta push.
+
+Verificado en producción: sin sesión `401`, con un token inválido `401`, y con el secreto del dispatcher en lugar de sesión `401` (no se cuela por la otra vía). El dispatcher sigue respondiendo `202`.
+
 ## Qué falta
 
 1. Mergear `#51` (PWA) y abrir el PR de este bloque: `develop` exige revisión aprobatoria y el auto-merge está deshabilitado en el repo.
 2. Decidir el destino del PR `#48` (`feat(web): oculta notificaciones en web`), que choca con esta implementación: en web las notificaciones **sí** funcionan ahora.
 3. `npm run deploy:vercel` desde el worktree y comprobar `curl -s -o /dev/null -w "%{http_code}" https://micasa-demo.vercel.app` → `200`.
-4. Prueba en navegador real: activar el interruptor en Ajustes, comprobar que llega un aviso de prueba y que el service worker lo pinta.
+4. Prueba en navegador real: activar el interruptor en Ajustes y pulsar **Enviar** en "Aviso de prueba". Con eso queda verificado el envío real de extremo a extremo; para un recordatorio de verdad, añadir una cita para mañana con recordatorio "Día antes" y comprobarlo a las 09:00 locales.
 5. Job `check-reminders` preexistente en `cron`, fallando cada 5 minutos desde antes de este bloque. No se ha tocado: decide si se quita.
 
 ## Contexto de rama
