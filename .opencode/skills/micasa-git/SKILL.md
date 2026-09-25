@@ -95,6 +95,18 @@ Resuelve los conflictos **a mano y con criterio**: `docs/estado-proyecto.md` es 
 
 No lo das por hecho: pregunta antes de saltarte una protección de rama.
 
+## Nada abierto al arrancar lo siguiente
+
+Antes de crear un worktree o una rama, las dos listas tienen que salir limpias:
+
+```bash
+git worktree list              # solo /home/richard/MiCasa en develop
+gh pr list --state open        # nada
+git branch                      # develop y master, nada más
+```
+
+Un PR que no se puede mergear **se cierra con el motivo**. "Pendiente de revisar" no es un estado válido entre bloques: o entra en el bloque actual, o se cierra.
+
 ## limpieza
 
 Cuando termines, no dejes worktrees ni ramas:

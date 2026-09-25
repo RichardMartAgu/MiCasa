@@ -60,6 +60,18 @@ Dos avisos concretos:
 
 Ningún bloque de código se da por terminado ni se commitea si el `security` devuelve **BLOQUEADO** o `qa-test` **FALLA**. Si la auditoría falla, primero se corrigen los hallazgos y después se vuelve a auditar hasta obtener **APROBADO**/**PASA**.
 
+## Regla dura: nada abierto al cambiar de bloque
+
+**Antes de crear un worktree o una rama nueva, `git worktree list` y `gh pr list --state open` deben salir limpios.** No se abre lo nuevo hasta que lo anterior está resuelto:
+
+- Ningún worktree abierto que no sea el directorio principal en `develop`.
+- Ningún PR sin mergear ni cerrar.
+- Ninguna rama local que no aporte nada pendiente.
+
+Cuando un bloque termine, se cierra en el mismo bloque: PR mergeado o cerrado, worktree eliminado con `git worktree remove`, rama borrada. Una tarea de más de un worktree es un worktree de más, no una excusa para acumularlos.
+
+Si un PR no se puede mergear, se cierra con el motivo. "Pendiente de revisar" no es un estado que sobreviva al cambio de bloque.
+
 ## Regla dura: worktree obligatorio en toda rama
 
 **Toda rama que se cree lleva SIEMPRE su worktree separado.** Nunca se escribe directamente en `develop` ni en `main`. El directorio principal (`/home/richard/MiCasa`) queda siempre en la rama base `develop` para que el usuario pueda seguir trabajando ahí, y cada rama nueva se trabaja desde su propio worktree (`/home/richard/MiCasa-<rama>/`). Sin excepciones: ni hotfixes ni cambios documentales se hacen en el directorio principal.
