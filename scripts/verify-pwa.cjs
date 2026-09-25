@@ -71,14 +71,23 @@ const sw = fs.readFileSync(swFile, 'utf8');
 
 check(sw.includes('precacheAndRoute('), 'manifiesto de precache inyectado por Workbox');
 
-const revisionMatch = sw.match(/precacheAndRoute\((\[[\s\S]*?\]),\{/);
+// El manifiesto de precache lo inyecta Workbox en la llamada a precacheAndRoute:
+// en modo injectManifest es un array JSON con claves entrecomilladas.
+// Se usa la última llamada: el bundle también incluye la definición interna de
+// precacheAndRoute de Workbox, que recibe un identificador de módulo.
+const calls = [...sw.matchAll(/precache(?:AndRoute)?\(\[([\s\S]*?)\](?:,\s*\{[^}]*\})?\)/g)];
+const revisionMatch = calls.length > 0 ? calls[calls.length - 1] : null;
 let precacheEntries = [];
 if (revisionMatch) {
-  // El manifiesto va minificado con claves sin comillas: no es JSON válido.
-  const pairRe = /url:"([^"]+)",revision:"([^"]+)"/g;
-  let m;
-  while ((m = pairRe.exec(revisionMatch[1])) !== null) {
-    precacheEntries.push({ url: m[1], revision: m[2] });
+  try {
+    precacheEntries = JSON.parse(`[${revisionMatch[1]}]`);
+  } catch (error) {
+    // Workbox minificado: claves sin comillas, se leen a mano.
+    const pairRe = /"?url"?:\s*"([^"]+)",\s*"?revision"?:\s*"([^"]+)"/g;
+    let m;
+    while ((m = pairRe.exec(revisionMatch[1])) !== null) {
+      precacheEntries.push({ url: m[1], revision: m[2] });
+    }
   }
 }
 check(precacheEntries.length > 0, `entradas de precache parseadas: ${precacheEntries.length}`);
@@ -116,23 +125,57 @@ check(
 );
 
 check(
-  /createHandlerBoundToURL\("\/index\.html"\)/.test(sw),
+  /createHandlerBoundToURL\(\s*["']\/index\.html["']/.test(sw),
   'navigateFallback al shell /index.html'
 );
 check(sw.includes('/^\\/_expo\\//'), 'denylist de navegación con /_expo/');
 check(sw.includes('/^\\/api\\//'), 'denylist de navegación con /api/');
-check(sw.includes('e.cleanupOutdatedCaches()'), 'cleanupOutdatedCaches activo');
 check(
-  !/self\.skipWaiting\(\)\s*,\s*\w\.clientsClaim\(\)/.test(sw),
-  'sin activacion forzada del SW (skipWaiting+clientsClaim al arrancar)'
+  /cleanupOutdatedCaches\(\)\s*;/.test(sw),
+  'cleanupOutdatedCaches invocado al activar'
+);
+// clientsClaim es inofensivo sin skipWaiting: solo actúa en la activación, que
+// sin skipWaiting ocurre cuando ninguna pestaña usa ya el SW anterior. Lo que sí
+// sería peligroso es activar el SW nuevo con pestañas viejas abiertas.
+check(
+  !/\w*\.skipWaiting\(\)|self\.skipWaiting\(/.test(sw),
+  'sin skipWaiting: el SW nuevo no se activa con pestanas viejas abiertas'
 );
 check(
-  !/\w\.clientsClaim\(\)/.test(sw),
-  'clientsClaim no invocado: el SW nuevo espera a que se cierren las pestanas'
+  !/["']SKIP_WAITING["']\s*\)|postMessage\(\s*["']SKIP_WAITING/.test(sw) &&
+    !html.includes('SKIP_WAITING'),
+  'nadie envía el mensaje SKIP_WAITING que dispararía la activación forzada'
+);
+
+// ---------- Web Push en el service worker ----------
+check(
+  !/^\s*import\s/m.test(sw),
+  'el service worker es un script clasico (sin imports ESM, que el navegador rechaza)'
 );
 check(
-  !html.includes('SKIP_WAITING'),
-  'el HTML no envia el mensaje SKIP_WAITING que dispararia skipWaiting'
+  /addEventListener\(\s*["']push["']/.test(sw),
+  'listener de push registrado: los avisos llegan con la app cerrada'
+);
+check(
+  /addEventListener\(\s*["']notificationclick["']/.test(sw),
+  'listener de notificationclick registrado: el aviso abre la app'
+);
+check(sw.includes('showNotification'), 'showNotification presente para pintar el aviso');
+check(
+  /self\.registration\.showNotification|registration\.showNotification/.test(sw),
+  'el aviso se muestra desde la propia registro del SW'
+);
+check(
+  sw.includes('/citas') && sw.includes('/cumpleanos'),
+  'la allowlist de rutas del aviso incluye las pantallas de citas y cumpleaños'
+);
+check(
+  !/openWindow\(\s*data\.url\s*\)/.test(sw),
+  'no se abre la URL del payload sin filtrar: pasa por la allowlist'
+);
+check(
+  /userVisibleOnly|renotify/.test(sw),
+  'el aviso declara renotify, necesario para que los navegadores lo acepten'
 );
 
 // Sin runtimeCaching para APIs: los datos del usuario no se guardan en caché

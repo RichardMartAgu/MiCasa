@@ -57,3 +57,10 @@ example
 
 # Supabase CLI
 supabase/.temp/
+
+# service worker empaquetado (generado por npm run build:sw)
+sw-bundle.js
+
+# `node_modules/` con barra no cubre un symlink, que es como se enlaza en los
+# worktrees para no reinstalar 1700 paquetes en cada uno.
+node_modules

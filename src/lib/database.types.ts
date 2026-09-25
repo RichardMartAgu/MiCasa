@@ -243,6 +243,93 @@ export type Database = {
         }
         Relationships: []
       }
+      push_log: {
+        Row: {
+          dedupe_key: string
+          id: number
+          sent_at: string
+          user_id: string
+        }
+        Insert: {
+          dedupe_key: string
+          id?: never
+          sent_at?: string
+          user_id: string
+        }
+        Update: {
+          dedupe_key?: string
+          id?: never
+          sent_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      push_preferences: {
+        Row: {
+          birthday_choice: string
+          enabled: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          birthday_choice?: string
+          enabled?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          birthday_choice?: string
+          enabled?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      push_subscriptions: {
+        Row: {
+          active: boolean
+          auth: string
+          created_at: string
+          endpoint: string
+          failure_count: number
+          id: string
+          last_success_at: string | null
+          p256dh: string
+          timezone: string
+          updated_at: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          active?: boolean
+          auth: string
+          created_at?: string
+          endpoint: string
+          failure_count?: number
+          id?: string
+          last_success_at?: string | null
+          p256dh: string
+          timezone?: string
+          updated_at?: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          active?: boolean
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          failure_count?: number
+          id?: string
+          last_success_at?: string | null
+          p256dh?: string
+          timezone?: string
+          updated_at?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       shopping_items: {
         Row: {
           casa_id: string

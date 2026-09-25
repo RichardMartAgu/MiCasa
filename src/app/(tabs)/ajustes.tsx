@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import {
+  Alert,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -34,6 +45,14 @@ import {
   type ReminderChoice,
 } from '@/lib/notification-schedule';
 import type { Appointment, Casa, CasaMember, Contact } from '@/lib/types';
+import {
+  disableWebPush,
+  enableWebPush,
+  getActiveSubscription,
+  isPushSupported,
+  notificationPermission,
+  syncPushPreferences,
+} from '@/lib/web-push';
 import { validateCasaName, validateInviteCode } from '@/lib/validation';
 
 export default function AjustesScreen() {
@@ -72,6 +91,12 @@ export default function AjustesScreen() {
   const [notificationsEnabled, setNotificationsEnabledState] = useState(false);
   const [birthdayChoice, setBirthdayChoiceState] = useState<ReminderChoice>('none');
   const [prefsLoading, setPrefsLoading] = useState(true);
+  // En web los avisos los manda el servidor, así que el estado real es si este
+  // navegador tiene una suscripción activa, no la preferencia local.
+  const isWeb = Platform.OS === 'web';
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushBlocked, setPushBlocked] = useState(false);
+  const [webPushBusy, setWebPushBusy] = useState(false);
 
   const { data: appointments } = useRealtimeCollection<Appointment>(
     () => (currentCasa ? fetchAppointments(currentCasa.id) : Promise.resolve([])),
@@ -101,7 +126,88 @@ export default function AjustesScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isWeb) return;
+    let active = true;
+    (async () => {
+      const supported = isPushSupported();
+      if (!active) return;
+      setPushSupported(supported);
+      if (!supported) {
+        setNotificationsEnabledState(false);
+        return;
+      }
+      setPushBlocked(notificationPermission() === 'denied');
+      const subscription = await getActiveSubscription();
+      if (active) setNotificationsEnabledState(Boolean(subscription));
+    })();
+    return () => {
+      active = false;
+    };
+  }, [isWeb]);
+
+  async function handleToggleWebPush(next: boolean) {
+    if (!user) return;
+    setWebPushBusy(true);
+    try {
+      const result = next ? await enableWebPush(user) : await disableWebPush(user);
+      setWebPushBusy(false);
+
+      if (result.status === 'enabled' || result.status === 'disabled') {
+        setNotificationsEnabledState(next);
+        setPushBlocked(false);
+        return;
+      }
+      if (result.status === 'denied') {
+        setPushBlocked(true);
+        Alert.alert(
+          'Permiso denegado',
+          'El navegador no permite avisos en este sitio. Actívalo desde los ajustes del navegador (el icono del candado junto a la dirección) y vuelve a intentarlo.',
+        );
+        return;
+      }
+      if (result.status === 'unsupported') {
+        Alert.alert(
+          'No disponible',
+          'Este navegador no admite avisos push. En iPhone hace falta instalar la app en la pantalla de inicio.',
+        );
+        return;
+      }
+      Alert.alert('Error', `No se pudo activar los avisos: ${result.reason}`);
+    } catch {
+      setWebPushBusy(false);
+      Alert.alert('Error', 'No se pudo cambiar el estado de los avisos.');
+    }
+  }
+
+  /**
+   * Al cerrar sesión se da de baja la suscripción de este navegador. Si no, los
+   * avisos de la cuenta anterior seguirían llegando a un equipo compartido, y el
+   * endpoint (que es una credencial) quedaría vivo para siempre.
+   */
+  async function handleSignOut() {
+    if (isWeb && user) {
+      try {
+        const result = await disableWebPush(user);
+        if (result.status === 'failed') {
+          // El registro sobrevive: este navegador seguiría recibiendo los avisos
+          // de la cuenta que se acaba de cerrar en un equipo compartido. Se avisa
+          // en consola porque la sesión ya se está cerrando.
+          console.warn('No se pudo dar de baja la suscripción push', result.reason);
+        }
+      } catch {
+        // Si falla la limpieza, se cierra sesión igualmente: no se bloquea el
+        // cierre por un problema de avisos.
+      }
+    }
+    await signOut();
+  }
+
   async function handleToggleNotifications(next: boolean) {
+    if (isWeb) {
+      await handleToggleWebPush(next);
+      return;
+    }
     try {
       if (next) {
         const granted = await requestPermissions();
@@ -136,7 +242,7 @@ export default function AjustesScreen() {
 
   async function handleBirthdayChoice(choice: ReminderChoice) {
     try {
-      if (choice !== 'none' && !notificationsEnabled) {
+      if (choice !== 'none' && !notificationsEnabled && !isWeb) {
         const result = await askEnableNotifications(
           'Activa las notificaciones para recibir avisos de cumpleaños.',
         );
@@ -145,7 +251,16 @@ export default function AjustesScreen() {
       }
       setBirthdayChoiceState(choice);
       await setBirthdayChoice(choice);
-      await scheduleBirthdays(contacts, choice);
+      if (isWeb) {
+        // En web quien decide cuándo avisar es el servidor, no el dispositivo.
+        // Solo la preferencia de cumpleaños. `enabled` es el interruptor maestro
+        // y solo lo escriben enableWebPush/disableWebPush: si el selector lo
+        // tocara, elegir "sin aviso" apagaría también las citas, y volver a
+        // tocarlo reencendería un interruptor que el usuario había apagado.
+        await syncPushPreferences(user, { birthdayChoice: choice });
+      } else {
+        await scheduleBirthdays(contacts, choice);
+      }
     } catch {
       // el sync por realtime reintentará
     }
@@ -266,7 +381,7 @@ export default function AjustesScreen() {
             <Text style={styles.cardMeta}>{user?.email}</Text>
           </View>
         </View>
-        <Button title="Cerrar sesión" variant="danger" onPress={() => signOut()} />
+        <Button title="Cerrar sesión" variant="danger" onPress={() => void handleSignOut()} />
       </Card>
 
       <Card>
@@ -286,12 +401,20 @@ export default function AjustesScreen() {
         <View style={styles.settingRow}>
           <View style={styles.settingText}>
             <Text style={styles.settingLabel}>Notificaciones</Text>
-            <Text style={styles.cardMeta}>Avisos de citas y cumpleaños</Text>
+            <Text style={styles.cardMeta}>
+              {isWeb
+                ? !pushSupported
+                  ? 'Este navegador no admite avisos push'
+                  : pushBlocked
+                    ? 'Permiso denegado: actívalo desde los ajustes del navegador'
+                    : 'Avisos de citas y cumpleaños, aunque cierres la app'
+                : 'Avisos de citas y cumpleaños'}
+            </Text>
           </View>
           <Switch
             value={notificationsEnabled}
             onValueChange={handleToggleNotifications}
-            disabled={prefsLoading}
+            disabled={prefsLoading || (isWeb && (!pushSupported || webPushBusy))}
             trackColor={{ false: Palette.border, true: Palette.primary }}
             thumbColor={Palette.onPrimary}
             accessibilityLabel="Activar notificaciones"

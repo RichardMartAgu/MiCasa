@@ -1,5 +1,5 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 
 import AjustesScreen from '@/app/(tabs)/ajustes';
 import type { Casa, CasaMember, Profile } from '@/lib/types';
@@ -51,6 +51,22 @@ const mockScheduleBirthdays = jest.fn();
 const mockSetBirthdayChoice = jest.fn();
 const mockSetNotificationsEnabled = jest.fn();
 const mockSyncAll = jest.fn();
+const mockIsPushSupported = jest.fn(() => false);
+const mockGetActiveSubscription = jest.fn(async () => null);
+const mockNotificationPermission = jest.fn(() => 'default' as const);
+const mockSyncPushPreferences = jest.fn(async () => undefined);
+const mockEnableWebPush = jest.fn();
+const mockDisableWebPush = jest.fn();
+
+jest.mock('@/lib/web-push', () => ({
+  isPushSupported: () => mockIsPushSupported(),
+  getActiveSubscription: () => mockGetActiveSubscription(),
+  notificationPermission: () => mockNotificationPermission(),
+  syncPushPreferences: (_user: unknown, _params: unknown) => mockSyncPushPreferences(),
+  enableWebPush: (user: unknown) => mockEnableWebPush(user),
+  disableWebPush: (user: unknown) => mockDisableWebPush(user),
+}));
+
 jest.mock('@/lib/notifications', () => ({
   areNotificationsEnabled: (...args: unknown[]) => mockAreNotificationsEnabled(...args),
   askEnableNotifications: (...args: unknown[]) => mockAskEnableNotifications(...args),
@@ -265,6 +281,41 @@ describe('AjustesScreen', () => {
     const { getByText } = setup();
     fireEvent.press(getByText('Cerrar sesión'));
     expect(signOut).toHaveBeenCalled();
+  });
+
+  it('da de baja la suscripción push antes de cerrar sesión', async () => {
+    const originalOs = Platform.OS;
+    Platform.OS = 'web';
+    try {
+    const { getByText } = setup();
+    fireEvent.press(getByText('Cerrar sesión'));
+
+    await waitFor(() => {
+      expect(mockDisableWebPush).toHaveBeenCalledWith(user);
+    });
+    expect(mockDisableWebPush.mock.invocationCallOrder[0]).toBeLessThan(
+      signOut.mock.invocationCallOrder[0],
+    );
+    } finally {
+      Platform.OS = originalOs;
+    }
+  });
+
+  it('cierra sesión aunque la baja push falle', async () => {
+    const originalOs = Platform.OS;
+    Platform.OS = 'web';
+    mockDisableWebPush.mockRejectedValueOnce(new Error('sin red'));
+
+    try {
+      const { getByText } = setup();
+      fireEvent.press(getByText('Cerrar sesión'));
+
+      await waitFor(() => {
+        expect(signOut).toHaveBeenCalled();
+      });
+    } finally {
+      Platform.OS = originalOs;
+    }
   });
 
   it('owner ve controles de gestión para otros miembros', () => {
