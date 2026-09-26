@@ -253,12 +253,13 @@ async function existingRegistration(): Promise<ServiceWorkerRegistration | null>
  * mentira. Devolver `null` por un tiempo de espera lento era confundir una cosa
  * con otra.
  *
- * Sin `skipWaiting` a propósito (un deploy borra el service worker anterior y
- * activarlo por la fuerza abre una ventana en la que la página habla con un
- * worker viejo que ya no está en el servidor). El worker que espera en `waiting`
- * es un caso normal con esa decisión, no un fallo: por eso `clientsClaim` en
- * `sw-src.js` no compite con este camino, solo hace que el workertomara el
- * control antes.
+ * El worker nuevo no se activa solo: activarlo por la fuerza abre una ventana en la
+ * que la página habla con un worker que ya no está en el servidor. Por eso
+ * `waitForActivation` espera a que el worker esté `activated`, y por eso el worker
+ * que espera en `waiting` es un caso normal, no un fallo: hay un aviso que explica
+ * que hay versión nueva y un botón que la pide. `clientsClaim` en `sw-src.js` no
+ * compite con ese camino: solo actúa cuando ya no queda ningún cliente del worker
+ * anterior.
  */
 function waitForActivation(
   registration: ServiceWorkerRegistration,

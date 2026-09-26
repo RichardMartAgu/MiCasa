@@ -10,11 +10,17 @@
 // - Solo se precachea lo que genera el build (shell + assets). No hay
 //   runtimeCaching para APIs de Supabase ni para imágenes remotas: los datos
 //   del usuario nunca se guardan en el Service Worker.
-// - El Service Worker no lleva `skipWaiting`: los deploys borran el deployment
-//   anterior, así que activar el SW nuevo con pestañas viejas abiertas puede
-//   pedir un chunk que ya no existe ni en red ni en caché. El SW nuevo espera a
-//   que se cierren todas las pestañas. La instalación sigue funcionando: sin
-//   clientes previos, el primer SW se activa igual.
+// - El Service Worker NO se activa solo. Un deploy borra el deployment anterior,
+//   así que activar el SW nuevo con pestañas viejas abiertas puede pedir un chunk
+//   que ya no existe. La diferencia con la versión anterior de esta decisión es
+//   que "no activarlo solo" no significa "no activarlo nunca": el SW nuevo espera,
+//   la app lo dice con un aviso, y quien pulsa "Recargar" manda el mensaje
+//   `SKIP_WAITING` que lo activa. Ver `sw-src.js` y `src/lib/sw-update.ts`.
+//   Antes el worker esperaba indefinidamente a que se cerraran todas las pestañas,
+//   y con la app instalada siempre había una viva: el usuario se quedaba con el
+//   bundle de su primer despliegue sin que nada lo dijera.
+// - `scripts/verify-pwa.cjs` vigila que `skipWaiting` se llame exactamente una vez
+//   y solo desde ese listener de `message`.//   clientes previos, el primer SW se activa igual.
 
 module.exports = {
   swSrc: 'sw-bundle.js',

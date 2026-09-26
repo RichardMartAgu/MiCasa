@@ -134,17 +134,52 @@ check(
   /cleanupOutdatedCaches\(\)\s*;/.test(sw),
   'cleanupOutdatedCaches invocado al activar'
 );
-// clientsClaim es inofensivo sin skipWaiting: solo actúa en la activación, que
-// sin skipWaiting ocurre cuando ninguna pestaña usa ya el SW anterior. Lo que sí
-// sería peligroso es activar el SW nuevo con pestañas viejas abiertas.
+// La activación del service worker nuevo.
+//
+// Antes esta guarda exigía NO tener `skipWaiting` ni el mensaje `SKIP_WAITING`,
+// y el motivo era bueno: activar el worker nuevo con pestañas viejas abiertas
+// puede hacer que esa página pida un bundle que el despliegue anterior ya borró.
+//
+// El problema es que esa prohibition, sin más, era un atasco. Sin activación
+//Automática, un worker nuevo espera a que se cierren TODOS sus clientes, y con
+// la app instalada siempre hay uno vivo: medido, el usuario se quedaba con el
+// bundle de su primer despliegue indefinidamente, sin que nada lo dijera, y sus
+// pruebas reportaban bugs de código que ya no estaba en producción.
+//
+// Lo que se exige ahora es lo que de verdad hay que garantizar: que la activación
+// NO sea automática. O sea, que `skipWaiting` no se llame al instalar el worker,
+// y que solo se llame desde un mensaje que la app manda cuando alguien pulsa
+// "Recargar". Con eso el control cambia cuando alguien lo pide, y la página se
+// recarga acto seguido en el `controllerchange`, así que no hay pestaña vieja
+// trabajando con el worker nuevo.
+// La invariante real es "la única llamada a `skipWaiting` es la del listener
+// `message` que comprueba SKIP_WAITING", y eso se comprueba por recuento. La
+// versión anterior usaba `addEventListener('install'[\s\S]{0,200}skipWaiting`, que
+// pasaba por distancia entre Workbox y nuestro código, no porque la invariante se
+// cumpliera: un `install` con un cuerpo de más de 200 caracteres, o un
+// `skipWaiting` dentro de una función llamada desde `install`, se colaban sin que
+// lo detectara.
+const llamadasSkipWaiting = (sw.match(/skipWaiting\s*\(/g) ?? []).length;
+check(llamadasSkipWaiting === 1, 'skipWaiting se llama exactamente una vez en el worker');
 check(
-  !/\w*\.skipWaiting\(\)|self\.skipWaiting\(/.test(sw),
-  'sin skipWaiting: el SW nuevo no se activa con pestanas viejas abiertas'
+  /addEventListener\(\s*["']message["'][\s\S]{0,400}SKIP_WAITING["'][\s\S]{0,200}skipWaiting\s*\(/.test(sw),
+  'la unica llamada a skipWaiting esta en el listener message, tras comprobar SKIP_WAITING'
 );
 check(
-  !/["']SKIP_WAITING["']\s*\)|postMessage\(\s*["']SKIP_WAITING/.test(sw) &&
-    !html.includes('SKIP_WAITING'),
-  'nadie envía el mensaje SKIP_WAITING que dispararía la activación forzada'
+  !/addEventListener\(\s*["']install["'][\s\S]{0,200}skipWaiting/.test(sw),
+  'el worker nuevo no se activa solo al instalarse: la activacion la pide la persona'
+);
+// El mensaje lo manda la app, y la app no está en el HTML sino en el bundle. Se
+// lee el bundle del propio dist: si este script pasa, es porque el código que
+//Environments se despliega sí lo manda.
+const bundle = fs
+  .readdirSync(path.join(DIST, '_expo', 'static', 'js', 'web'))
+  .filter((f) => f.endsWith('.js'))
+  .map((f) => fs.readFileSync(path.join(DIST, '_expo', 'static', 'js', 'web', f), 'utf8'))
+  .join('\n');
+check(
+  /postMessage\(\{\s*type:\s*["']SKIP_WAITING["']/.test(bundle),
+  'la app manda el mensaje SKIP_WAITING al pulsar Recargar'
 );
 
 // ---------- Web Push en el service worker ----------

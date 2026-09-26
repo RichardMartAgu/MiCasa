@@ -1,6 +1,19 @@
 
 ## Sesión actual — 2026-09-26 (exigir worker activo y Edge Function desplegada)
 
+
+## Sesión actual — el service worker no se podía actualizar nunca
+
+Medido, no teórico: el usuario llevaba varios despliegues reportando bugs de código que ya no estaba en producción. La palabra "suscripción incompleta" **no existía** en el bundle desplegado, y el `sw.js` desplegado tenía **0 apariciones de `skipWaiting`**.
+
+Dos defectos encadenados:
+
+1. **Un `rewrites: "/(.*)" → /index.html` en `vercel.json`** hacía que *cualquier* fichero ausente devolviera `200 text/html` con el shell, no 404. Un bundle de un despliegue anterior pedía un `.js` inexistente y recibía HTML; con `nosniff` el navegador se negaba a ejecutarlo sin error visible. Ahora el fallback solo aplica a rutas: un fichero ausente da 404.
+2. **El service worker no se activaba nunca.** Sin `skipWaiting()`, un worker nuevo espera a que se cierren todos sus clientes; con la app instalada siempre hay uno vivo.
+
+El punto 2 ya estaba decidido en el repo, y con motivo (`docs/pwa-installable.md`, F1): activar el worker nuevo con pestañas viejas puede pedir un chunk que ya no existe. La decisión correcta no era "nunca", era **"nunca solo"**: el worker espera, la app avisa, y pulsar "Recargar" manda `SKIP_WAITING`. `verify-pwa.cjs` invirtió la guarda: ahora exige que `skipWaiting` se llame exactamente una vez y solo desde ese listener.
+
+Lo que se descartó por el camino: `skipWaiting()` en `install` + recarga en `controllerchange`. Parece equivalente y no lo es: la activación dispara `controllerchange` en el mismo instante, así que el aviso aparecía y desaparecía sin que nadie lo pulsara. Lo pilló la auditoría de seguridad.
 - El usuario volvió a probar y respondió tres cosas: el check venía activo, al desactivar no podía volver a activar, y el botón de prueba no enviaba nada. En la base, su usuario **no tenía fila en `push_subscriptions`** y `enabled` en preferencias era `false`.
 - **Fallo mío, confirmado**: el arreglo de la Edge Function estaba mergeado pero **no desplegado**, así que el botón seguía corriendo el código viejo con el gate de `x-cron-secret` delante. Desplegada la v7 y verificado: con sesión válida responde `{"ok":false,"error":"sin suscripciones activas en este navegador"}` y sin sesión 401. El camino ya no está muerto. El propio deploy compila, lo que cierra el `deno check` que llevaba pendiente.
 - Causa del "suscripción incompleta", y era un error mío: al atender un hallazgo de QA, `ensureRegistration` pasó a devolver la registration aunque su worker no estuviera `activated`, porque para **consultar** el estado da igual. Pero `pushManager.subscribe()` **sí** necesita un worker activo: llamado con el worker en `installing` o `waiting`, Chrome devuelve una suscripción a medias, sin `p256dh` ni `auth`. Eso era exactamente el mensaje que veía.
