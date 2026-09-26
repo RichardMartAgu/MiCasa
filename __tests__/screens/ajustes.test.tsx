@@ -555,6 +555,114 @@ describe('AjustesScreen', () => {
         Platform.OS = originalOs;
       }
     });
+
+    it('una lectura del navegador que llega despues de activar no apaga el interruptor', async () => {
+      // La carrera que hacia que el interruptor marcara lo contrario de lo real.
+      //
+      // El caso: hay una lectura del estado del navegador en vuelo (la del
+      // montaje tarda 10 s en registrar el worker, y la relectura de una
+      // operación anterior también puede tardar). El usuario activa los avisos,
+      // el alta va bien y el interruptor se enciende; DESPUES llega la lectura
+      // vieja, que se encontró sin suscripcion, y lo apaga.
+      //
+      // Con el numero de secuencia solo incrementado en el `finally`, esa
+      // respuesta entra: el interruptor marca "desactivado" con los avisos ya
+      // activados, y si la relectura buena no llega nunca, se queda asi.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      // `clearAllMocks` no borra implementaciones ni la cola de `Once`, asi que
+      // aqui se empieza de cero para que se ejecuten exactamente estas.
+      mockGetActiveSubscription.mockReset();
+      mockEnableWebPush.mockReset();
+
+      // La del montaje: se queda colgada hasta que la toquemos, y cuando
+      // responda dira que no hay suscripcion.
+      let resolveStaleRead: ((value: unknown) => void) | undefined;
+      const staleRead = new Promise((resolve) => {
+        resolveStaleRead = resolve;
+      });
+      mockGetActiveSubscription.mockImplementationOnce(() => staleRead as never);
+      // La relectura del `finally` no responde nunca: asi lo unico que puede
+      // cambiar el interruptor despues es la lectura vieja.
+      mockGetActiveSubscription.mockImplementationOnce(() => new Promise(() => {}) as never);
+
+      let resolveEnable: ((value: unknown) => void) | undefined;
+      mockEnableWebPush.mockImplementation(() => new Promise((resolve) => {
+        resolveEnable = resolve;
+      }) as never);
+
+      const alertWebSpy = stubWebAlert();
+      try {
+        const { getByLabelText } = setup();
+        await act(async () => {});
+        expect(mockGetActiveSubscription).toHaveBeenCalledTimes(1);
+
+        fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', true);
+        await act(async () => {});
+
+        // El alta va bien: el interruptor se enciende.
+        resolveEnable?.({ status: 'enabled', record: { endpoint: 'https://push.test/e' } });
+        await waitFor(() => {
+          expect(getByLabelText('Activar notificaciones').props.value).toBe(true);
+        });
+
+        // Y ahora llega la lectura vieja, con lo que encontro antes de que
+        // existiera la suscripcion.
+        resolveStaleRead?.(null);
+        await act(async () => {});
+
+        // El interruptor no se apaga: esa lectura es anterior a la activacion.
+        expect(getByLabelText('Activar notificaciones').props.value).toBe(true);
+        expect(alertWebSpy).not.toHaveBeenCalledWith(MSG_PUSH_TIMEOUT);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('la relectura final manda sobre lo que devolvio la operacion, si el navegador dice otra cosa', async () => {
+      // El otro sentido de la relectura: un alta cortada por tiempo puede llegar
+      // tarde. Si la pantalla se queda con la intencion, el interruptor
+      // marca "activado" mientras el navegador no tiene suscripcion.
+      //
+      // Aqui la operacion va bien, y la relectura del `finally` dice que no hay
+      // suscripcion. El estado real del navegador es el que gana.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockGetActiveSubscription.mockReset();
+      mockEnableWebPush.mockReset();
+      mockGetActiveSubscription
+        .mockResolvedValueOnce(null) // la del montaje
+        .mockResolvedValueOnce(null); // la relectura del final
+      mockEnableWebPush.mockResolvedValue({
+        status: 'enabled',
+        record: { endpoint: 'https://push.test/e' },
+      } as never);
+
+      stubWebAlert();
+      try {
+        const { getByLabelText } = setup();
+        await act(async () => {});
+
+        fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', true);
+
+        // Durante la operacion el interruptor va con la intencion...
+        await waitFor(() => {
+          expect(mockEnableWebPush).toHaveBeenCalledTimes(1);
+        });
+        // ...y cuando la relectura del navegador llega sin suscripcion, manda
+        // el navegador y el interruptor se apaga.
+        await waitFor(() => {
+          expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+        });
+        expect(mockGetActiveSubscription).toHaveBeenCalledTimes(2);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
   });
 
   it('da de baja la suscripción push antes de cerrar sesión', async () => {

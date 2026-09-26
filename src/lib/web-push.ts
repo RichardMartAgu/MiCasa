@@ -86,11 +86,45 @@ export function detectTimeZone(): string {
   }
 }
 
-/** Normaliza lo que devuelve `PushSubscription` a lo que espera la tabla. */
-export function toSubscriptionRecord(subscription: {
+/** Motivo por el que una suscripción del navegador no sirve para enviar. */
+export type IncompleteReason = 'sin-endpoint' | 'sin-p256dh' | 'sin-auth' | 'sin-claves';
+
+export interface SubscriptionShape {
   endpoint?: string | null;
   keys?: { p256dh?: string | null; auth?: string | null } | null;
-}): PushSubscriptionRecord | null {
+}
+
+/**
+ * Por qué la suscripción no sirve, en lugar de un `null` sin explicación.
+ *
+ * "Suscripción incompleta" no dice nada: no distingue entre que el navegador no
+ * haya dado la clave de cifrado y que no haya dado la de autenticación, y esas
+ * dos cosas tienen causas distintas. Con el motivo, el aviso al usuario puede
+ * decir algo accionable y el registro permite saber qué pasa sin depender de que
+ * nadie informe nada.
+ */
+export function incompleteReason(subscription: SubscriptionShape): IncompleteReason | null {
+  if (!subscription.endpoint) return 'sin-endpoint';
+  const keys = subscription.keys ?? null;
+  if (!keys) return 'sin-claves';
+  if (!keys.p256dh) return 'sin-p256dh';
+  if (!keys.auth) return 'sin-auth';
+  return null;
+}
+
+/** Texto que ve la persona, uno por cada motivo. Sin suponerse la causa. */
+export const INCOMPLETE_MESSAGES: Record<IncompleteReason, string> = {
+  'sin-endpoint':
+    'El navegador no ha dado una dirección de entrega para los avisos. Suele pasar si la web se abrió en un modo que no admite notificaciones.',
+  'sin-claves':
+    'El navegador no ha dado las claves de cifrado de los avisos. Comprueba que los servicios de Google Play están activos y actualizados en el móvil, y que Chrome está al día.',
+  'sin-p256dh':
+    'El navegador no ha dado la clave pública de cifrado de los avisos. Suele indicar que no ha podido completar el registro con su servicio de notificaciones.',
+  'sin-auth': 'El navegador no ha dado la clave de autenticación de los avisos.',
+};
+
+/** Normaliza lo que devuelve `PushSubscription` a lo que espera la tabla. */
+export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubscriptionRecord | null {
   const endpoint = subscription.endpoint ?? null;
   const p256dh = subscription.keys?.p256dh ?? null;
   const auth = subscription.keys?.auth ?? null;
@@ -378,6 +412,27 @@ export async function enableWebPush(user: User | null): Promise<EnableResult> {
   }
 }
 
+
+/**
+ * Anota en `push_log` que el alta falló y por qué, para poder diagnosticarlo
+ * desde la base sin depender de que la persona describa lo que ve.
+ *
+ * Solo escribe el motivo, nunca la suscripción: `p256dh` y `auth` son claves y
+ * no tienen nada que ver con el diagnóstico. La clave incluye un momento para
+ * que dos intentos seguidos no choquen en la restricción de unicidad.
+ */
+async function noteSubscriptionProblem(user: User | null, reason: IncompleteReason): Promise<void> {
+  if (!user) return;
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+  const { error } = await supabase
+    .from('push_log')
+    .insert({ user_id: user.id, dedupe_key: `alta:${reason}:${stamp}` });
+  if (error) {
+    // El diagnóstico no puede ser la razón por la que el alta falle.
+    console.warn('No se pudo anotar el motivo del alta de avisos', reason);
+  }
+}
+
 /**
  * Suscripción y alta en Supabase, sin el diálogo de permisos. Va aparte para que
  * el techo de tiempo sea solo suyo: es la parte del flujo que no espera a nadie.
@@ -412,7 +467,14 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
     }));
 
   const record = toSubscriptionRecord(subscription);
-  if (!record) throw new Error('suscripción incompleta');
+  if (!record) {
+    const reason = incompleteReason(subscription) ?? 'sin-claves';
+    // Se anota en `push_log` para poder leer qué devuelve el navegador sin
+    // depender de que nadie informe: "suscripción incompleta" a secas no
+    // distingue entre claves ausentes y una suscripción que nunca se registró.
+    await noteSubscriptionProblem(user, reason);
+    throw new Error(INCOMPLETE_MESSAGES[reason]);
+  }
 
   if (!user) throw new Error('sesión no válida');
 

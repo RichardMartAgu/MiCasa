@@ -1,5 +1,5 @@
 jest.mock('@/lib/supabase', () => ({
-  supabase: { auth: { getUser: jest.fn() }, from: jest.fn(), rpc: jest.fn() },
+  supabase: { auth: { getUser: jest.fn(), getSession: jest.fn() }, from: jest.fn(), rpc: jest.fn() },
 }));
 
 import { readFileSync } from 'node:fs';
@@ -10,11 +10,15 @@ import { Platform } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import {
   ACTIVATION_TIMEOUT_MS,
+  incompleteReason,
+  INCOMPLETE_MESSAGES,
   ALLOWED_PUSH_ROUTES,
   detectTimeZone,
+  disableWebPush,
   enableWebPush,
   getActiveSubscription,
   PERMISSION_TIMEOUT_MS,
+  sendTestPush,
   SW_READY_TIMEOUT_MS,
   toSubscriptionRecord,
   urlBase64ToUint8Array,
@@ -287,13 +291,16 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     const deleteEq = jest.fn(async () => ({ error: null }));
     const insert = jest.fn(async () => ({ error: insertError }));
     const upsert = jest.fn(async () => ({ error: null }));
+    const fromPushLog = jest.fn(async (_row: Record<string, unknown>) => ({ error: null }));
     const from = jest.fn((table: string) =>
       table === 'push_subscriptions'
         ? { delete: () => ({ eq: deleteEq }), insert }
-        : { upsert },
+        : table === 'push_log'
+          ? { insert: fromPushLog }
+          : { upsert },
     );
     (supabase.from as jest.Mock).mockImplementation(from);
-    return { deleteEq, insert, upsert };
+    return { deleteEq, insert, upsert, fromPushLog };
   }
 
   function stubPush(
@@ -498,6 +505,44 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     }
   });
 
+  it('distingue qué parte de la suscripción falta, en vez de decir "incompleta"', async () => {
+    // "Suscripción incompleta" no distingue entre que falte la clave de
+    // cifrado y la de autenticación, y esas dos tienen causas distintas. Dos
+    // arreglos seguidos salieron de suponer mal cuál era.
+    expect(incompleteReason({ endpoint: 'https://e', keys: null })).toBe('sin-claves');
+    expect(incompleteReason({ endpoint: 'https://e', keys: { p256dh: 'p', auth: null } })).toBe('sin-auth');
+    expect(incompleteReason({ endpoint: 'https://e', keys: { p256dh: null, auth: 'a' } })).toBe('sin-p256dh');
+    expect(incompleteReason({ endpoint: null, keys: { p256dh: 'p', auth: 'a' } })).toBe('sin-endpoint');
+    expect(incompleteReason({ endpoint: 'https://e', keys: { p256dh: 'p', auth: 'a' } })).toBeNull();
+  });
+
+  it('cada motivo tiene un mensaje distinto y accionable', () => {
+    for (const [reason, message] of Object.entries(INCOMPLETE_MESSAGES)) {
+      expect(message.length).toBeGreaterThan(30);
+      expect(message).not.toContain('incompleta');
+      // Se usa como prefijo en `push_log`, así que no puede llevar nada raro.
+      expect(reason).toMatch(/^[a-z0-9-]+$/);
+    }
+  });
+
+  it('anota en push_log por qué falló el alta, solo con el motivo', async () => {
+    // El registro es lo que permite diagnosticar sin depender de que nadie
+    // describa lo que ve. Y no puede llevar datos de la suscripción: las claves
+    // de cifrado no tienen nada que ver con el diagnóstico.
+    const db = stubSupabase();
+    stubPush({
+      subscribe: async () => ({ endpoint: 'https://e', keys: { p256dh: 'p', auth: null } }),
+    });
+
+    const result = await enableWebPush(user);
+
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') expect(result.reason).toBe(INCOMPLETE_MESSAGES['sin-auth']);
+    const logInsert = db.fromPushLog.mock.calls[0]?.[0] as { dedupe_key?: string } | undefined;
+    expect(logInsert?.dedupe_key).toMatch(/^alta:sin-auth:/);
+    expect(JSON.stringify(logInsert)).not.toContain('p256dh');
+  });
+
   it('borra lo propio del endpoint antes de insertar y nunca hace upsert por endpoint', async () => {
     // Si esto se invirtiera, un upsert sobre una fila ajena chocaría con la
     // política UPDATE y devolvería un "activado" falso.
@@ -513,3 +558,241 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     );
   });
 });
+
+describe('disableWebPush: la baja tiene que borrar de verdad', () => {
+  // `disableWebPush` decide si este navegador sigue recibiendo avisos de una
+  // cuenta que el usuario acaba de cerrar en un equipo compartido. Es la funcion
+  // que mas caro sale si falla en silencio, y estaba sin un solo test.
+  const originalOs = Platform.OS;
+  const user = { id: 'user-1' } as unknown as Parameters<typeof disableWebPush>[0];
+
+  beforeEach(() => {
+    Platform.OS = 'web';
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    Platform.OS = originalOs;
+    jest.useRealTimers();
+  });
+
+  function stubDb(options: { deleteError?: { message?: string } | null } = {}) {
+    const deleteError = options.deleteError ?? null;
+    const deleteEq = jest.fn(async () => ({ error: deleteError }));
+    const upsert = jest.fn(async () => ({ error: null }));
+    (supabase.from as jest.Mock).mockImplementation((table: string) =>
+      table === 'push_subscriptions' ? { delete: () => ({ eq: deleteEq }) } : { upsert },
+    );
+    return { deleteEq, upsert };
+  }
+
+  // `existing` a undefined significa "la suscripcion que el navegador tiene", que
+  // es el mismo objeto que se devuelve, para poder asserting sobre el.
+  function stubBrowser(existing?: unknown) {
+    const subscription = {
+      endpoint: 'https://push.test/e',
+      keys: { p256dh: 'p', auth: 'a' },
+      unsubscribe: jest.fn(async () => true),
+    };
+    const registration = {
+      active: { state: 'activated' },
+      installing: null,
+      waiting: null,
+      pushManager: {
+        getSubscription: jest.fn(async () => (existing === undefined ? subscription : existing)),
+        subscribe: jest.fn(),
+      },
+    };
+    Object.assign(global.window, {
+      PushManager: function PushManager() {},
+      Notification: Object.assign(function Notification() {}, { permission: 'granted' }),
+    });
+    Object.defineProperty(global, 'navigator', {
+      configurable: true,
+      value: {
+        serviceWorker: {
+          getRegistration: jest.fn(async () => registration),
+          register: jest.fn(async () => registration),
+          ready: Promise.resolve(registration),
+        },
+        userAgent: 'jest',
+      },
+    });
+    return { subscription };
+  }
+
+  it('da de baja la suscripcion, borra su fila y apaga la preferencia', async () => {
+    const db = stubDb();
+    const { subscription } = stubBrowser();
+
+    const result = await disableWebPush(user);
+
+    expect(result).toEqual({ status: 'disabled' });
+    expect(subscription.unsubscribe).toHaveBeenCalled();
+    expect(db.deleteEq).toHaveBeenCalledWith('endpoint', 'https://push.test/e');
+    expect(db.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'user-1', enabled: false }),
+      { onConflict: 'user_id' },
+    );
+  });
+
+  it('sin suscripcion en el navegador, apaga la preferencia igualmente', async () => {
+    // Si no hay suscripcion no hay nada que borrar, pero la preferencia sigue
+    // encendida: el usuario cree que la apago y el backend le manda avisos.
+    const db = stubDb();
+    stubBrowser(null);
+
+    const result = await disableWebPush(user);
+
+    expect(result).toEqual({ status: 'disabled' });
+    expect(db.deleteEq).not.toHaveBeenCalled();
+    expect(db.upsert).toHaveBeenCalled();
+  });
+
+  it('un borrado que falla en la base no se reporta como baja hecha', async () => {
+    // El endpoint es una credencial: si la fila sigue viva, ese navegador
+    // seguiria recibiendo avisos aunque la interfaz diga lo contrario.
+    stubDb({ deleteError: { message: 'violacion de politicas' } });
+    stubBrowser();
+
+    const result = await disableWebPush(user);
+
+    expect(result).toEqual({ status: 'failed', reason: 'violacion de politicas' });
+  });
+
+  it('una baja que no termina es timeout, no un fallo que se puede ignorar', async () => {
+    stubDb();
+    const registration = {
+      active: { state: 'activated' },
+      installing: null,
+      waiting: null,
+      pushManager: {
+        getSubscription: jest.fn(async () => new Promise<never>(() => undefined)),
+        subscribe: jest.fn(),
+      },
+    };
+    Object.assign(global.window, {
+      PushManager: function PushManager() {},
+      Notification: Object.assign(function Notification() {}, { permission: 'granted' }),
+    });
+    Object.defineProperty(global, 'navigator', {
+      configurable: true,
+      value: {
+        serviceWorker: {
+          getRegistration: jest.fn(async () => registration),
+          register: jest.fn(async () => registration),
+          ready: Promise.resolve(registration),
+        },
+        userAgent: 'jest',
+      },
+    });
+
+    const promise = disableWebPush(user);
+    await jest.advanceTimersByTimeAsync(ACTIVATION_TIMEOUT_MS + 10);
+
+    await expect(promise).resolves.toEqual({
+      status: 'timeout',
+      reason: 'la baja no ha terminado a tiempo',
+    });
+  });
+
+  it('sin soporte de push no toca nada', async () => {
+    const db = stubDb();
+    // `isPushSupported` mira si la clave existe, no si el valorTruthy: ponerla a
+    // undefined no seria "sin soporte".
+    delete (global.window as { PushManager?: unknown }).PushManager;
+
+    const result = await disableWebPush(user);
+
+    expect(result).toEqual({ status: 'unsupported' });
+    expect(db.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('sendTestPush: el contrato con la Edge Function', () => {
+  // El boton de prueba es como se comprueba a mano que los avisos viven. Si
+  // devuelve un texto que no corresponde con lo que paso, el diagnostico manda
+  // a la persona por el camino equivocado.
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    (supabase.auth.getSession as jest.Mock).mockResolvedValue({
+      data: { session: { access_token: 'jwt' } },
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function stubFetch(impl: () => Promise<unknown>) {
+    const fetchMock = jest.fn(impl);
+    global.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  function stubResponse(body: unknown, ok = true) {
+    return { ok, json: async () => body } as Response;
+  }
+
+  it('devuelve cuantos navegadores han recibido el aviso', async () => {
+    stubFetch(async () => stubResponse({ ok: true, delivered: 2 }));
+
+    await expect(sendTestPush()).resolves.toEqual({ ok: true, delivered: 2 });
+  });
+
+  it('sin sesion no llama a la funcion', async () => {
+    (supabase.auth.getSession as jest.Mock).mockResolvedValue({ data: { session: null } });
+    const fetchMock = stubFetch(async () => stubResponse({}));
+
+    await expect(sendTestPush()).resolves.toEqual({ ok: false, error: 'sesión no válida' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('un enfriamiento dice cuanto falta, no solo que hay que esperar', async () => {
+    // Sin el segundo, la pantalla inventa un minuto y el usuario lo aprieta
+    // otra vez y vuelve a Fallar.
+    stubFetch(async () => stubResponse({ error: 'demasiado rapido', retryInSeconds: 300 }));
+
+    await expect(sendTestPush()).resolves.toEqual({
+      ok: false,
+      error: 'demasiado rapido',
+      retryInSeconds: 300,
+    });
+  });
+
+  it('un enfriamiento sin segundos devuelve el minuto por defecto, no undefined', async () => {
+    stubFetch(async () => stubResponse({ error: 'demasiado rapido' }));
+
+    await expect(sendTestPush()).resolves.toEqual({
+      ok: false,
+      error: 'demasiado rapido',
+      retryInSeconds: 60,
+    });
+  });
+
+  it('un error de la funcion llega tal cual, y si no es texto se dice algo', async () => {
+    stubFetch(async () => stubResponse({ error: 'sin suscripciones' }, false));
+    await expect(sendTestPush()).resolves.toEqual({ ok: false, error: 'sin suscripciones' });
+
+    stubFetch(async () => stubResponse({}, false));
+    await expect(sendTestPush()).resolves.toEqual({ ok: false, error: 'error inesperado' });
+  });
+
+  it('sin conexion y respuesta ilegible se distinguen', async () => {
+    stubFetch(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    await expect(sendTestPush()).resolves.toEqual({ ok: false, error: 'sin conexión' });
+
+    stubFetch(async () => ({ ok: true, json: async () => { throw new SyntaxError('no json'); } }));
+    await expect(sendTestPush()).resolves.toEqual({ ok: false, error: 'respuesta ilegible' });
+  });
+
+  it('un delivered que no es numero cuenta cero, no rompe la pantalla', async () => {
+    stubFetch(async () => stubResponse({ ok: true, delivered: 'muchos' }));
+
+    await expect(sendTestPush()).resolves.toEqual({ ok: true, delivered: 0 });
+  });
+});
+
