@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
+import { SUBSCRIBE_FAILURE_MESSAGES } from '@/lib/push-failures';
 import {
   ACTIVATION_TIMEOUT_MS,
   incompleteReason,
@@ -394,17 +395,25 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
   });
 
   it('un fallo real sigue siendo failed con su motivo, no un timeout', async () => {
+    // Antes este test exigía que el motivo fuera el texto en inglés del
+    // navegador. Fijaba justo lo que este arreglo quita: una persona no puede
+    // hacer nada con "permission denied" y sí con el motivo accionable.
     stubSupabase();
     stubPush({
       subscribe: async () => {
-        throw new Error('AbortError: permission denied');
+        const e = new Error('AbortError: permission denied');
+        e.name = 'AbortError';
+        throw e;
       },
     });
 
     const result = await enableWebPush(user);
 
     expect(result.status).toBe('failed');
-    if (result.status === 'failed') expect(result.reason).toContain('permission denied');
+    if (result.status === 'failed') {
+      expect(result.reason).toBe(SUBSCRIBE_FAILURE_MESSAGES['permiso']);
+      expect(result.reason).not.toMatch(/permission denied/i);
+    }
   });
 
   it('un permiso denegado se distingue de un cuelgue', async () => {
@@ -541,6 +550,149 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     const logInsert = db.fromPushLog.mock.calls[0]?.[0] as { dedupe_key?: string } | undefined;
     expect(logInsert?.dedupe_key).toMatch(/^alta:sin-auth:/);
     expect(JSON.stringify(logInsert)).not.toContain('p256dh');
+  });
+
+  it('convierte el AbortError del navegador en un motivo accionable y lo anota', async () => {
+    // Lo que se vivía leyendo: "Registration failed - push service not available",
+    // en inglés y sin decir qué hacer. Medido en un Chromium real.
+    const db = stubSupabase();
+    stubPush({
+      subscribe: async () => {
+        const e = new Error('Registration failed - push service not available');
+        e.name = 'AbortError';
+        throw e;
+      },
+    });
+
+    const result = await enableWebPush(user);
+
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.reason).toBe(SUBSCRIBE_FAILURE_MESSAGES['sin-servicio-push']);
+      expect(result.reason).not.toMatch(/Registration failed/i);
+    }
+    const logInsert = db.fromPushLog.mock.calls[0]?.[0] as { dedupe_key?: string } | undefined;
+    expect(logInsert?.dedupe_key).toMatch(/^alta:sin-servicio-push:/);
+  });
+
+  it('anota el fallo del navegador sin filtrar la suscripción', async () => {
+    const db = stubSupabase();
+    stubPush({
+      subscribe: async () => {
+        const e = new Error('boom');
+        e.name = 'InvalidStateError';
+        throw e;
+      },
+    });
+
+    await enableWebPush(user);
+
+    const logInsert = db.fromPushLog.mock.calls[0]?.[0] as { dedupe_key?: string } | undefined;
+    expect(logInsert?.dedupe_key).toMatch(/^alta:worker-inactivo:/);
+    expect(JSON.stringify(logInsert)).not.toContain('p256dh');
+  });
+
+  it('no inserta la suscripción cuando el navegador no la ha creado', async () => {
+    // El alta de una suscripción que no existe daría una suscripción fantasma que
+    // luego no recibe nada.
+    const db = stubSupabase();
+    stubPush({
+      subscribe: async () => {
+        const e = new Error('Registration failed');
+        e.name = 'AbortError';
+        throw e;
+      },
+    });
+
+    await enableWebPush(user);
+
+    expect(db.insert).not.toHaveBeenCalled();
+    // Tampoco la preferencia: si queda marcada como activa sin suscripción, el
+    // interruptor miente y el aviso de Ajustes no cuadra con nada.
+    expect(db.upsert).not.toHaveBeenCalled();
+  });
+
+  it('si la anotación del motivo se cuelga, el motivo del fallo sigue llegando', async () => {
+    // El Symptoma sería "no ha terminado a tiempo" en lugar de "Play Services",
+    // que es justo el motivo que hacía falta. La anotación es un extra: si se
+    // cuelga, se traga ella sola.
+    const colgado = new Promise<never>(() => {
+      /* nunca resuelve, como una petición que se queda colgada */
+    });
+    const db = stubSupabase();
+    (supabase.from as jest.Mock).mockImplementation((table: string) =>
+      table === 'push_subscriptions'
+        ? { delete: () => ({ eq: jest.fn(async () => ({ error: null })) }), insert: db.insert }
+        : table === 'push_log'
+          ? { insert: jest.fn(() => colgado) }
+          : { upsert: db.upsert },
+    );
+    stubPush({
+      subscribe: async () => {
+        const e = new Error('Registration failed - push service not available');
+        e.name = 'AbortError';
+        throw e;
+      },
+    });
+
+    const promise = enableWebPush(user);
+    // Se avanza solo lo que tarda la anotación, muy por debajo del tope del alta.
+    await jest.advanceTimersByTimeAsync(3001);
+    const result = await promise;
+
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.reason).toBe(SUBSCRIBE_FAILURE_MESSAGES['sin-servicio-push']);
+    }
+  });
+
+  it('si ya hay una suscripción buena, no vuelve a pedirla al navegador', async () => {
+    // Un fallo del servicio push no puede hacer que se pida una suscripción nueva
+    // a un navegador que ya tiene una válida: solo se pide si no hay.
+    const db = stubSupabase();
+    const push = stubPush({
+      existing: { endpoint: 'https://push.test/buena', keys: { p256dh: 'p', auth: 'a' }, unsubscribe: jest.fn() },
+    });
+
+    const result = await enableWebPush(user);
+
+    expect(result.status).toBe('enabled');
+    expect(push.pushManager.subscribe).not.toHaveBeenCalled();
+    expect(db.fromPushLog).not.toHaveBeenCalled();
+  });
+
+  it('el conjunto de motivos de la politica de push_log', () => {
+    // La politica de RLS cierra el conjunto de motivos, y el motivo de que se
+    // cerrara es que ese conjunto no se note al añadir uno nuevo: si un motivo
+    // falta en la politica, el insert falla con 42501 y el error se traga, y el
+    // fallo vuelve a no registrarse sin que nadie se entere. Este test es lo que
+    // evita ese fallo silencioso.
+    const ruta = join(
+      __dirname,
+      '..',
+      '..',
+      'supabase',
+      'migrations',
+      '20260926_push_log_motivos_cerrados.sql',
+    );
+    const sql = readFileSync(ruta, 'utf8');
+    const patron = sql.match(/dedupe_key ~ '\^alta:\(([^)]*)\):\[0-9\]\{14\}\$'/);
+    expect(patron).not.toBeNull();
+    const permitidos = new Set((patron?.[1] ?? '').split('|'));
+
+    // Las dos fuentes de verdad son los `Record` de mensajes: el typechecker
+    // obliga a que contengan todas las claves de su unión, así que sus claves
+    // son las uniones enteras y no una lista que se pueda desincronizar.
+    for (const motivo of [
+      ...Object.keys(INCOMPLETE_MESSAGES),
+      ...Object.keys(SUBSCRIBE_FAILURE_MESSAGES),
+    ]) {
+      expect(permitidos.has(motivo)).toBe(true);
+    }
+
+    // Y la política sigue siendo un conjunto cerrado: texto libre rejected.
+    expect(sql).toContain('sent_at = now()');
+    expect(permitidos.has('inventado')).toBe(false);
   });
 
   it('borra lo propio del endpoint antes de insertar y nunca hace upsert por endpoint', async () => {

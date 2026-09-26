@@ -29,6 +29,11 @@ import type { User } from '@supabase/supabase-js';
 import type { ReminderChoice } from './notification-schedule';
 import { supabase } from './supabase';
 import { isTimeout, withTimeout, TimeoutError } from './with-timeout';
+import {
+  classifySubscribeFailure,
+  SUBSCRIBE_FAILURE_MESSAGES,
+  type SubscribeFailure,
+} from './push-failures';
 
 /**
  * Clave pública VAPID. Es pública por diseño: el navegador la necesita para
@@ -36,6 +41,13 @@ import { isTimeout, withTimeout, TimeoutError } from './with-timeout';
  * variables de entorno para no depender de la configuración de cada despliegue.
  * La privada nunca sale de Supabase Vault.
  */
+/**
+ * Tope de la escritura del motivo de fallo. Va aparte del tope del alta porque
+ * es una anotación de diagnóstico: si falla o se cuelga, el alta ya está fallada
+ * de todos modos y lo que no puede pasar es que se pierda el motivo.
+ */
+const DIAGNOSTIC_WRITE_TIMEOUT_MS = 3000;
+
 export const VAPID_PUBLIC_KEY =
   'BGAx5MQzNUhQM9rZxoKqQ5YlUG0Aj83vKNRGls0p2qAHn2ZGYT5CGKPokPzCWjgDaddVzL_0MIHp7P_rzcKr9P0';
 
@@ -421,7 +433,10 @@ export async function enableWebPush(user: User | null): Promise<EnableResult> {
  * no tienen nada que ver con el diagnóstico. La clave incluye un momento para
  * que dos intentos seguidos no choquen en la restricción de unicidad.
  */
-async function noteSubscriptionProblem(user: User | null, reason: IncompleteReason): Promise<void> {
+async function noteSubscriptionProblem(
+  user: User | null,
+  reason: IncompleteReason | SubscribeFailure,
+): Promise<void> {
   if (!user) return;
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
   const { error } = await supabase
@@ -459,12 +474,36 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
     }
   }
 
-  const subscription =
-    (usable ? existing : null) ??
-    (await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
-    }));
+  // El `subscribe()` es donde el navegador dice que no, y lo dice en inglés y sin
+  // decir qué hacer. Se atrapa para poder (1) darle un motivo accionable y (2)
+  // anotar el motivo en `push_log`, que es lo que permite leer en la base cuántos
+  // fallos hay de cada tipo sin depender de que nadie describa lo que ve.
+  let subscription: PushSubscription;
+  if (usable && existing) {
+    subscription = existing;
+  } else {
+    try {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
+      });
+    } catch (error) {
+      const reason = classifySubscribeFailure(
+        error,
+        typeof Notification === 'undefined' ? undefined : Notification.permission,
+      );
+      // Tope propio y corto: si la escritura del motivo se cuelga, lo que tiene
+      // que verse es el motivo del fallo del navegador, no un "no ha terminado a
+      // tiempo" que no explica nada. Esperar aquí sin tope canibaliza el
+      // presupuesto de `ACTIVATION_TIMEOUT_MS` justo cuando más falta hace.
+      await withTimeout(
+        noteSubscriptionProblem(user, reason),
+        DIAGNOSTIC_WRITE_TIMEOUT_MS,
+        'diagnostico',
+      ).catch(() => undefined);
+      throw new Error(SUBSCRIBE_FAILURE_MESSAGES[reason]);
+    }
+  }
 
   const record = toSubscriptionRecord(subscription);
   if (!record) {
