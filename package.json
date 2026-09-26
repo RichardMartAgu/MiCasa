@@ -51,6 +51,7 @@
     "eslint-config-expo": "~57.0.2",
     "jest": "~30.5.2",
     "jest-expo": "57.0.4",
+    "path-to-regexp": "^6.3.0",
     "react-test-renderer": "19.2.8",
     "typescript": "~6.0.3",
     "workbox-cli": "^7.3.0",

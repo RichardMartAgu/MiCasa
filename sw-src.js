@@ -23,6 +23,50 @@ registerRoute(
   }),
 );
 
+// Sin esto, una versión nueva del service worker **espera a que se cierren todos
+// los clientes de la versión vieja**, y nunca toma el control mientras exista uno.
+// Con la app instalada, ese cliente existe casi siempre, así que la actualización
+// se quedaba esperando indefinidamente: el usuario seguía con el primer bundle
+// que cargó, para siempre, sin ninguna señal.
+//
+// Y hay un agravante que hace el atasco silencioso: el service worker sirve la
+// navegación desde su precache, y el `index.html` viejo apunta a bundles que ya
+// no existen. El despliegue responde 200 con el HTML de inicio a cualquier
+// fichero ausente, así que el bundle se pide, "vuelve" con HTML y, con
+// `nosniff`, el navegador se niega a ejecutarlo. La app no arrancaba y no había
+// ningún error que mirar. Medido: el bundle de un despliegue anterior devuelve
+// `200 text/html` con 2712 bytes.
+/**
+ * Activa el service worker nuevo **solo cuando se le pide**.
+ *
+ * El diseño anterior, y el que había en el repo, era no activarlo nunca: un
+ * service worker nuevo esperaba a que se cerraran todos sus clientes. Medido, eso
+ * es un atasco, y no una precaución: con la app instalada siempre hay un cliente
+ * vivo, así que la actualización no se activaba nunca y el usuario se quedaba con
+ * el bundle de su primer despliegue, indefinidamente, sin que nada lo dijera.
+ *
+ * La tentación es llamar a `skipWaiting()` en `install` y ya está, y es
+ * exactamente lo que no hay que hacer: la activación dispara `controllerchange`,
+ * y si la recarga está atada a ese evento, el aviso que invita a recargar aparece
+ * y desaparece en el mismo instante, sin que nadie pueda pulsarlo. La página se
+ * queda con el código viejo y un service worker nuevo que la controla, que es el
+ * peor de los dos mundos.
+ *
+ * Así que la activación va por aquí: la app manda el mensaje cuando alguien pulsa
+ * "Recargar", el worker toma el control, y la recarga ocurre en el
+ * `controllerchange` de la página. El control cambia cuando alguien lo pide y en
+ * ese momento la página se recarga acto seguido, así que no hay ninguna pestaña
+ * vieja trabajando con el worker nuevo.
+ */
+self.addEventListener('message', (event) => {
+  // Solo el script del mismo origen puede enviar este mensaje, pero comprobarlo
+  // es gratis y evita que un script de terceros en la página pida la activación.
+  if (event.origin && event.origin !== self.location.origin) return;
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 clientsClaim();
 
 /**
