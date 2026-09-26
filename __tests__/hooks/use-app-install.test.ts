@@ -1,8 +1,22 @@
 import { act, renderHook } from '@testing-library/react-native';
 import { Platform } from 'react-native';
 
-import { useAppInstall } from '@/hooks/use-app-install';
+import { INSTALL_CONFIRM_MS, useAppInstall, type PromptDecision } from '@/hooks/use-app-install';
 import { attach, resetForTests, subscriberCountForTests } from '@/lib/install-prompt';
+
+// Devuelven promesas por defecto porque el hook las encadena, y un `undefined`
+// revienta el efecto en vez de devolver "sin preferencia guardado".
+const mockGetItem = jest.fn((_clave: string): Promise<string | null> => Promise.resolve(null));
+const mockSetItem = jest.fn((_clave: string, _valor: string): Promise<void> => Promise.resolve());
+const mockRemoveItem = jest.fn((_clave: string): Promise<void> => Promise.resolve());
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  __esModule: true,
+  default: {
+    getItem: (clave: string) => mockGetItem(clave),
+    setItem: (clave: string, valor: string) => mockSetItem(clave, valor),
+    removeItem: (clave: string) => mockRemoveItem(clave),
+  },
+}));
 
 const UA_ANDROID =
   'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36';
@@ -157,32 +171,90 @@ describe('useAppInstall', () => {
       browser.emit('beforeinstallprompt', evento);
     });
 
-    let aceptado: boolean | undefined;
+    let decision: PromptDecision | undefined;
     await act(async () => {
-      aceptado = await result.current.install();
+      decision = await result.current.install();
     });
 
     expect(evento.prompt).toHaveBeenCalled();
-    expect(aceptado).toBe(true);
+    expect(decision).toBe('si');
   });
 
-  it('tras instalar, deja de ofrecer instalar y da la por instalada', async () => {
-    // El evento se agota en cuanto se usa: si se volviera a oferecer, el boton
-    // fallaria en silencio la segunda vez.
+  it('aceptar el dialogo NO dice que la app este instalada', async () => {
+    // Este es el bug que se vio en un Android real: se le daba a "Instalar", el
+    // navegador aceptaba, y la tarjeta decia "App instalada" sin que hubiera
+    // icono. Aceptar un dialogo no es instalar: la instalacion sigue en marcha y
+    // puede fallar. Solo `appinstalled` dice que esta instalada.
     const browser = stubBrowser();
     const { result } = renderHook(() => useAppInstall());
     act(() => {
       browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
     });
 
+    let decision: PromptDecision | undefined;
+    await act(async () => {
+      decision = await result.current.install();
+    });
+
+    expect(decision).toBe('si');
+    // Lo unico cierto: esta en curso. Y el aviso-emergente no se enseña encima.
+    expect(result.current.installing).toBe(true);
+    expect(result.current.shouldAsk).toBe(false);
+    // Y no se afirma que este instalada, que es lo que fallaba.
+    expect(result.current.standalone).toBe(false);
+    expect(result.current.view.title).not.toBe('App instalada');
+    // El boton desaparece igual, porque el evento se agota al usarlo: si se
+    // volviera a ofrecer, fallaria en silencio la segunda vez.
+    expect(result.current.view.action).toBeNull();
+  });
+
+  it('el evento appinstalled es lo unico que dice que esta instalada', async () => {
+    // Y cuando llega, se dice, y ademas no se vuelve a preguntar: ya esta
+    // instalada, preguntar seria absurdo.
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
     await act(async () => {
       await result.current.install();
     });
 
+    act(() => {
+      browser.emit('appinstalled', {});
+    });
+
     expect(result.current.standalone).toBe(true);
-    expect(result.current.view.action).toBeNull();
+    expect(result.current.installing).toBe(false);
     expect(result.current.view.title).toBe('App instalada');
+    expect(result.current.shouldAsk).toBe(false);
   });
+
+  it('si el evento no llega, se deja de esperar sin decir que este instalada', async () => {
+    // Puede que el navegador la instale y no lo diga, o que falle. En los dos
+    // casos la tarjeta sigue siendo la que dice la verdad, que es lo unico que
+    // se puede decir sin inventar.
+    jest.useFakeTimers();
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await result.current.install();
+    });
+    expect(result.current.installing).toBe(true);
+
+    await act(async () => {
+      jest.advanceTimersByTime(INSTALL_CONFIRM_MS + 100);
+    });
+
+    expect(result.current.installing).toBe(false);
+    expect(result.current.standalone).toBe(false);
+    expect(result.current.view.title).not.toBe('App instalada');
+    jest.useRealTimers();
+  });
+
 
   it('si la persona rechaza, el boton desaparece: el evento ya se gastó', async () => {
     const browser = stubBrowser();
@@ -191,12 +263,12 @@ describe('useAppInstall', () => {
       browser.emit('beforeinstallprompt', eventoInstallPrompt(false));
     });
 
-    let aceptado: boolean | undefined;
+    let decision: PromptDecision | undefined;
     await act(async () => {
-      aceptado = await result.current.install();
+      decision = await result.current.install();
     });
 
-    expect(aceptado).toBe(false);
+    expect(decision).toBe('no');
     expect(result.current.view.action).toBeNull();
     // Rechazar NO es instalar. Sin esto, la tarjeta podría darle por instalada a
     // quien acaba de decir que no, que es la mentira más visible posible aquí.
@@ -219,12 +291,12 @@ describe('useAppInstall', () => {
       });
     });
 
-    let aceptado: boolean | undefined;
+    let decision: PromptDecision | undefined;
     await act(async () => {
-      aceptado = await result.current.install();
+      decision = await result.current.install();
     });
 
-    expect(aceptado).toBe(false);
+    expect(decision).toBe('no');
     expect(result.current.view.action).toBeNull();
   });
 
@@ -234,12 +306,14 @@ describe('useAppInstall', () => {
     stubBrowser();
     const { result } = renderHook(() => useAppInstall());
 
-    let aceptado: boolean | undefined;
+    let decision: PromptDecision | undefined;
     await act(async () => {
-      aceptado = await result.current.install();
+      decision = await result.current.install();
     });
 
-    expect(aceptado).toBe(false);
+    // 'todavia-no' y no 'no': no es que la persona haya dicho que no, es que no
+    // había nada que preguntar. La tarjeta lo distingue.
+    expect(decision).toBe('todavia-no');
   });
 
   it('instalada desde el menú del navegador, la tarjeta lo dice y no ofrece instalar', () => {
@@ -704,5 +778,166 @@ describe('useAppInstall', () => {
     expect(() => browser.emit('beforeinstallprompt', eventoInstallPrompt(true))).not.toThrow();
     expect(() => browser.emit('appinstalled', {})).not.toThrow();
     expect(() => browser.fireDisplayMode()).not.toThrow();
+  });
+});
+
+describe('el aviso-emergente y la preferencia de no preguntar', () => {
+  // El aviso vive en `useAppInstall` porque la decisión de enseñarlo depende de
+  // cosas que solo el hook sabe: si hay evento, si ya está instalada, si se está
+  // instalando. Lo que se prueba aquí es esa decisión, y el del aviso está en
+  // `__tests__/components/install-prompt-banner.test.tsx`.
+  const originalOs = Platform.OS;
+
+  beforeEach(() => {
+    Platform.OS = 'web';
+    // La caché del evento es de módulo. Sin limpiarla, un evento que dejó el test
+    // anterior haría que este empiece con la app ya instalable y no se vería nada.
+    resetForTests();
+    // Sin limpiar, el "no preguntar más" de un test aparecía como escritura de
+    // otro, y el que comprobaba que "ahora no" NO guarda nada fallaba sin motivo.
+    jest.clearAllMocks();
+    mockGetItem.mockResolvedValue(null);
+    mockSetItem.mockResolvedValue(undefined);
+    mockRemoveItem.mockResolvedValue(undefined);
+  });
+
+  it('pregunta cuando hay evento y no está instalada ni instalándose', async () => {
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    await act(async () => {});
+
+    // Todavía sin evento: no hay nada que prometer.
+    expect(result.current.shouldAsk).toBe(false);
+
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+
+    expect(result.current.shouldAsk).toBe(true);
+  });
+
+  it('no pregunta si la app ya está instalada', async () => {
+    stubBrowser({ standalone: true });
+    const { result } = renderHook(() => useAppInstall());
+    await act(async () => {});
+
+    expect(result.current.standalone).toBe(true);
+    expect(result.current.shouldAsk).toBe(false);
+  });
+
+  it('no pregunta mientras se está instalando, ni esperando la confirmación', async () => {
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    expect(result.current.shouldAsk).toBe(true);
+
+    await act(async () => {
+      await result.current.install();
+    });
+
+    // Está instalando: preguntar encima sería una provocación.
+    expect(result.current.shouldAsk).toBe(false);
+  });
+
+  it('"no preguntar más" se recuerda y apaga el aviso para siempre', async () => {
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+
+    act(() => {
+      result.current.decideAskAgain('no-preguntar-mas');
+    });
+    await act(async () => {});
+
+    expect(result.current.shouldAsk).toBe(false);
+    expect(mockSetItem).toHaveBeenCalledWith('micasa.no_preguntar_instalar', '1');
+  });
+
+  it('la preferencia se lee al montar y apaga el aviso desde el primer momento', async () => {
+    // Si se leyera después, el aviso aparecería un frame y se escondería, que es
+    // peor que no aparecer: parece un fallo.
+    mockGetItem.mockResolvedValue('1');
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+
+    await act(async () => {});
+
+    expect(result.current.shouldAsk).toBe(false);
+  });
+
+  it('"ahora no" NO se recuerda: la próxima vez vuelve a preguntar', async () => {
+    // Un "ahora no" en un mal día no puede ser silencioso para siempre. Eso es lo
+    // que distingue esta decisión de "no preguntar más".
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+
+    act(() => {
+      result.current.decideAskAgain('no');
+    });
+    await act(async () => {});
+
+    // Lo que se separa de "no preguntar más" es que no se guarda. Lo de callar
+    // el aviso ahora lo hacen las dos: si "ahora no" no lo callara, se leía, se
+    // contestaba que no, y el aviso seguía ahí.
+    expect(mockRemoveItem).toHaveBeenCalledWith('micasa.no_preguntar_instalar');
+    expect(mockSetItem).not.toHaveBeenCalled();
+    expect(result.current.shouldAsk).toBe(false);
+  });
+
+  it('lo descartado en esta sesión calla el aviso aunque el evento siga disponible', () => {
+    // El evento se agota al instalar, pero si alguien descarta y luego el
+    // navegador lanza otro, no se le vuelve a preguntar en la misma sesión.
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    act(() => {
+      result.current.decideAskAgain('no');
+    });
+
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+
+    expect(result.current.shouldAsk).toBe(false);
+  });
+
+  it('instalar desde el aviso consume el evento, y con él se va la posibilidad de preguntar', async () => {
+    // El evento se agota en cuanto se usa. Preguntar otra vez con un evento
+    // gastado ofrecería un botón que ya no funciona.
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+
+    await act(async () => {
+      await result.current.install();
+    });
+
+    expect(result.current.shouldAsk).toBe(false);
+  });
+
+  it('en nativo no pregunta nunca, ni aunque haya evento', async () => {
+    Platform.OS = 'ios';
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {});
+
+    expect(result.current.shouldAsk).toBe(false);
   });
 });
