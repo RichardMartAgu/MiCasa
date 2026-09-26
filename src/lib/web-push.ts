@@ -330,8 +330,25 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   if (!registration) throw new Error('service worker no disponible');
 
   const existing = await registration.pushManager.getSubscription();
+
+  // Una suscripción sin `p256dh` o sin `auth` no sirve para enviar nada, y es
+  // irrecuperable por la vía normal: `getSubscription()` la devuelve siempre, así
+  // que un intento anterior que la dejó a medias convertía el alta en un
+  // "suscripción incompleta" permanente con el que el usuario no puede hacer
+  // nada. Por eso, si viene incompleta, se da de baja y se vuelve a crear.
+  const usable = existing ? toSubscriptionRecord(existing) : null;
+  if (existing && !usable) {
+    // Con `try/catch` y no solo `.catch()`: si el navegador no permite darla de
+    // baja, se sigue adelante con la nueva, que es lo que desbloquea al usuario.
+    try {
+      await existing.unsubscribe();
+    } catch {
+      // Se intenta de nuevo con una suscripción nueva igualmente.
+    }
+  }
+
   const subscription =
-    existing ??
+    (usable ? existing : null) ??
     (await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,

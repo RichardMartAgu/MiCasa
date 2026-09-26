@@ -401,6 +401,44 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     expect(pushManager.subscribe).toHaveBeenCalled();
   });
 
+  it('descarta una suscripción vieja e incompleta y crea otra', async () => {
+    // Este es el bloqueo que dejó el usuario en Android: el móvil conservaba
+    // una suscripción de un intento anterior, sin `p256dh` ni `auth`. Como
+    // `getSubscription()` la devuelve siempre, el alta fallaba con "suscripción
+    // incompleta" para siempre y no había ninguna acción que lo desbloqueara.
+    // Reutilizarla sin comprobar es justo lo que lo producía.
+    const db = stubSupabase();
+    const { pushManager } = stubPush({
+      existing: { endpoint: 'https://push.test/vieja', keys: { p256dh: null, auth: null } },
+    });
+
+    const result = await enableWebPush(user);
+
+    expect(result.status).toBe('enabled');
+    expect(pushManager.subscribe).toHaveBeenCalled();
+    // Y se da de baja la inservible, para que no siga ocupando el hueco.
+    expect(db.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: 'https://push.test/e' }),
+    );
+  });
+
+  it('mantiene la suscripción existente si está completa', async () => {
+    // El caso contrario: si ya hay una buena, no hay que crear otra ni tirar la
+    // que funciona (eso dejaría al navegador sin nada durante un momento).
+    const db = stubSupabase();
+    const { pushManager } = stubPush({
+      existing: { endpoint: 'https://push.test/buena', keys: { p256dh: 'p', auth: 'a' }, unsubscribe: jest.fn() },
+    });
+
+    const result = await enableWebPush(user);
+
+    expect(result.status).toBe('enabled');
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
+    expect(db.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: 'https://push.test/buena' }),
+    );
+  });
+
   it('borra lo propio del endpoint antes de insertar y nunca hace upsert por endpoint', async () => {
     // Si esto se invirtiera, un upsert sobre una fila ajena chocaría con la
     // política UPDATE y devolvería un "activado" falso.
