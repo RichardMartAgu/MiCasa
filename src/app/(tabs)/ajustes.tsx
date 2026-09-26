@@ -121,6 +121,14 @@ export default function AjustesScreen() {
   // Secuencia de las lecturas del estado real del navegador: solo la última
   // respuesta escribe en el interruptor, para que una lectura lenta no pise la
   // acción que el usuario acaba de hacer.
+  //
+  // El número se incrementa **al empezar** la acción y no solo al terminar: una
+  // lectura en vuelo del momento anterior puede resolver mientras la operación
+  // sigue corriendo, y si el contador no se movió hasta el `finally`, esa
+  // respuesta obsoleta entraba igual y el interruptor marcaba lo contrario de lo
+  // que el usuario acaba de pedir. Con el incremento al inicio, cualquier lectura
+  // anterior queda invalidada en el instante en que el usuario toca el
+  // interruptor.
   const pushReadSeq = useRef(0);
   const [testPushBusy, setTestPushBusy] = useState(false);
 
@@ -155,6 +163,10 @@ export default function AjustesScreen() {
   useEffect(() => {
     if (!isWeb) return;
     let active = true;
+    // La lectura de montaje entra en la misma secuencia que las del interruptor:
+    // registrar el worker tarda 10 s, y si su respuesta llegara después de un
+    // cambio del usuario marcaría lo contrario de lo que se acaba de hacer.
+    const seq = ++pushReadSeq.current;
     (async () => {
       const supported = isPushSupported();
       if (!active) return;
@@ -170,9 +182,9 @@ export default function AjustesScreen() {
       // navegador y el interruptor se quedaba sin verificar para siempre.
       try {
         const subscription = await getActiveSubscription();
-        if (active) setNotificationsEnabledState(Boolean(subscription));
+        if (active && seq === pushReadSeq.current) setNotificationsEnabledState(Boolean(subscription));
       } catch {
-        if (active) setNotificationsEnabledState(false);
+        if (active && seq === pushReadSeq.current) setNotificationsEnabledState(false);
       }
     })();
     return () => {
@@ -183,6 +195,11 @@ export default function AjustesScreen() {
   async function handleToggleWebPush(next: boolean) {
     if (!user) return;
     setWebPushBusy(true);
+    // Antes de esperar nada. Cualquier lectura del navegador que siguiera en
+    // vuelo queda invalidada ya, no cuando esta operación termine dentro de
+    // treinta segundos: si resolviera mientras tanto, escribiría el estado viejo
+    // encima del nuevo.
+    ++pushReadSeq.current;
     try {
       // web-push ya pone su propio tope por fases; este es el último recurso
       // para que ningún fallo por debajo pueda dejar el interruptor muerto.
