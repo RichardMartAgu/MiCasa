@@ -1,8 +1,9 @@
 import { Redirect, Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform, StyleSheet, type ColorValue } from 'react-native';
+import { Platform, StyleSheet, View, type ColorValue } from 'react-native';
 
 import { Palette, Radius, Shadow } from '@/constants/theme';
+import { InstallPromptBanner } from '@/components/install-prompt-banner';
 import { Spinner } from '@/components/ui/spinner';
 import { useAuth } from '@/context/auth-context';
 import { useNotificationSync } from '@/hooks/use-notification-sync';
@@ -22,7 +23,11 @@ export default function TabsLayout() {
   if (!session) return <Redirect href="/login" />;
 
   return (
-    <Tabs
+    <View style={styles.pantalla}>
+      {/* Arriba de las pestañas y en cualquier pantalla: el aviso tiene que
+          aparecer donde la persona ya está, no solo en Inicio. */}
+      <InstallPromptBanner />
+      <Tabs
       screenOptions={{
         tabBarActiveTintColor: Palette.primary,
         tabBarInactiveTintColor: Palette.textMuted,
@@ -39,11 +44,13 @@ export default function TabsLayout() {
         options={{ title: 'Cumpleaños', tabBarIcon: icon('gift-outline') }}
       />
       <Tabs.Screen name="ajustes" options={{ title: 'Ajustes', tabBarIcon: icon('settings-outline') }} />
-    </Tabs>
+      </Tabs>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  pantalla: { flex: 1 },
   tabBar: {
     backgroundColor: Palette.surface,
     borderTopColor: Palette.border,
