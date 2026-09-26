@@ -296,11 +296,17 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     return { deleteEq, insert, upsert };
   }
 
-  function stubPush(options: {
-    requestPermission?: () => Promise<NotificationPermission>;
-    subscribe?: () => Promise<unknown>;
-    existing?: unknown;
-  }) {
+  function stubPush(
+    options: {
+      requestPermission?: () => Promise<NotificationPermission>;
+      subscribe?: () => Promise<unknown>;
+      existing?: unknown;
+    },
+    // `installing` y `stuck` reproducen un worker que aún no ha tomado el
+    // control, que es la situación en la que `subscribe()` devuelve una
+    // suscripción a medias.
+    browser: { workerState?: 'activated' | 'installing' | 'stuck' } = {},
+  ) {
     const subscription = {
       endpoint: 'https://push.test/e',
       keys: { p256dh: 'p', auth: 'a' },
@@ -310,9 +316,26 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
       getSubscription: jest.fn(async () => options.existing ?? null),
       subscribe: jest.fn(options.subscribe ?? (async () => subscription)),
     };
+    const workerState = browser.workerState ?? 'activated';
+    const installing: { state: string; addEventListener: (t: string, fn: () => void) => void; removeEventListener: (t: string) => void } | null =
+      workerState === 'activated'
+        ? null
+        : {
+            state: workerState,
+            addEventListener: (_type: string, fn: () => void) => {
+              // 'installing' pasa a 'activated' un instante después, como un
+              // worker real; 'stuck' no pasa nunca, que es el caso que se prueba.
+              if (workerState !== 'installing') return;
+              setTimeout(() => {
+                installing!.state = 'activated';
+                fn();
+              }, 0);
+            },
+            removeEventListener: () => undefined,
+          };
     const registration = {
-      active: { state: 'activated' },
-      installing: null,
+      active: workerState === 'activated' ? { state: 'activated' } : null,
+      installing,
       waiting: null,
       pushManager,
     };
@@ -437,6 +460,42 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     expect(db.insert).toHaveBeenCalledWith(
       expect.objectContaining({ endpoint: 'https://push.test/buena' }),
     );
+  });
+
+  it('exige worker activo para suscribirse, y es lo que evita la suscripción a medias', async () => {
+    // El fallo que reportsó el usuario: con el worker todavía instalándose,
+    // `subscribe()` devuelve una suscripción sin `p256dh` ni `auth` y el alta
+    // moría con "suscripción incompleta". Suscribir tiene que esperar a `activated`;
+    // leer el estado, no.
+    const db = stubSupabase();
+    const { pushManager } = stubPush({}, { workerState: 'installing' });
+
+    // Con reloj falso hay que avanzar el tiempo: el alta queda esperando a que
+    // el worker pase a `activated`, y es justo lo que se quiere comprobar.
+    const promise = enableWebPush(user);
+    await jest.advanceTimersByTimeAsync(1);
+    const result = await promise;
+
+    expect(result.status).toBe('enabled');
+    expect(pushManager.subscribe).toHaveBeenCalled();
+    expect(db.insert).toHaveBeenCalled();
+  });
+
+  it('falla con un motivo claro si el worker no llega a activarse', async () => {
+    // Antes de esto, con un worker que no se activaba, `subscribe()` devolvía una
+    // suscripción a medias y el mensaje era "suscripción incompleta", que no
+    // explica nada. Ahora se dice qué ha pasado.
+    stubSupabase();
+    stubPush({}, { workerState: 'stuck' });
+
+    const promise = enableWebPush(user);
+    await jest.advanceTimersByTimeAsync(SW_READY_TIMEOUT_MS + 1);
+    const result = await promise;
+
+    expect(result.status).toBe('timeout');
+    if (result.status === 'timeout') {
+      expect(result.reason).toContain('service worker');
+    }
   });
 
   it('borra lo propio del endpoint antes de insertar y nunca hace upsert por endpoint', async () => {

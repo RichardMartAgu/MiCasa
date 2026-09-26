@@ -28,7 +28,7 @@ import type { User } from '@supabase/supabase-js';
 
 import type { ReminderChoice } from './notification-schedule';
 import { supabase } from './supabase';
-import { isTimeout, withTimeout } from './with-timeout';
+import { isTimeout, withTimeout, TimeoutError } from './with-timeout';
 
 /**
  * Clave pública VAPID. Es pública por diseño: el navegador la necesita para
@@ -235,6 +235,54 @@ function waitForActivation(
 }
 
 /**
+ * Espera a que el worker quede **activo**, sin conformarse con "hay registration".
+ *
+ * Consultar y suscribir no son la misma operación, y por eso no comparten espera:
+ * `getSubscription()` funciona con el worker instalándose, y por eso una consulta
+ * no debe esperar a que termine el precaché del build. Pero
+ * `pushManager.subscribe()` sí necesita un worker activo: llamado con el worker en
+ * `installing` o `waiting`, Chrome devuelve una suscripción a medias, sin
+ * `p256dh` ni `auth`, y eso llegaba al usuario como "suscripción incompleta" sin
+ * más explicación. Suscribir es la única operación que tiene que exigir activo.
+ */
+async function waitUntilActive(
+  registration: ServiceWorkerRegistration,
+  ms: number,
+): Promise<ServiceWorkerRegistration> {
+  if (registration.active) return registration;
+
+  const worker = registration.installing ?? registration.waiting;
+  if (!worker) {
+    throw new Error('el service worker no está listo');
+  }
+
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (error?: Error) => {
+      clearTimeout(timer);
+      worker.removeEventListener('statechange', onStateChange);
+      if (error) reject(error);
+      else resolve(registration);
+    };
+    const onStateChange = () => {
+      if (worker.state === 'activated') finish();
+      else if (worker.state === 'redundant') {
+        // Un worker que se marca redundante no es un cuelgue: se rechazó, y
+        // conviene distinguirlo de "no respondió" en el mensaje que ve la persona.
+        finish(new Error('el service worker no se pudo activar'));
+      }
+    };
+    // `TimeoutError` y no un `Error` cualquiera para que Ajustes lo trate como
+    // "no ha terminado a tiempo" y no como un fallo con el que no puede hacer nada.
+    timer = setTimeout(
+      () => finish(new TimeoutError('el service worker tardó demasiado en activarse')),
+      ms,
+    );
+    worker.addEventListener('statechange', onStateChange);
+  });
+}
+
+/**
  * Registration con worker, registrándolo si hace falta.
  *
  * `public/index.html` registra el service worker en el evento `load` de la
@@ -246,11 +294,18 @@ function waitForActivation(
  * `null` significa una sola cosa: que no se ha podido registrar el service
  * worker. Nunca "todavía no está activo".
  */
-async function ensureRegistration(): Promise<ServiceWorkerRegistration | null> {
+async function ensureRegistration(
+  options: { requireActive: boolean } = { requireActive: false },
+): Promise<ServiceWorkerRegistration | null> {
   if (!('serviceWorker' in navigator)) return null;
 
   const registered = await existingRegistration();
-  if (registered) return registered;
+  if (registered) {
+    if (!options.requireActive || registered.active) return registered;
+    // Hay registration pero su worker todavía no controla la página: leer sí
+    // valdría, suscribir no.
+    return waitUntilActive(registered, SW_READY_TIMEOUT_MS);
+  }
 
   // Un registro rechazado no se reintenta en cada montaje de Ajustes ni en cada
   // toque del interruptor: en `expo start`, `/sw.js` devuelve el index.html, el
@@ -264,7 +319,9 @@ async function ensureRegistration(): Promise<ServiceWorkerRegistration | null> {
       SW_READY_TIMEOUT_MS,
       'el service worker tardó demasiado en registrarse',
     );
-    return await waitForActivation(registration, SW_READY_TIMEOUT_MS);
+    return options.requireActive
+      ? await waitUntilActive(registration, SW_READY_TIMEOUT_MS)
+      : await waitForActivation(registration, SW_READY_TIMEOUT_MS);
   } catch {
     registerUnavailable = true;
     return null;
@@ -326,7 +383,7 @@ export async function enableWebPush(user: User | null): Promise<EnableResult> {
  * el techo de tiempo sea solo suyo: es la parte del flujo que no espera a nadie.
  */
 async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRecord> {
-  const registration = await ensureRegistration();
+  const registration = await ensureRegistration({ requireActive: true });
   if (!registration) throw new Error('service worker no disponible');
 
   const existing = await registration.pushManager.getSubscription();
@@ -422,6 +479,9 @@ async function unsubscribeAndDelete(user: User | null): Promise<void> {
   // se desactiva nada más cargar, con una consulta sin espera no habría worker
   // activo, y la baja se iría sin borrar ni la suscripción del navegador ni la
   // fila, dejando avisos que llegan a un sitio que el usuario cree apagado.
+  // Sin exigir worker activo: `unsubscribe()` y `getSubscription()` funcionan
+  // con el worker instalándose, y una baja no puede quedarse esperando 10 s a que
+  // termine el precaché para luego avisar de que no se pudo dar de baja.
   const registration = await ensureRegistration();
   const subscription = registration ? await registration.pushManager.getSubscription() : null;
   const endpoint = subscription?.endpoint ?? null;

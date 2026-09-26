@@ -1,5 +1,14 @@
 
-## Sesión actual — 2026-09-26 (suscripción incompleta, el bloqueo real del usuario)
+## Sesión actual — 2026-09-26 (exigir worker activo y Edge Function desplegada)
+
+- El usuario volvió a probar y respondió tres cosas: el check venía activo, al desactivar no podía volver a activar, y el botón de prueba no enviaba nada. En la base, su usuario **no tenía fila en `push_subscriptions`** y `enabled` en preferencias era `false`.
+- **Fallo mío, confirmado**: el arreglo de la Edge Function estaba mergeado pero **no desplegado**, así que el botón seguía corriendo el código viejo con el gate de `x-cron-secret` delante. Desplegada la v7 y verificado: con sesión válida responde `{"ok":false,"error":"sin suscripciones activas en este navegador"}` y sin sesión 401. El camino ya no está muerto. El propio deploy compila, lo que cierra el `deno check` que llevaba pendiente.
+- Causa del "suscripción incompleta", y era un error mío: al atender un hallazgo de QA, `ensureRegistration` pasó a devolver la registration aunque su worker no estuviera `activated`, porque para **consultar** el estado da igual. Pero `pushManager.subscribe()` **sí** necesita un worker activo: llamado con el worker en `installing` o `waiting`, Chrome devuelve una suscripción a medias, sin `p256dh` ni `auth`. Eso era exactamente el mensaje que veía.
+- Arreglo: lectura y escritura ya no comparten espera. `getActiveSubscription` y la baja no exigen worker activo (una baja no puede esperar 10 s al precaché); el alta sí, con `waitUntilActive` y su tope. Si el worker se queda colgado se lanza `TimeoutError`, para que Ajustes lo muestre como "no ha terminado" y no como un fallo sin explicación.
+- QA: `npx tsc --noEmit` limpio, `npx expo lint` limpio, `npx jest` 45/45 suites y 550/550 tests. Los tests nuevos fallan revirtiendo el arreglo, verificado.
+- Sin verificar: sigue sin probarse en un Android real. Y la **correspondencia entre la VAPID pública del código y la privada de Vault**, que solo se ve cuando un envío real llega al push service.
+
+## Sesión anterior — 2026-09-26 (suscripción incompleta, el bloqueo real del usuario)
 
 - El usuario probó en Android y devolvió el mensaje exacto: "No se pudo activar los avisos: suscripción incompleta". El aviso visible confirma que el arreglo de `Alert.alert` funciona, y sitúa el fallo ya muy dentro: el permiso se concedió, `subscribe()` respondió y el service worker estaba disponible.
 - La VAPID pública **es válida**: punto legítimo de la curva P-256 (`y² == x³ + ax + b` en el primo de NIST), 65 bytes, prefijo `0x04`. No era la clave.
