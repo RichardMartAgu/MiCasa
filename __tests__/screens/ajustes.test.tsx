@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Alert, Platform } from 'react-native';
 
 import AjustesScreen from '@/app/(tabs)/ajustes';
@@ -60,6 +60,17 @@ const mockDisableWebPush = jest.fn();
 const mockSendTestPush: jest.Mock<Promise<{ ok: boolean; error?: string; retryInSeconds?: number; delivered?: number }>> =
   jest.fn(async () => ({ ok: true, delivered: 1 }));
 
+/** Copia del mensaje de `ajustes.tsx`, que en web sale sin título por `window.alert`. */
+const MSG_PUSH_TIMEOUT =
+  'Los avisos no se han activado a tiempo. Cierra otras pestañas de MiCasa y vuelve a intentarlo.';
+
+/** `window.alert`, que es la única vía por la que se puede ver un aviso en web. */
+function stubWebAlert(): jest.Mock {
+  const spy = jest.fn();
+  (globalThis as { alert?: (text: string) => void }).alert = spy;
+  return spy;
+}
+
 jest.mock('@/lib/web-push', () => ({
   isPushSupported: () => mockIsPushSupported(),
   getActiveSubscription: () => mockGetActiveSubscription(),
@@ -68,6 +79,11 @@ jest.mock('@/lib/web-push', () => ({
   enableWebPush: (user: unknown) => mockEnableWebPush(user),
   disableWebPush: (user: unknown) => mockDisableWebPush(user),
   sendTestPush: () => mockSendTestPush(),
+  // Espejo del valor real (PERMISSION 60s + ACTIVATION 30s + 10s de margen), que
+  // fija `__tests__/lib/web-push.test.ts`. No se importa el módulo de verdad
+  // porque al cargarse abre un cliente de Supabase y aquí solo hacen falta las
+  // funciones de web-push que ya van simuladas.
+  WEB_PUSH_TIMEOUT_MS: 100_000,
 }));
 
 jest.mock('@/lib/notifications', () => ({
@@ -172,6 +188,9 @@ function setup(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // `clearAllMocks` no borra los valores que dejó un test con mockReturnValue, así
+  // que el estado por defecto se fija aquí para que el orden no importes.
+  mockIsPushSupported.mockReturnValue(false);
   mockSetCurrentCasa.mockResolvedValue(undefined);
   mockCreateCasa.mockResolvedValue(null);
   mockJoinCasa.mockResolvedValue(null);
@@ -193,6 +212,11 @@ beforeEach(() => {
   mockSyncAll.mockResolvedValue(undefined);
   mockValidateCasaName.mockReturnValue({ valid: true });
   mockValidateInviteCode.mockReturnValue({ valid: true });
+});
+
+afterEach(() => {
+  delete (globalThis as { alert?: unknown }).alert;
+  jest.useRealTimers();
 });
 
 describe('AjustesScreen', () => {
@@ -290,7 +314,7 @@ describe('AjustesScreen', () => {
     const originalOs = Platform.OS;
     Platform.OS = 'web';
     mockIsPushSupported.mockReturnValue(true);
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const alertWebSpy = stubWebAlert();
 
     try {
       const { getByText } = setup();
@@ -299,9 +323,37 @@ describe('AjustesScreen', () => {
       await waitFor(() => {
         expect(mockSendTestPush).toHaveBeenCalled();
       });
-      expect(alertSpy).toHaveBeenCalledWith('Aviso enviado', 'Enviado a 1 navegador(es).');
+      expect(alertWebSpy).toHaveBeenCalledWith('Enviado a 1 navegador(es).');
     } finally {
-      alertSpy.mockRestore();
+      Platform.OS = originalOs;
+    }
+  });
+
+  it('si el aviso de prueba se cuelga, el botón vuelve a estar disponible', async () => {
+    // El botón de prueba tenía el mismo defecto que el interruptor: el flag de
+    // "en curso" se limpiaba solo si la respuesta llegaba. Un `fetch` colgado lo
+    // dejaba inutilizable hasta recargar, y es el único mecanismo para comprobar
+    // que la suscripción vive.
+    const originalOs = Platform.OS;
+    Platform.OS = 'web';
+    mockIsPushSupported.mockReturnValue(true);
+    mockSendTestPush.mockImplementation(() => new Promise(() => {}));
+    const alertWebSpy = stubWebAlert();
+
+    jest.useFakeTimers();
+    try {
+      const { getByText } = setup();
+      fireEvent.press(getByText('Enviar'));
+
+      await act(async () => {
+        jest.advanceTimersByTime(30_000);
+      });
+
+      expect(alertWebSpy).toHaveBeenCalled();
+      expect(getByText('Enviar').props.accessibilityState?.busy).not.toBe(true);
+    } finally {
+      jest.useRealTimers();
+      mockSendTestPush.mockReset();
       Platform.OS = originalOs;
     }
   });
@@ -315,17 +367,16 @@ describe('AjustesScreen', () => {
       error: 'demasiado rapido',
       retryInSeconds: 180,
     });
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const alertWebSpy = stubWebAlert();
 
     try {
       const { getByText } = setup();
       fireEvent.press(getByText('Enviar'));
 
       await waitFor(() => {
-        expect(alertSpy).toHaveBeenCalledWith('Espera un momento', 'Puedes pedir otro aviso en 3 minuto(s).');
+        expect(alertWebSpy).toHaveBeenCalledWith('Puedes pedir otro aviso en 3 minuto(s).');
       });
     } finally {
-      alertSpy.mockRestore();
       Platform.OS = originalOs;
     }
   });
@@ -341,6 +392,169 @@ describe('AjustesScreen', () => {
     } finally {
       Platform.OS = originalOs;
     }
+  });
+
+  describe('web: interruptor de notificaciones', () => {
+    it('avisa por el camino de web, no por Alert, cuando el permiso se deniega', async () => {
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockEnableWebPush.mockResolvedValue({ status: 'denied' });
+      const alertWebSpy = stubWebAlert();
+      const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+
+      try {
+        const { getByLabelText, getByText } = setup();
+        await waitFor(() => {
+          expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+        });
+
+        fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', true);
+
+        await waitFor(() => {
+          expect(alertWebSpy).toHaveBeenCalledWith(
+            expect.stringContaining('no permite avisos en este sitio'),
+          );
+        });
+        // `Alert.alert` es un no-op en react-native-web: si el aviso saliera por
+        // ahí, el usuario no vería nada y el interruptor parecería muerto.
+        expect(alertSpy).not.toHaveBeenCalled();
+        expect(getByText('Permiso denegado: actívalo desde los ajustes del navegador')).toBeTruthy();
+      } finally {
+        alertSpy.mockRestore();
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('si la activación falla, avisa del motivo y el interruptor vuelve a ser utilizable', async () => {
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockEnableWebPush.mockResolvedValue({
+        status: 'failed',
+        reason: 'service worker no disponible',
+      });
+      const alertWebSpy = stubWebAlert();
+
+      try {
+        const { getByLabelText } = setup();
+        await waitFor(() => {
+          expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+        });
+
+        fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', true);
+        // Mientras dura la activación el interruptor se bloquea a propósito.
+        expect(getByLabelText('Activar notificaciones').props.disabled).toBe(true);
+
+        await waitFor(() => {
+          expect(alertWebSpy).toHaveBeenCalledWith(
+            'No se pudo activar los avisos: service worker no disponible',
+          );
+        });
+
+        const toggle = getByLabelText('Activar notificaciones');
+        expect(toggle.props.disabled).toBe(false);
+        expect(toggle.props.value).toBe(false);
+
+        // Y se puede volver a intentarlo, que es el punto: antes había que
+        // recargar la página.
+        fireEvent(toggle, 'valueChange', true);
+        await waitFor(() => {
+          expect(mockEnableWebPush).toHaveBeenCalledTimes(2);
+        });
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('si la activación se cuelga, rehabilita el interruptor al vencer el tope y avisa', async () => {
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      // Promesa que no resuelve ni rechaza nunca: el caso que en Android dejaba
+      // el interruptor muerto hasta recargar la página.
+      mockEnableWebPush.mockImplementation(() => new Promise(() => {}));
+      const alertWebSpy = stubWebAlert();
+
+      jest.useFakeTimers();
+      try {
+        const { getByLabelText } = setup();
+        await act(async () => {});
+
+        expect(getByLabelText('Activar notificaciones').props.disabled).toBe(false);
+        fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', true);
+        expect(getByLabelText('Activar notificaciones').props.disabled).toBe(true);
+
+        await act(async () => {
+          jest.advanceTimersByTime(100_000);
+        });
+
+        expect(alertWebSpy).toHaveBeenCalledWith(MSG_PUSH_TIMEOUT);
+        const toggle = getByLabelText('Activar notificaciones');
+        expect(toggle.props.disabled).toBe(false);
+        expect(toggle.props.value).toBe(false);
+      } finally {
+        jest.useRealTimers();
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('un timeout que viene de la capa de push también avisa y rehabilita', async () => {
+      // El caso anterior lo resuelve el tope externo de la pantalla. Este cubre
+      // el otro camino: que sea `web-push` el que corta por su cuenta, que es lo
+      // que ocurre con un diálogo de permisos o un `subscribe()` que no
+      // responden, y que es lo que de verdad pasaba en Android.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockEnableWebPush.mockResolvedValue({ status: 'timeout', reason: 'la activacion no ha terminado' });
+      const alertWebSpy = stubWebAlert();
+
+      try {
+        const { getByLabelText } = setup();
+        await act(async () => {});
+
+        fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', true);
+        await act(async () => {});
+
+        expect(alertWebSpy).toHaveBeenCalledWith(MSG_PUSH_TIMEOUT);
+        const toggle = getByLabelText('Activar notificaciones');
+        expect(toggle.props.disabled).toBe(false);
+        expect(toggle.props.value).toBe(false);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('un fallo al desactivar no dice que se ha activado', async () => {
+      // Decir "no se pudo activar" al apagar hace creer al usuario que no ha
+      // pasado nada mientras le siguen llegando avisos.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(true);
+      mockGetActiveSubscription.mockResolvedValue({ endpoint: 'https://push.test/e' } as never);
+      mockDisableWebPush.mockResolvedValue({ status: 'failed', reason: 'sin red' });
+      const alertWebSpy = stubWebAlert();
+
+      try {
+        const { getByLabelText } = setup();
+        await act(async () => {});
+
+        fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', false);
+        await act(async () => {});
+
+        expect(alertWebSpy).toHaveBeenCalledWith(
+          expect.stringContaining('No se pudo desactivar'),
+        );
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
   });
 
   it('da de baja la suscripción push antes de cerrar sesión', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Alert,
@@ -44,6 +44,7 @@ import {
   reminderChoices,
   type ReminderChoice,
 } from '@/lib/notification-schedule';
+import { showNotice } from '@/lib/notice';
 import type { Appointment, Casa, CasaMember, Contact } from '@/lib/types';
 import {
   disableWebPush,
@@ -53,8 +54,27 @@ import {
   notificationPermission,
   sendTestPush,
   syncPushPreferences,
+  WEB_PUSH_TIMEOUT_MS,
 } from '@/lib/web-push';
+import { withTimeout } from '@/lib/with-timeout';
 import { validateCasaName, validateInviteCode } from '@/lib/validation';
+
+/**
+ * Un aviso debe poder leerse sin contexto: en web sale por `window.alert`, que
+ * solo admite un texto y no lleva título. Cerrar otras pestañas es la salida
+ * real cuando lo que se ha quedado esperando es la activación de un service
+ * worker nuevo.
+ */
+const MSG_PUSH_TIMEOUT =
+  'Los avisos no se han activado a tiempo. Cierra otras pestañas de MiCasa y vuelve a intentarlo.';
+
+/**
+ * Tope del aviso de prueba. Es una petición a la Edge Function en frío, que
+ * además tiene que contacting con el push service, así que se le da margen de
+ * sobra: el objetivo es que un cuelgue no deje el botón muerto, no que el botón
+ * falle pronto.
+ */
+const TEST_PUSH_TIMEOUT_MS = 30_000;
 
 export default function AjustesScreen() {
   const { user, signOut } = useAuth();
@@ -98,6 +118,10 @@ export default function AjustesScreen() {
   const [pushSupported, setPushSupported] = useState(false);
   const [pushBlocked, setPushBlocked] = useState(false);
   const [webPushBusy, setWebPushBusy] = useState(false);
+  // Secuencia de las lecturas del estado real del navegador: solo la última
+  // respuesta escribe en el interruptor, para que una lectura lenta no pise la
+  // acción que el usuario acaba de hacer.
+  const pushReadSeq = useRef(0);
   const [testPushBusy, setTestPushBusy] = useState(false);
 
   const { data: appointments } = useRealtimeCollection<Appointment>(
@@ -140,8 +164,16 @@ export default function AjustesScreen() {
         return;
       }
       setPushBlocked(notificationPermission() === 'denied');
-      const subscription = await getActiveSubscription();
-      if (active) setNotificationsEnabledState(Boolean(subscription));
+      // Con `try/catch` porque `getActiveSubscription` habla con el service
+      // worker y ese puede rechazar (`InvalidStateError` en contextos no
+      // seguros). Sin él, un rechazo aquí era una promesa sin capturar en el
+      // navegador y el interruptor se quedaba sin verificar para siempre.
+      try {
+        const subscription = await getActiveSubscription();
+        if (active) setNotificationsEnabledState(Boolean(subscription));
+      } catch {
+        if (active) setNotificationsEnabledState(false);
+      }
     })();
     return () => {
       active = false;
@@ -152,8 +184,13 @@ export default function AjustesScreen() {
     if (!user) return;
     setWebPushBusy(true);
     try {
-      const result = next ? await enableWebPush(user) : await disableWebPush(user);
-      setWebPushBusy(false);
+      // web-push ya pone su propio tope por fases; este es el último recurso
+      // para que ningún fallo por debajo pueda dejar el interruptor muerto.
+      const result = await withTimeout(
+        next ? enableWebPush(user) : disableWebPush(user),
+        WEB_PUSH_TIMEOUT_MS,
+        'la web no ha completado el cambio a tiempo',
+      );
 
       if (result.status === 'enabled' || result.status === 'disabled') {
         setNotificationsEnabledState(next);
@@ -162,23 +199,51 @@ export default function AjustesScreen() {
       }
       if (result.status === 'denied') {
         setPushBlocked(true);
-        Alert.alert(
+        showNotice(
           'Permiso denegado',
           'El navegador no permite avisos en este sitio. Actívalo desde los ajustes del navegador (el icono del candado junto a la dirección) y vuelve a intentarlo.',
         );
         return;
       }
       if (result.status === 'unsupported') {
-        Alert.alert(
+        showNotice(
           'No disponible',
           'Este navegador no admite avisos push. En iPhone hace falta instalar la app en la pantalla de inicio.',
         );
         return;
       }
-      Alert.alert('Error', `No se pudo activar los avisos: ${result.reason}`);
+      if (result.status === 'timeout') {
+        showNotice('No ha terminado', MSG_PUSH_TIMEOUT);
+        return;
+      }
+      // El verbo va según la dirección del cambio: decir "no se pudo activar" al
+      // apagar deja al usuario creyendo que no ha pasado nada mientras le
+      // siguen llegando avisos.
+      showNotice('Error', `No se pudo ${next ? 'activar' : 'desactivar'} los avisos: ${result.reason}`);
     } catch {
+      showNotice('No ha terminado', MSG_PUSH_TIMEOUT);
+    } finally {
+      // En `finally` y no al final de cada rama: una operación que se cuelga sin
+      // rechazar deja el flag en `true` y el Switch inutilizable hasta que se
+      // recargue la página, que es justo lo que pasaba en Android.
       setWebPushBusy(false);
-      Alert.alert('Error', 'No se pudo cambiar el estado de los avisos.');
+
+      // Y el interruptor se relee del navegador en vez de quedarse con la
+      // intención: un alta cortada por tiempo puede llegar tarde y, sin esto, el
+      // Switch marcaría lo contrario de lo que hay.
+      //
+      // La relectura va con número de secuencia porque la consulta puede tardar
+      // (registrar el worker son 10 s) y para entonces el usuario ya ha vuelto a
+      // tocar el interruptor: si su respuesta llegara última, marcaría lo
+      // contrario de lo que acaba de hacer. Solo aplica la última lectura.
+      if (isWeb) {
+        const seq = ++pushReadSeq.current;
+        void getActiveSubscription()
+          .then((subscription) => {
+            if (seq === pushReadSeq.current) setNotificationsEnabledState(Boolean(subscription));
+          })
+          .catch(() => undefined);
+      }
     }
   }
 
@@ -189,19 +254,28 @@ export default function AjustesScreen() {
    */
   async function handleTestPush() {
     setTestPushBusy(true);
-    const result = await sendTestPush();
-    setTestPushBusy(false);
+    try {
+      // Con `finally` y con tope por la misma razón que el interruptor: un
+      // `fetch` que no responde (portal cautivo, red móvil parada, función en
+      // frío) dejaba `testPushBusy` en `true` y el botón inutilizable hasta
+      // recargar, que era justo el fallo que este bloque viene a cerrar.
+      const result = await withTimeout(sendTestPush(), TEST_PUSH_TIMEOUT_MS, MSG_PUSH_TIMEOUT);
 
-    if (result.ok) {
-      Alert.alert('Aviso enviado', `Enviado a ${result.delivered} navegador(es).`);
-      return;
+      if (result.ok) {
+        showNotice('Aviso enviado', `Enviado a ${result.delivered} navegador(es).`);
+        return;
+      }
+      if (result.error === 'demasiado rapido') {
+        const minutes = Math.max(1, Math.ceil((result.retryInSeconds ?? 60) / 60));
+        showNotice('Espera un momento', `Puedes pedir otro aviso en ${minutes} minuto(s).`);
+        return;
+      }
+      showNotice('No se pudo enviar', result.error);
+    } catch {
+      showNotice('No se pudo enviar', MSG_PUSH_TIMEOUT);
+    } finally {
+      setTestPushBusy(false);
     }
-    if (result.error === 'demasiado rapido') {
-      const minutes = Math.max(1, Math.ceil((result.retryInSeconds ?? 60) / 60));
-      Alert.alert('Espera un momento', `Puedes pedir otro aviso en ${minutes} minuto(s).`);
-      return;
-    }
-    Alert.alert('No se pudo enviar', result.error);
   }
 
   /**
@@ -213,10 +287,11 @@ export default function AjustesScreen() {
     if (isWeb && user) {
       try {
         const result = await disableWebPush(user);
-        if (result.status === 'failed') {
-          // El registro sobrevive: este navegador seguiría recibiendo los avisos
-          // de la cuenta que se acaba de cerrar en un equipo compartido. Se avisa
-          // en consola porque la sesión ya se está cerrando.
+        // El registro sobrevive tanto a un fallo como a un cuelgue con tope, y en
+        // los dos casos este navegador seguiría recibiendo los avisos de la
+        // cuenta que se acaba de cerrar en un equipo compartido. Se avisa en
+        // consola porque la sesión ya se está cerrando.
+        if (result.status === 'failed' || result.status === 'timeout') {
           console.warn('No se pudo dar de baja la suscripción push', result.reason);
         }
       } catch {
@@ -237,6 +312,8 @@ export default function AjustesScreen() {
         const granted = await requestPermissions();
         if (!granted) {
           const canAsk = await canRequestPermissionAgain();
+          // Este es el único `Alert.alert` que se queda: necesita botones, y
+          // `window.alert` no los tiene. Solo se ejecuta en nativo.
           Alert.alert(
             'Permiso denegado',
             'Activa las notificaciones desde los ajustes del sistema para recibir avisos.',
@@ -260,7 +337,7 @@ export default function AjustesScreen() {
         setNotificationsEnabledState(false);
       }
     } catch {
-      Alert.alert('Error', 'No se pudo cambiar el estado de las notificaciones.');
+      showNotice('Error', 'No se pudo cambiar el estado de las notificaciones.');
     }
   }
 

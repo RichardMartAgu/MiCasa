@@ -12,8 +12,14 @@
  * 4. La Edge Function `send-web-push`, disparada por pg_cron, envía los
  *    recordatorios aunque la app esté cerrada.
  *
- * Las funciones puras de este módulo (conversiones y normalización) están
- * separadas de las que tocan el navegador para poder testearlas con Jest.
+ * El alta no depende de que el service worker ya esté registrado (el `index.html`
+ * lo registra en el evento `load`, que en una navegación larga puede no haber
+ * ocurrido todavía) y toda la activación tiene techo de tiempo, porque una
+ * promesa que se cuelga sin rechazar dejaba el interruptor de Ajustes inutilizable.
+ *
+ * Las funciones puras de este módulo (conversiones, normalización y presupuestos
+ * de tiempo) están separadas de las que tocan el navegador para poder testearlas
+ * con Jest sin navegador.
  */
 
 import { Platform } from 'react-native';
@@ -22,6 +28,7 @@ import type { User } from '@supabase/supabase-js';
 
 import type { ReminderChoice } from './notification-schedule';
 import { supabase } from './supabase';
+import { isTimeout, withTimeout } from './with-timeout';
 
 /**
  * Clave pública VAPID. Es pública por diseño: el navegador la necesita para
@@ -50,6 +57,7 @@ export type EnableResult =
   | { status: 'disabled' }
   | { status: 'denied' }
   | { status: 'unsupported' }
+  | { status: 'timeout'; reason: string }
   | { status: 'failed'; reason: string };
 
 /**
@@ -120,34 +128,163 @@ export function notificationPermission(): PushPermission {
   return Notification.permission as PushPermission;
 }
 
-/**
- * Espera al service worker con un techo de tiempo. `navigator.serviceWorker.ready`
- * no resuelve si el registro falla (por ejemplo, cuando el chequeo de
- * Content-Type impide registrarlo), y sin este tope el botón de cerrar sesión se
- * quedaría colgado esperando.
- */
-const SW_READY_TIMEOUT_MS = 3000;
+/* Reparto de temps de espera, que es la parte que más se ha tenido que razonar:
+   el flujo mezcla una interacción humana con red, y un tope único no puede
+   valer para las dos cosas. */
 
-async function readyRegistration(): Promise<ServiceWorkerRegistration | null> {
+const SW_URL = '/sw.js';
+const SW_SCOPE = '/';
+
+/**
+ * El registro del service worker ha fallado en esta sesión de página y no se
+ * reintenta. Vive a nivel de módulo a propósito: la sorpresa que produce es de
+ * página, no de componente, y así todos los caminos que necesitan el worker se
+ * leveragesan el mismo veredicto en vez de repetir el intento por su cuenta.
+ */
+let registerUnavailable = false;
+
+/**
+ * Registro y posterior activación del service worker: descargar e instalar el
+ * precaché entero del build en una móvil lenta es lo más caro de este flujo, y
+ * aun así no depende de ninguna persona. Son dos fases con este mismo tope, así
+ * que lo peor que pueden consumir juntas es el doble, que sigue entrando de
+ * sobra en `ACTIVATION_TIMEOUT_MS`.
+ */
+export const SW_READY_TIMEOUT_MS = 10_000;
+
+/**
+ * Tope del diálogo de permisos, la única parte del flujo que depende de una
+ * persona: en Android el diálogo nativo del sistema puede quedarse en pantalla
+ * un rato, y cortar antes de que conteste produce el fallo que se quiere evitar
+ * (permiso denegado sin haberlo denegado). Por eso va holgado y existe solo para
+ * que un `requestPermission()` colgado no deje el interruptor muerto.
+ */
+export const PERMISSION_TIMEOUT_MS = 60_000;
+
+/**
+ * Tope de lo que ya no depende de nadie: alta del service worker,
+ * `pushManager.subscribe()` (que se queda esperando a que FCM conteste) y las
+ * peticiones a Supabase. Treinta segundos son un margen amplio para la red
+ * móvil y estrechos para quien está mirando el interruptor, que es lo que hace
+ * útil el aviso de "no ha terminado" en lugar de una espera muda.
+ */
+export const ACTIVATION_TIMEOUT_MS = 30_000;
+
+/**
+ * Tope global que aplica Ajustes como último recurso. Es la suma de los dos
+ * anteriores más 10 s de margen a propósito: si el corte interior de este módulo
+ * funciona, este nunca llega a vencer, de modo que solo aparece cuando el fallo
+ * está por encima (y el interruptor nunca queda muerto ni aunque la capa de push
+ * se rompa del todo).
+ */
+export const WEB_PUSH_TIMEOUT_MS = PERMISSION_TIMEOUT_MS + ACTIVATION_TIMEOUT_MS + 10_000;
+
+/**
+ * El registro que ya existe en este navegador, sin crear nada. Para leer el
+ * estado actual no tiene sentido registrar un service worker nuevo: si no hay
+ * registration, no hay suscripción que leer, y quien viene a mirar es una
+ * operación de consulta.
+ *
+ * Se devuelve aunque su worker todavía no esté `activated`: `PushManager` acepta
+ * un registration con el worker instalándose, y retenerlo hasta que active
+ *convertía una espera normal en un "no hay suscripción" falso.
+ */
+async function existingRegistration(): Promise<ServiceWorkerRegistration | null> {
   if (!('serviceWorker' in navigator)) return null;
+  return (await navigator.serviceWorker.getRegistration()) ?? null;
+}
+
+/**
+ * Espera a que el worker que se está instalando pase a `activated`, con techo de
+ * tiempo.
+ *
+ * El techo decide cuánto se espera al estado, pero **nunca** decide si hay
+ * registration: eso se devuelve siempre. `PushManager` funciona con el worker
+ * instalándose o en `waiting` igual que con el activo, así que antes de este
+ * cambio, si el precaché del build tardaba más de 10 s en una móvil lenta, la
+ * consulta respondía "no hay suscripción" con un navegador sí suscrito, y
+ * quien intentaba activar se comía un "service worker no disponible" que era
+ * mentira. Devolver `null` por un tiempo de espera lento era confundir una cosa
+ * con otra.
+ *
+ * Sin `skipWaiting` a propósito (un deploy borra el service worker anterior y
+ * activarlo por la fuerza abre una ventana en la que la página habla con un
+ * worker viejo que ya no está en el servidor). El worker que espera en `waiting`
+ * es un caso normal con esa decisión, no un fallo: por eso `clientsClaim` en
+ * `sw-src.js` no compite con este camino, solo hace que el workertomara el
+ * control antes.
+ */
+function waitForActivation(
+  registration: ServiceWorkerRegistration,
+  ms: number,
+): Promise<ServiceWorkerRegistration> {
+  if (registration.active) return Promise.resolve(registration);
+  const worker = registration.installing ?? registration.waiting;
+  if (!worker) return Promise.resolve(registration);
+
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), SW_READY_TIMEOUT_MS);
-    navigator.serviceWorker.ready
-      .then((registration) => {
-        clearTimeout(timer);
-        resolve(registration);
-      })
-      .catch(() => {
-        clearTimeout(timer);
-        resolve(null);
-      });
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = () => {
+      clearTimeout(timer);
+      worker.removeEventListener('statechange', finish);
+      resolve(registration);
+    };
+    timer = setTimeout(finish, ms);
+    worker.addEventListener('statechange', finish);
   });
 }
 
-/** ¿Hay ya una suscripción activa en este navegador? */
+/**
+ * Registration con worker, registrándolo si hace falta.
+ *
+ * `public/index.html` registra el service worker en el evento `load` de la
+ * ventana, así que hasta la navegación siguiente no existe registro y
+ * `serviceWorker.ready` no resuelve nunca: ahí moría la activación con
+ * "service worker no disponible" en cuanto se tocaba el interruptor antes de ese
+ * `load`. Aquí el alta no depende de ese evento y se registra bajo demanda.
+ *
+ * `null` significa una sola cosa: que no se ha podido registrar el service
+ * worker. Nunca "todavía no está activo".
+ */
+async function ensureRegistration(): Promise<ServiceWorkerRegistration | null> {
+  if (!('serviceWorker' in navigator)) return null;
+
+  const registered = await existingRegistration();
+  if (registered) return registered;
+
+  // Un registro rechazado no se reintenta en cada montaje de Ajustes ni en cada
+  // toque del interruptor: en `expo start`, `/sw.js` devuelve el index.html, el
+  // navegador rechaza el MIME y un reintento solo añade ruido. El registro se
+  // vuelve a intentar tras una recarga, que es cuando el despliegue ya cambió.
+  if (registerUnavailable) return null;
+
+  try {
+    const registration = await withTimeout(
+      navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE }),
+      SW_READY_TIMEOUT_MS,
+      'el service worker tardó demasiado en registrarse',
+    );
+    return await waitForActivation(registration, SW_READY_TIMEOUT_MS);
+  } catch {
+    registerUnavailable = true;
+    return null;
+  }
+}
+
+/**
+ * ¿Hay ya una suscripción activa en este navegador?
+ *
+ * Usa `ensureRegistration` y no `activeRegistration` a propósito: Ajustes consulta
+ * esto nada más montar, y el service worker solo se registra en el evento `load`
+ * de `index.html`, unos segundos después de que React monte. Con una consulta
+ * sin espera el interruptor aparecía apagado al recargar la página aunque el
+ * navegador siguiera suscrito, y el usuario "-no" tenía forma de saber por qué.
+ * Registrar no crea ninguna suscripción: solo garantiza que hay un worker
+ * activo al que preguntarle.
+ */
 export async function getActiveSubscription(): Promise<PushSubscription | null> {
   if (!isPushSupported()) return null;
-  const registration = await readyRegistration();
+  const registration = await ensureRegistration();
   if (!registration) return null;
   return registration.pushManager.getSubscription();
 }
@@ -162,62 +299,89 @@ export async function enableWebPush(user: User | null): Promise<EnableResult> {
 
   let permission: NotificationPermission;
   try {
-    permission = await Notification.requestPermission();
+    permission = await withTimeout(
+      Notification.requestPermission(),
+      PERMISSION_TIMEOUT_MS,
+      'el navegador no respondió al pedir permiso',
+    );
   } catch (error) {
-    return { status: 'failed', reason: errorText(error) };
+    return failedBy(error);
   }
   if (permission !== 'granted') return { status: 'denied' };
 
   try {
-    const registration = await readyRegistration();
-    if (!registration) return { status: 'failed', reason: 'service worker no disponible' };
-
-    const existing = await registration.pushManager.getSubscription();
-    const subscription =
-      existing ??
-      (await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
-      }));
-
-    const record = toSubscriptionRecord(subscription);
-    if (!record) return { status: 'failed', reason: 'suscripción incompleta' };
-
-    if (!user) return { status: 'failed', reason: 'sesión no válida' };
-
-    // Nada de upsert por `endpoint`: la restricción es única y global, así que un
-    // upsert sobre una fila de otra cuenta choca con la política UPDATE y
-    // PostgREST devuelve error nulo, es decir, un "activado" falso mientras este
-    // navegador sigue recibiendo los avisos de la cuenta anterior. Se borra lo
-    // propio de este endpoint y se inserta; si el endpoint pertenece a otra
-    // cuenta, el insert falla con 23505 y se informa.
-    await supabase.from('push_subscriptions').delete().eq('endpoint', record.endpoint);
-
-    const { error } = await supabase.from('push_subscriptions').insert({
-      user_id: user.id,
-      endpoint: record.endpoint,
-      p256dh: record.p256dh,
-      auth: record.auth,
-      timezone: record.timezone,
-      user_agent: record.user_agent,
-      active: true,
-    });
-
-    if (error) {
-      return {
-        status: 'failed',
-        reason:
-          error.code === '23505'
-            ? 'este navegador ya está registrado en otra cuenta'
-            : error.message,
-      };
-    }
-
-    await syncPushPreferences(user, { enabled: true });
+    const record = await withTimeout(
+      subscribeAndStore(user),
+      ACTIVATION_TIMEOUT_MS,
+      'la activación no ha terminado a tiempo',
+    );
     return { status: 'enabled', record };
   } catch (error) {
-    return { status: 'failed', reason: errorText(error) };
+    return failedBy(error);
   }
+}
+
+/**
+ * Suscripción y alta en Supabase, sin el diálogo de permisos. Va aparte para que
+ * el techo de tiempo sea solo suyo: es la parte del flujo que no espera a nadie.
+ */
+async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRecord> {
+  const registration = await ensureRegistration();
+  if (!registration) throw new Error('service worker no disponible');
+
+  const existing = await registration.pushManager.getSubscription();
+  const subscription =
+    existing ??
+    (await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
+    }));
+
+  const record = toSubscriptionRecord(subscription);
+  if (!record) throw new Error('suscripción incompleta');
+
+  if (!user) throw new Error('sesión no válida');
+
+  // Nada de upsert por `endpoint`: la restricción es única y global, así que un
+  // upsert sobre una fila de otra cuenta choca con la política UPDATE y
+  // PostgREST devuelve error nulo, es decir, un "activado" falso mientras este
+  // navegador sigue recibiendo los avisos de la cuenta anterior. Se borra lo
+  // propio de este endpoint y se inserta; si el endpoint pertenece a otra
+  // cuenta, el insert falla con 23505 y se informa.
+  await supabase.from('push_subscriptions').delete().eq('endpoint', record.endpoint);
+
+  const { error } = await supabase.from('push_subscriptions').insert({
+    user_id: user.id,
+    endpoint: record.endpoint,
+    p256dh: record.p256dh,
+    auth: record.auth,
+    timezone: record.timezone,
+    user_agent: record.user_agent,
+    active: true,
+  });
+
+  if (error) {
+    // La suscripción ya existe en el navegador aunque el alta haya fallado. Si
+    // el endpoint es de otra cuenta (23505), dejarla viva significa que este
+    // navegador sigue recibiendo los avisos de la cuenta anterior mientras el
+    // interruptor marca que no hay nada que arreglar. Se da de baja local para
+    // que el estado visible y el real coincidan.
+    await subscription.unsubscribe().catch(() => undefined);
+    throw new Error(
+      error.code === '23505' ? 'este navegador ya está registrado en otra cuenta' : error.message,
+    );
+  }
+
+  try {
+    await syncPushPreferences(user, { enabled: true });
+  } catch (error) {
+    // La fila ya está escrita, así que los avisos van a llegar aunque la
+    // preferencia haya fallado. Se dice igual, porque el usuario no puede
+    // arreglarlo y suprimirlo dejaría un estado que no se puede recuperar.
+    await subscription.unsubscribe().catch(() => undefined);
+    throw error;
+  }
+  return record;
 }
 
 /** Da de baja este navegador: borra la suscripción y el registro asociado. */
@@ -225,25 +389,45 @@ export async function disableWebPush(user: User | null): Promise<EnableResult> {
   if (!isPushSupported()) return { status: 'unsupported' };
 
   try {
-    const registration = await readyRegistration();
-    const subscription = registration ? await registration.pushManager.getSubscription() : null;
-    const endpoint = subscription?.endpoint ?? null;
-
-    if (subscription) await subscription.unsubscribe();
-
-    if (endpoint) {
-      const { error } = await supabase
-        .from('push_subscriptions')
-        .delete()
-        .eq('endpoint', endpoint);
-      if (error) return { status: 'failed', reason: error.message };
-    }
-
-    await syncPushPreferences(user, { enabled: false });
+    await withTimeout(
+      unsubscribeAndDelete(user),
+      ACTIVATION_TIMEOUT_MS,
+      'la baja no ha terminado a tiempo',
+    );
     return { status: 'disabled' };
   } catch (error) {
-    return { status: 'failed', reason: errorText(error) };
+    return failedBy(error);
   }
+}
+
+async function unsubscribeAndDelete(user: User | null): Promise<void> {
+  // `ensureRegistration` por el mismo motivo que en `getActiveSubscription`: si
+  // se desactiva nada más cargar, con una consulta sin espera no habría worker
+  // activo, y la baja se iría sin borrar ni la suscripción del navegador ni la
+  // fila, dejando avisos que llegan a un sitio que el usuario cree apagado.
+  const registration = await ensureRegistration();
+  const subscription = registration ? await registration.pushManager.getSubscription() : null;
+  const endpoint = subscription?.endpoint ?? null;
+
+  if (subscription) await subscription.unsubscribe();
+
+  if (endpoint) {
+    const { error } = await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
+    if (error) throw new Error(error.message);
+  }
+
+  await syncPushPreferences(user, { enabled: false });
+}
+
+/**
+ * Un tope de tiempo y un fallo no son lo mismo para quien está mirando: el
+ * primero casi siempre es un cuelgue que se puede reintentar, y el mensaje tiene
+ * que poder decirlo.
+ */
+function failedBy(error: unknown): { status: 'timeout' | 'failed'; reason: string } {
+  return isTimeout(error)
+    ? { status: 'timeout', reason: error.message }
+    : { status: 'failed', reason: errorText(error) };
 }
 
 /**
