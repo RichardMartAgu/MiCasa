@@ -58,7 +58,7 @@ npm run android  # emulador Android
 
 ### 4. Instalar la web como app
 
-La versión web es una PWA: se puede instalar y queda con su propio icono, sin barra del navegador. **En Ajustes hay una tarjeta que lo hace**: si tu navegador lo permite sale un botón "Instalar ahora", y si no, salen los pasos de tu navegador.
+La versión web es una PWA: se puede instalar y queda con su propio icono, sin barra del navegador. **En Ajustes hay una tarjeta que lo hace**: si tu navegador lo permite sale un botón "Instalar ahora", y debajo están los pasos por si prefieres hacerlo a mano o el botón no aparece. En Firefox no hay botón, porque no ofrece instalarla, y la tarjeta lo dice con los pasos y un acceso directo a favoritos.
 
 A mano, que es lo que hace falta en iPhone:
 
@@ -67,7 +67,7 @@ A mano, que es lo que hace falta en iPhone:
 | iPhone / Safari | **Compartir** → **Añadir a pantalla de inicio** |
 | Android / Chrome | Menú **⋮** → **Instalar app** |
 | Escritorio / Chrome, Edge | Menú del navegador → **Instalar MiCasa** |
-| Firefox | No instala. Guarda un acceso directo |
+| Firefox | No ofrece instalarla. Guarda un acceso directo |
 
 Los avisos de citas y cumpleaños en **iPhone solo llegan con la app instalada**: en una pestaña normal el navegador dice que puede pero no envía. La tarjeta de Recordatorios te lo explica cuando es tu caso.
 

@@ -121,19 +121,19 @@ describe('resolveState', () => {
     // Por eso una web instalable sin evento no promete un boton que no va a
     // funcionar.
     expect(resolveState({ ...base, promptAvailable: true })).toBe('instalable');
-    expect(resolveState({ ...base, promptAvailable: false })).toBe('no-instalable');
   });
 
-  it('en iPhone y en desconocido siempre hay pasos manuales', () => {
-    // iOS y Safari nunca lanzan `beforeinstallprompt`, asi que sin evento no
-    // queda mas que explicar los pasos. En Android, en cambio, sin evento se
-    // declara no-instalable: es el caso de Firefox, que no instala PWA, y es
-    // mejor decirlo que inventar unos pasos que no funcionan.
-    expect(resolveState({ ...base, platform: 'ios', promptAvailable: false })).toBe('manual');
-    expect(resolveState({ ...base, platform: 'otro', promptAvailable: false })).toBe('manual');
-    expect(resolveState({ ...base, platform: 'android', promptAvailable: false })).toBe(
-      'no-instalable',
-    );
+  it('sin evento, en cualquier plataforma, hay pasos manuales', () => {
+    // Antes, sin evento en Android se declaraba "no instalable", y eso afirmaba
+    // algo que no se sabe: que el navegador no podrá instalarla. Medido en un
+    // Chromium de verdad, el navegador decía cero errores de instalabilidad
+    // mientras la app afirmaba lo contrario. Ahora sin evento hay pasos, en todas
+    // las plataformas, que es lo único que es cierto en todos los casos.
+    for (const plataforma of ['ios', 'android', 'desktop', 'otro'] as InstallPlatform[]) {
+      expect(`${plataforma}: ${resolveState({ ...base, platform: plataforma, promptAvailable: false })}`).toBe(
+        `${plataforma}: manual`,
+      );
+    }
   });
 
   it('la app instalada gana al evento: no se ofrece instalar dos veces', () => {
@@ -142,12 +142,12 @@ describe('resolveState', () => {
 });
 
 describe('installView', () => {
-  const estados: InstallState[] = ['instalada', 'instalable', 'manual', 'no-instalable'];
+  const estados: InstallState[] = ['instalada', 'instalable', 'manual'];
 
   it('un boton con un toque solo existe cuando el navegador puede instalar', () => {
     expect(installView('instalable', 'android').actionIsPrompt).toBe(true);
     expect(installView('instalable', 'android').action).toBe('Instalar ahora');
-    for (const estado of ['instalada', 'manual', 'no-instalable'] as InstallState[]) {
+    for (const estado of ['instalada', 'manual'] as InstallState[]) {
       expect(installView(estado, 'android').actionIsPrompt).toBe(false);
       expect(installView(estado, 'android').action).toBeNull();
     }
@@ -160,21 +160,20 @@ describe('installView', () => {
     expect(view.visible).toBe(true);
   });
 
-  it('en manual siempre hay pasos, y el primero es el que se resalta', () => {
-    // El primer paso es el que la persona busca: "que toco". Por eso se
-    // resalta y no solo se lista.
+  it('en manual siempre hay pasos, y el primero es el más concreto', () => {
+    // El primer paso es el que la persona busca: "qué toco". La pantalla lo
+    // resalta por posición, no por un campo, así que lo que importa es que sea el
+    // más concreto y no un relleno delante.
     for (const plataforma of ['ios', 'android', 'desktop', 'otro'] as InstallPlatform[]) {
       const view = installView('manual', plataforma);
       expect(view.steps.length).toBeGreaterThan(0);
-      expect(view.highlight).toBe(view.steps[0]);
       expect(view.steps.every((paso) => paso.length > 10)).toBe(true);
     }
   });
 
-  it('el paso resaltado dice donde tocar en esa plataforma, no "sigue las instrucciones"', () => {
-    // El paso resaltado es el que la persona lee para saber que hacer. Si
-    // delante del concreto se colara un paso genérico, el resaltado apuntaria al
-    // equivocado y el bug volvería sin que nada se note.
+  it('el primer paso dice donde tocar en esa plataforma, no "sigue las instrucciones"', () => {
+    // Si delante del concreto se colara un paso genérico, el resaltado apuntaría
+    // al equivocado y el bug volvería sin que nada se note.
     const CONTROL = {
       ios: 'Compartir',
       android: 'menú del navegador',
@@ -183,8 +182,17 @@ describe('installView', () => {
     } as const;
     for (const plataforma of ['ios', 'android', 'desktop', 'otro'] as InstallPlatform[]) {
       const view = installView('manual', plataforma);
-      expect(view.highlight).toContain(CONTROL[plataforma]);
+      expect(`${plataforma}: ${view.steps[0]}`).toContain(CONTROL[plataforma]);
     }
+  });
+
+  it('los pasos de escritorio no dicen donde esta el menu', () => {
+    // En macOS el menu del navegador esta en la barra del sistema, no arriba a la
+    // derecha. Decirlo mandaba al Safari de un Mac, que es el navegador por
+    // defecto de ese equipo, a buscar un menu que no esta ahi. El mismo problema
+    // que el de "instalar" en un iPhone: un nombre de control que existe en otro
+    // sistema y no en este.
+    expect(installView('manual', 'desktop').steps.join(' ')).not.toContain('arriba a la derecha');
   });
 
   it('los pasos dicen donde tocar en cada plataforma', () => {
@@ -209,51 +217,72 @@ describe('installView', () => {
     expect(installView('manual', 'android').body).not.toContain('Compartir');
   });
 
-  it('no-instalable lo dice sin dar pasos que no funcionan', () => {
-    const view = installView('no-instalable', 'desktop');
-    expect(view.steps).toHaveLength(0);
-    expect(view.body).toContain('favoritos');
-    expect(view.action).toBeNull();
-    // El título también es texto que ve la persona. Dice que ya está, y no pide
-    // instalar a quien no puede.
-    expect(view.title).toBe('Esta web ya es la app');
-    expect(view.title.toLowerCase()).not.toContain('instala');
+  it('sin evento NO se le dice a la persona que su navegador no puede instalarla', () => {
+    // El bug, medido en un Chromium de verdad: el navegador informaba de cero
+    // errores de instalabilidad y la tarjeta decía "Este navegador no puede
+    // instalarla". La ausencia de `beforeinstallprompt` no prueba imposibilidad:
+    // el evento sale cuando el navegador cumple sus criterios, y hay un rato
+    // antes de que eso pase. Afirmar lo contrario era Contrary al navegador.
+    for (const plataforma of ['ios', 'android', 'desktop', 'otro'] as InstallPlatform[]) {
+      const view = installView('manual', plataforma);
+      const texto = [view.title, view.body, ...view.steps].join(' ');
+      expect(`${plataforma}: ${texto}`).not.toContain('no puede');
+      expect(`${plataforma}: ${texto}`).not.toContain('no instalable');
+    }
   });
 
-  it('pasos y botón nunca se ofrecen a la vez, en ninguna combinación', () => {
-    // No está grabado en el tipo: `InstallView` es una interfaz plana. Sin esta
-    // comprobación, un estado que devolvera los dos a la vez se colaría sin que
-    // nada se quejara, y la tarjeta pintaría un boton encima de una lista de
-    // pasos que se contradicen.
-    const estados: InstallState[] = ['instalada', 'instalable', 'manual', 'no-instalable'];
+  it('y los pasos ofrecen algo que funciona aunque el navegador no ofrezca instalar', () => {
+    // El plan B va dentro de los pasos, no en un estado aparte: es lo único que
+    // es cierto tanto si el evento llega tarde como si no llega nunca.
+    for (const plataforma of ['android', 'desktop', 'otro'] as InstallPlatform[]) {
+      const pasos = installView('manual', plataforma).steps.join(' ');
+      expect(`${plataforma}: ${pasos}`).toContain('favoritos');
+    }
+    // En iPhone no hace falta plan B: desde iOS 16.4 siempre se puede añadir, y
+    // el paso es compartir, que siempre existe.
+    expect(installView('manual', 'ios').steps.join(' ')).not.toContain('favoritos');
+  });
+
+  it('con botón, los pasos se enseñan igualmente, en las 12 combinaciones', () => {
+    // Antes el invariante era al revés: pasos y botón nunca a la vez. Se cambió a
+    // propósito, porque con el botón delante y los pasos debajo la tarjeta no
+    // cambia sola de texto cuando el navegador firma el evento, y lo que dice
+    // siempre es cierto. Este test ata el invariante nuevo en las 12
+    // combinaciones de estado y plataforma.
+    const estados: InstallState[] = ['instalada', 'instalable', 'manual'];
     const plataformas: InstallPlatform[] = ['ios', 'android', 'desktop', 'otro'];
     for (const estado of estados) {
       for (const plataforma of plataformas) {
         const view = installView(estado, plataforma);
         const etiqueta = `${estado}/${plataforma}`;
-        if (view.action !== null) {
+        if (estado === 'instalable') {
+          // Botón y pasos juntos, y los pasos no vacíos.
+          expect(`${etiqueta}: ${view.action}`).toBe(`${etiqueta}: Instalar ahora`);
+          expect(view.steps.length).toBeGreaterThan(0);
+        }
+        if (estado === 'instalada') {
+          expect(`${etiqueta}: ${view.action}`).toBe(`${etiqueta}: null`);
           expect(`${etiqueta}: ${view.steps.length}`).toBe(`${etiqueta}: 0`);
-          expect(`${etiqueta}: ${view.action}`).not.toBe(`${etiqueta}: null`);
         }
         if (view.steps.length > 0) {
-          expect(`${etiqueta}: ${view.action}`).toBe(`${etiqueta}: null`);
+          expect(view.manualSteps).toEqual(view.steps);
         }
       }
     }
   });
 
-  it('instalable trae los pasos a mano aunque no los pinte', () => {
-    // Cuando hay botón, la tarjeta no enseña los pasos, porque hay un camino de
-    // un toque. Pero si la persona lo rechaza, el aviso necesita decir cómo se
-    // hace a mano, y si `manualSteps` viniera vacío caería en un texto genérico.
+  it('instalable trae los pasos aunque se pinten, y sobrevive a que se gaste el evento', () => {
+    // Con botón los pasos se pintan, pero `manualSteps` sigue haciendo falta: si la
+    // persona rechaza el diálogo del navegador, el evento se consume, el botón
+    // desaparece, y el aviso necesita decir cómo se hace a mano.
     for (const plataforma of ['ios', 'android', 'desktop', 'otro'] as InstallPlatform[]) {
       const view = installView('instalable', plataforma);
       expect(`${plataforma}: ${view.manualSteps.length}`).not.toBe(`${plataforma}: 0`);
-      expect(view.manualSteps[0]).toBe(view.highlight ?? view.manualSteps[0]);
+      expect(view.manualSteps).toEqual(view.steps);
     }
   });
 
-  it('los cinco estados devuelven una vista completa y sin huecos', () => {
+  it('los tres estados devuelven una vista completa y sin huecos', () => {
     for (const estado of estados) {
       const view = installView(estado, 'android');
       expect(view.title.length).toBeGreaterThan(0);

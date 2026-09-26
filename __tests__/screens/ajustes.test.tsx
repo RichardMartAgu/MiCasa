@@ -454,6 +454,14 @@ describe('AjustesScreen', () => {
           visible: true,
           title: 'Instala la app',
           body: 'MiCasa se puede instalar como app: se abre con su propio icono.',
+          steps: [
+            'Abre el menú del navegador, los tres puntos de arriba a la derecha.',
+            'Toca "Instalar app" o "Añadir a pantalla de inicio".',
+          ],
+          manualSteps: [
+            'Abre el menú del navegador, los tres puntos de arriba a la derecha.',
+            'Toca "Instalar app" o "Añadir a pantalla de inicio".',
+          ],
           action: 'Instalar ahora',
           actionIsPrompt: true,
         }),
@@ -461,13 +469,29 @@ describe('AjustesScreen', () => {
       const alertWebSpy = stubWebAlert();
 
       try {
-        const { getByText, queryAllByRole } = setup();
+        const { getByText, getAllByText, queryAllByRole } = setup();
         await act(async () => {});
 
         // Se cuentan los botones de Ajustes sin la tarjeta de instalar. Es la
         // referencia que usa el test de los pasos: la tarjeta tiene que añadir
         // exactamente un botón cuando tiene acción, y ninguno cuando no.
         botonesSinLaTarjetaDeInstalar = queryAllByRole('button').length - 1;
+        // Con botón, los pasos se enseñan igualmente, debajo. Antes no se
+        // enseñaban, y la tarjeta cambiaba sola de texto cuando el navegador
+        // firmaba el evento.
+        expect(getByText('Si prefieres hacerlo a mano, o el botón no aparece:')).toBeTruthy();
+
+        // Y el botón va DELANTE de los pasos, que es el cambio de este bloque: la
+        // tarjeta no debe reordenarse cuando el navegador firma el evento. Se
+        // comprueba el orden real del árbol, no que existan las dos cosas.
+        const orden = getAllByText(/Instalar ahora|Si prefieres hacerlo a mano|Abre el menú del navegador/);
+        const indiceBoton = orden.findIndex((n) => n.props.children === 'Instalar ahora');
+        const indicePasos = orden.findIndex((n) =>
+          typeof n.props.children === 'string' && n.props.children.includes('Abre el menú'),
+        );
+        expect(indiceBoton).toBeGreaterThanOrEqual(0);
+        expect(indicePasos).toBeGreaterThanOrEqual(0);
+        expect(indiceBoton).toBeLessThan(indicePasos);
         fireEvent.press(getByText('Instalar ahora'));
         await waitFor(() => {
           expect(mockInstall).toHaveBeenCalledTimes(1);
@@ -546,17 +570,30 @@ describe('AjustesScreen', () => {
         mockUseAppInstall.mockReturnValue(
           installView({
             visible: true,
-            title: 'Esta web ya es la app',
-            body: 'Este navegador no puede instalarla, pero no la necesitas: MiCasa funciona igual abierta aquí. Guárdala en favoritos para abrirla en un toque.',
+            title: 'Instala la app',
+            body: 'Se abre en su propia ventana, con su propio icono.',
+            steps: [
+              'Abre el menú del navegador, los tres puntos de arriba a la derecha.',
+              'Si en tu navegador no aparece esa opción, guárdala en favoritos: MiCasa funciona igual.',
+            ],
+            manualSteps: [
+              'Abre el menú del navegador, los tres puntos de arriba a la derecha.',
+              'Si en tu navegador no aparece esa opción, guárdala en favoritos: MiCasa funciona igual.',
+            ],
           }),
         );
-        const noInstalable = setup();
+        const conPasos = setup();
         await act(async () => {});
-        expect(noInstalable.getByText('Esta web ya es la app')).toBeTruthy();
-        expect(noInstalable.getByText(/Guárdala en favoritos/)).toBeTruthy();
-        // Y sin pasos ni botón, que es lo que hace que en Firefox no haya una
-        // lista de instrucciones que no funcionan.
-        expect(noInstalable.queryByText('1')).toBeNull();
+        expect(conPasos.getByText('Instala la app')).toBeTruthy();
+        expect(
+          conPasos.getByText('Se abre en su propia ventana, con su propio icono.'),
+        ).toBeTruthy();
+        // Sin botón, los pasos se muestran tal cual, sin el título de plan B que
+        // solo tiene sentido cuando hay botón.
+        expect(conPasos.getByText('1')).toBeTruthy();
+        expect(
+          conPasos.queryByText('Si prefieres hacerlo a mano, o el botón no aparece:'),
+        ).toBeNull();
       } finally {
         Platform.OS = originalOs;
       }
@@ -621,6 +658,8 @@ describe('AjustesScreen', () => {
         const { getByText, queryByText, queryAllByRole } = setup();
         await act(async () => {});
 
+        // Sin botón no hay título de "hazlo a mano": los pasos ya lo son.
+        expect(queryByText('¿No te aparece el botón? Puedes hacerlo a mano:')).toBeNull();
         expect(getByText('1')).toBeTruthy();
         expect(getByText('2')).toBeTruthy();
         expect(getByText('Abre el menú Compartir, el cuadrado con la flecha hacia arriba.')).toBeTruthy();
