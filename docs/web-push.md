@@ -40,9 +40,12 @@ El service worker (`sw-src.js`) solo precachea el shell y atiende `push` y `noti
 | `supabase/migrations/20260925_web_push_trigger_hardening.sql` | `touch_updated_at` con `search_path` fijo y sin EXECUTE para anon/authenticated. |
 | `supabase/migrations/20260925_web_push_cron.sql` | RPC `push_service_secret(text)`, trigger `protect_push_subscription_state`, revoke del RPC viejo y `cron.schedule` del dispatcher. |
 | `supabase/migrations/20260925_web_push_drop_secrets_plural.sql` | Retira el RPC que devolvía los tres secretos de golpe. |
-| `supabase/functions/send-web-push/index.ts` | Edge Function: autenticación, consultas, envío y mantenimiento de suscripciones. |
+| `supabase/functions/send-web-push/index.ts` | Arranque de la función: `Deno.serve` y las tipografías del runtime. |
+| `supabase/functions/send-web-push/handler.ts` | La Edge Function: autenticación, consultas, envío, mantenimiento de suscripciones y CORS. |
 | `supabase/functions/send-web-push/reminders.ts` | Lógica pura de recordatorios (fechas, zonas horarias, texto). Sin I/O. |
 | `supabase/functions/send-web-push/reminders.test.ts` | 28 tests con `deno test`. |
+| `supabase/functions/send-web-push/cors.ts` | Lógica pura de CORS: allowlist de orígenes y cabeceras. Sin I/O ni `Deno.env`. |
+| `supabase/functions/send-web-push/cors.test.ts` | 16 tests con `deno test`, 4 de ellos contra el handler real. |
 | `supabase/config.toml` | Declara `verify_jwt = false` solo para `send-web-push`. |
 | `src/lib/web-push.ts` | Suscripción en el navegador, permisos, alta y baja. |
 | `sw-src.js` | Service worker: precache, `push` y `notificationclick`. |
@@ -93,13 +96,22 @@ Verificado empíricamente en producción, simulando los roles `anon` y `authenti
 
 ## Verificación
 
+Del bloque de Web Push:
+
 - `deno check` limpio; `deno test` 28/28.
-- `npx tsc --noEmit` limpio; `npx expo lint` limpio; `npx jest` 43/43 suites y 514/514 tests.
+- `npx tsc --noEmit` limpio; `npx expo lint` limpio; `npx jest` 49/49 suites y 653/653 tests.
 - `npm run build:web` correcto; `npm run verify:pwa` 64/64, incluidas las comprobaciones nuevas de los handlers de push.
 - Edge Function en producción: `401` sin secreto o con secreto incorrecto, `405` en `GET`, `202` encolando, `200` con `?sync=1`.
 - `pg_cron` ejecutando cada 5 minutos con éxito y `net._http_response` registrando `202`.
 
-**No verificado:** en un navegador real. Playwright no arranca en esta máquina (falta `libnspr4.so` y no hay sudo para instalarla), así que la suscripción, el banner de instalación y la recepción de un push siguen sin probarse de extremo a extremo.
+Del bloque de CORS:
+
+- `deno check` limpio; `deno test --allow-env` 44/44 (28 de recordatorios + 16 de CORS). El `--allow-env` hace falta porque el paquete npm `web-push` lee `process.env` al cargarse; sin él, `deno test` sin banderas falla al importar el módulo.
+- Función arrancada en local (`deno run --allow-env --allow-net index.ts`) y probada con `curl`: preflight con origen permitido → `204` con `Access-Control-Allow-Origin`; preflight con origen ajeno → `403` sin esa cabecera; `POST ?mode=test` con origen permitido y sin sesión → `401` **con** la cabecera; `GET` con origen permitido → `405` con la cabecera; `POST` sin `Origin` con `x-cron-secret` → `401` sin CORS, igual que antes.
+- Con `WEB_PUSH_ALLOWED_ORIGINS=https://preview-abc.vercel.app`: ese origen entra y `micasa-demo.vercel.app` se queda sin permiso, que es el comportamiento buscado al sustituir la lista.
+- `npx tsc --noEmit`, `npx expo lint` y `npx jest` (49/49 suites, 653/653) limpios, aunque este bloque no toca la app. Ojo: `tsconfig.json` excluye `supabase/`, así que esos checks no dicen **nada** de la Edge Function. Para eso están `deno check` y `deno test`.
+
+**No verificado:** en un navegador real. Playwright no arranca en esta máquina (falta `libnspr4.so` y no hay sudo para instalarla), así que la suscripción, el banner de instalación y la recepción de un push siguen sin probarse de extremo a extremo. El CORS está verificado con un preflight de verdad contra la función local, pero **la Edge Function de producción todavía no tiene este código**: hay que desplegarla y repetir el `OPTIONS` contra `sxgsqvwvugdklycpqxiu`.
 
 ## Riesgos aceptados y límites
 
@@ -109,6 +121,42 @@ Verificado empíricamente en producción, simulando los roles `anon` y `authenti
 - **Cumpleaños: preferencia global por usuario**, igual que en nativo (AsyncStorage). No es por casa.
 - **`notificationclick` enfoca la primera pestaña del mismo origen** que encuentra, no la de la casa que corresponde. Molesto, no inseguro.
 - **El service worker no sanea `title`/`body` del payload.** Hoy es inocuo porque el productor es nuestro backend; si el gateway de push se comprometiera, el texto podría ir sin sanear (las rutas sí pasan por la allowlist).
+
+## CORS
+
+`send-web-push` responde a peticiones de dos sitios distintos: el botón "Enviar" de Ajustes, que viene del **navegador**, y `pg_cron`, que viene de **pg_net** y no lleva `Origin`. Por eso el CORS está en `cors.ts` y se aplica a las cabeceras, nunca a la decisión de atender o no una petición.
+
+**Por qué hacía falta.** La llamada del navegador manda cabecera `Authorization`, así que el navegador hace siempre un preflight `OPTIONS` antes del `POST`. Con la función como estaba, ese `OPTIONS` caía en el `if (req.method !== "POST")` y respondía `405` sin ninguna cabecera `Access-Control-Allow-*`, así que el navegador bloqueaba la llamada. **El botón "Enviar" no ha funcionado nunca.** Lo que falla no es la autenticación, es que la petición no llega a salir: por eso `curl` no lo detecta, porque `curl` no hace preflight. Comprobado contra producción:
+
+```bash
+curl -i -X OPTIONS "https://sxgsqvwvugdklycpqxiu.supabase.co/functions/v1/send-web-push?mode=test" \
+  -H "Origin: https://micasa-demo.vercel.app" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: authorization,content-type"
+# HTTP/2 405, y ninguna cabecera Access-Control-Allow-*
+```
+
+**Qué hace ahora.**
+
+- `OPTIONS` con origen permitido → `204` con `Access-Control-Allow-Origin`, `-Methods: POST, OPTIONS`, `-Headers: authorization, content-type` y `Max-Age`.
+- `OPTIONS` con origen no permitido → `403` **sin** `Access-Control-Allow-Origin`. El navegador lo bloquea igual que con un `204` sin cabeceras (para `fetch`, los dos son error de red); el `403` solo sirve para distinguir en los logs un origen no autorizado de un despliegue sin CORS.
+- **Todas** las respuestas, también las de error, llevan `Access-Control-Allow-Origin` cuando el origen está permitido. Si el `401` no lo llevara, el navegador no podría ni leer por qué falló.
+- `Vary: Origin` en todas las respuestas, para que una caché no sirva a un origen la respuesta preparada para otro.
+
+No se manda `Access-Control-Allow-Credentials`: la llamada no usa cookies, solo la cabecera `Authorization` con el JWT de la sesión. Añadirlo no arregla nada y obliga a que el origen se refleje.
+
+**Orígenes permitidos.** Lista explícita, nunca `*`. Viene de `WEB_PUSH_ALLOWED_ORIGINS` (separada por comas) y, si no se define, vale la de por defecto:
+
+| Origen | Por qué |
+|---|---|
+| `https://micasa-demo.vercel.app` | La web de producción (alias de Vercel). |
+| `https://micasa.app` | El dominio propio. Todavía no sirve la web; entra por si acaso. |
+| `http://localhost:8080` | La demo local (`npm run demo`). |
+| `http://localhost:8081` | El servidor de desarrollo de Expo. |
+
+Si se define la variable, su lista **sustituye** a la de por defecto (no se suma), para que quitar un origen siga siendo posible. Los orígenes de desarrollo son inocuos: un preflight solo puede decir que sí o que no, nunca concede nada, y la autenticación sigue siendo el JWT de la sesión o el secreto del cron. Los *deployments de preview* de Vercel tienen URLs distintas y hay que añadirlos a mano.
+
+**El cron no se rompe.** `pg_net` llama sin `Origin`. Sin cabecera `Origin` no hay a quién devolverle permiso, y `corsHeaders` devuelve solo `Vary: Origin`. Lo que **no** hace la función es exigir un origen: si lo exigiera, el `POST` del cron se quedaría sin recordatorios. Hay un test que llama al handler sin `Origin` y comprueba que responde `401` (igual que antes) y no un rechazo por CORS.
 
 ## Aviso de prueba
 
@@ -121,16 +169,26 @@ Cómo está protegido:
 - Enfriamiento de 5 minutos, apoyado en la clave única de `push_log` (`test:<userId>:<bucket>`) para que funcione entre réplicas de la función. Si no queda ninguna suscripción activa se libera la reserva, para que un reintento no espere.
 - `renotify: true` a diferencia de los recordatorios: dos pruebas seguidas deben sonar, que es justo lo que se quiere comprobar.
 - Solo se muestra en web y cuando el navegador soporta push.
+- Necesita CORS: es una llamada entre orígenes con cabecera `Authorization`, y sin CORS el navegador no la deja salir. Ver la sección **CORS**; hasta que la Edge Function se despliegue con ese cambio, el botón no funciona aunque todo lo demás esté bien.
 
-Verificado en producción: sin sesión `401`, con un token inválido `401`, y con el secreto del dispatcher en lugar de sesión `401` (no se cuela por la otra vía). El dispatcher sigue respondiendo `202`.
+Verificado en producción: sin sesión `401`, con un token inválido `401`, y con el secreto del dispatcher en lugar de sesión `401` (no se cuela por la otra vía). El dispatcher sigue respondiendo `202`. El CORS está verificado solo en local (ver **Verificación**).
 
 ## Qué falta
 
-1. Mergear `#51` (PWA) y abrir el PR de este bloque: `develop` exige revisión aprobatoria y el auto-merge está deshabilitado en el repo.
-2. Decidir el destino del PR `#48` (`feat(web): oculta notificaciones en web`), que choca con esta implementación: en web las notificaciones **sí** funcionan ahora.
-3. `npm run deploy:vercel` desde el worktree y comprobar `curl -s -o /dev/null -w "%{http_code}" https://micasa-demo.vercel.app` → `200`.
-4. Prueba en navegador real: activar el interruptor en Ajustes y pulsar **Enviar** en "Aviso de prueba". Con eso queda verificado el envío real de extremo a extremo; para un recordatorio de verdad, añadir una cita para mañana con recordatorio "Día antes" y comprobarlo a las 09:00 locales.
-5. Job `check-reminders` preexistente en `cron`, fallando cada 5 minutos desde antes de este bloque. No se ha tocado: decide si se quita.
+1. **Desplegar la Edge Function**: `supabase functions deploy send-web-push`. Ojo a que se suban los tres ficheros nuevos (`handler.ts` y `cors.ts` van aparte de `index.ts`); con el CLI se sube el directorio entero, pero si se despliega a mano hay que incluirlos.
+2. Repetir el preflight contra producción y comprobar que ya no sale `405`:
+   ```bash
+   curl -i -X OPTIONS "https://sxgsqvwvugdklycpqxiu.supabase.co/functions/v1/send-web-push?mode=test" \
+     -H "Origin: https://micasa-demo.vercel.app" \
+     -H "Access-Control-Request-Method: POST" \
+     -H "Access-Control-Request-Headers: authorization,content-type"
+   ```
+   Y el dispatcher, que es lo que no debe romperse: `POST` con `x-cron-secret` y **sin** `Origin` → `202`, como hasta ahora.
+3. Prueba en navegador real: activar el interruptor en Ajustes y pulsar **Enviar** en "Aviso de prueba". Con eso queda verificado el envío real de extremo a extremo; para un recordatorio de verdad, añadir una cita para mañana con recordatorio "Día antes" y comprobarlo a las 09:00 locales.
+4. Mergear `#51` (PWA) y abrir el PR de este bloque: `develop` exige revisión aprobatoria y el auto-merge está deshabilitado en el repo.
+5. Decidir el destino del PR `#48` (`feat(web): oculta notificaciones en web`), que choca con esta implementación: en web las notificaciones **sí** funcionan ahora.
+6. `npm run deploy:vercel` desde el worktree y comprobar `curl -s -o /dev/null -w "%{http_code}" https://micasa-demo.vercel.app` → `200`.
+7. Job `check-reminders` preexistente en `cron`, fallando cada 5 minutos desde antes de este bloque. No se ha tocado: decide si se quita.
 
 ## Contexto de rama
 
