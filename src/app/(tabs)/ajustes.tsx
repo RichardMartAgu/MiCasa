@@ -289,9 +289,35 @@ export default function AjustesScreen() {
    * botón ahí para que lo pulse otra vez y no pase nada.
    */
   async function handleInstallApp() {
-    const installed = await appInstall.install();
-    if (installed) {
-      showNotice('App instalada', 'Ya tienes MiCasa con su propio icono en este dispositivo.');
+    const decision = await appInstall.install();
+    // "App instalada" NO se dice aquí. Antes esta línea era `if (installed)`, y
+    // `install()` devuelve un texto: todos los textos son verdad, así que
+    // cualquier resultado —incluido "todavía no", que es lo que pasa cuando no
+    // hay evento— pintaba "App instalada" sin que hubiera icono. Lo único que
+    // puede decir que está instalada es `appinstalled`, que actualiza
+    // `standalone` solo y se ve en la tarjeta por reactividad.
+    if (decision === 'si') {
+      showNotice(
+        'Se está instalando',
+        'El icono aparecerá en tu pantalla de inicio. Si no aparece en un rato, vuelve a instalar desde el menú del navegador.',
+      );
+      return;
+    }
+    if (decision === 'cerrada') {
+      // El navegador enseñó su diálogo y se cerró sin aceptar. Distinguirlo de un
+      // "ahora no" importa: aquí no hay nada pendiente, solo hay que volver a
+      // intentarlo.
+      showNotice(
+        'Instalación cancelada',
+        'Has cerrado el diálogo del navegador sin instalar. Pulsa otra vez y acepta cuando Chrome te lo pregunte.',
+      );
+      return;
+    }
+    if (decision === 'no-permitido') {
+      showNotice(
+        'No se puede pedir desde aquí',
+        'Este navegador no deja pedir la instalación con un botón. Suele estar en su menú, y aquí tienes los pasos.',
+      );
       return;
     }
     // El primer paso ya está escrito como una instrucción entera ("Abre el menú

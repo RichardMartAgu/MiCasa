@@ -35,26 +35,43 @@ export function InstallPromptBanner() {
     return () => clearTimeout(temporizador);
   }, []);
 
-  if (!listo || !appInstall.shouldAsk) return null;
+  // El retardo es para el *pregunto*, no para el veredicto: si alguien instala
+  // desde Ajustes durante el primer segundo y medio, el resultado tiene que verse
+  // igual. Con el retardo delante, ese intento se quedaba sin nada que lo
+  // explicara, que es el hueco que este bloque vino a cerrar.
+  const preguntando = listo && appInstall.shouldAsk;
+  const conVeredicto =
+    appInstall.installing ||
+    appInstall.veredicto === 'sin-confirmar' ||
+    appInstall.veredicto === 'confirmada';
+  if (!preguntando && !conVeredicto) return null;
 
   async function instalar() {
     const decision = await appInstall.install();
-    if (decision === 'no') {
+    if (decision === 'cerrada') {
+      showNotice(
+        'Instalación cancelada',
+        'Has cerrado el diálogo del navegador sin instalar. Pulsa otra vez y acepta cuando Chrome te lo pregunte.',
+      );
+      return;
+    }
+    if (decision === 'no-permitido') {
+      showNotice(
+        'No se puede pedir desde aquí',
+        'Este navegador no deja pedir la instalación con un botón. Suele estar en su menú, y en Ajustes tienes los pasos.',
+      );
+      return;
+    }
+    if (decision === 'todavia-no') {
       showNotice(
         'Se instala desde el navegador',
         'Abre el menú del navegador y elige la opción de instalar. En Ajustes tienes los pasos.',
       );
-      return;
     }
-    if (decision === 'si') {
-      // Ni "instalada" ni "hecho": aceptar el diálogo no es instalar. Se espera a
-      // que el navegador confirme, y mientras tanto se dice lo único que es
-      // cierto, que es que se está instalando.
-      showNotice(
-        'Se está instalando',
-        'El icono aparecerá en tu pantalla de inicio. Si no aparece en un rato, vuelve a instalar desde el menú del navegador.',
-      );
-    }
+    // Con 'si' no se avisa: el veredicto se pinta en esta misma tarjeta. Antes
+    // se mostraba un alert y, además, el aviso desaparecía —al gastarse el
+    // evento el componente se escondía— sin que nada ocupara su sitio. El
+    // resultado era que el proceso de instalar no se veía acabar nunca.
   }
 
   function ahoraNo() {
@@ -63,6 +80,69 @@ export function InstallPromptBanner() {
 
   function noPreguntarMas() {
     appInstall.decideAskAgain('no-preguntar-mas');
+  }
+
+  if (conVeredicto && appInstall.veredicto !== 'confirmada') {
+    return (
+      <View style={styles.contenedor} accessibilityRole="alert">
+        <View style={styles.tarjeta}>
+          <View style={styles.cabecera}>
+            <Ionicons
+              name={appInstall.installing ? 'hourglass-outline' : 'help-circle-outline'}
+              size={20}
+              color={Palette.accent}
+            />
+            <Text style={styles.titulo}>
+              {appInstall.installing ? 'Instalando MiCasa…' : 'No hemos podido confirmar la instalación'}
+            </Text>
+            <Pressable
+              onPress={appInstall.cerrarVeredicto}
+              accessibilityRole="button"
+              accessibilityLabel="Cerrar"
+              hitSlop={8}
+              style={styles.cerrar}>
+              <Ionicons name="close" size={18} color={Palette.textSecondary} />
+            </Pressable>
+          </View>
+          <Text style={styles.texto}>
+            {appInstall.installing
+              ? 'Tarda unos segundos. El icono aparecerá en tu pantalla de inicio y la app se abrirá sin barra del navegador.'
+              : // "No ha llegado la confirmación", no "no está instalada": si el evento
+                // llega más tarde, la tarjeta se corrige sola y avisa. Afirmar que no
+                // está instalada sería mentira en ese caso.
+                'No hemos recibido la confirmación del navegador. Búscala en el cajón de aplicaciones, no solo en la primera pantalla: si no está, la instalación a mano suele estar en el menú del navegador, y en Ajustes están los pasos.'}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  // El final bueno también se dice. Sin esto, instalar bien terminaba en silencio:
+  // el aviso se retiraba, el icono aparecía y no había ninguna confirmación de que
+  // aquello era el fin del proceso y no otro cuelgue.
+  if (appInstall.veredicto === 'confirmada') {
+    return (
+      <View style={styles.contenedor} accessibilityRole="alert">
+        <View style={styles.tarjeta}>
+          <View style={styles.cabecera}>
+            <Ionicons name="checkmark-circle-outline" size={20} color={Palette.accent} />
+            <Text style={styles.titulo}>MiCasa ya está instalada</Text>
+            <Pressable
+              onPress={appInstall.cerrarVeredicto}
+              accessibilityRole="button"
+              accessibilityLabel="Cerrar"
+              hitSlop={8}
+              style={styles.cerrar}>
+              <Ionicons name="close" size={18} color={Palette.textSecondary} />
+            </Pressable>
+          </View>
+          <Text style={styles.texto}>
+            Ya tienes MiCasa con su propio icono. Se abre sin barra del navegador y los avisos llegan aunque la
+            cierres.
+          </Text>
+        </View>
+      </View>
+    );
   }
 
   return (

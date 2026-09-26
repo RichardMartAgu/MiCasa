@@ -1,201 +1,159 @@
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import { InstallPromptBanner } from '@/components/install-prompt-banner';
+import { useAppInstall, type AppInstall } from '@/hooks/use-app-install';
+import { showNotice } from '@/lib/notice';
 
-const mockInstall = jest.fn(async () => 'si' as const);
-// Se comporta como el hook de verdad: decidir esconde el aviso. Si el mock no
-// cambiara nada, el test de "ahora no" estaría probando que el mock no cambia.
-const mockDecideAskAgain = jest.fn((decision: string) => {
-  if (decision === 'no' || decision === 'no-preguntar-mas') mockEstado.shouldAsk = false;
-});
-const mockShowNotice = jest.fn();
+jest.mock('@/hooks/use-app-install', () => ({ useAppInstall: jest.fn() }));
+jest.mock('@/lib/notice', () => ({ showNotice: jest.fn() }));
 
-type Estado = {
-  shouldAsk: boolean;
-  installing: boolean;
-  standalone: boolean;
-  platform: string;
-  view: Record<string, unknown>;
-  pushNotice: { title: string; body: string } | null;
-};
+const instalarMock = jest.fn();
 
-const POR_DEFECTO: Estado = {
-  shouldAsk: true,
-  installing: false,
-  standalone: false,
-  platform: 'android',
-  view: {
-    visible: true,
-    title: 'Instala la app',
-    body: '',
-    steps: [],
-    manualSteps: [],
-    action: 'Instalar ahora',
-    actionIsPrompt: true,
-    atajoNoEsApp: null,
-  },
-  pushNotice: null,
-};
-
-let mockEstado: Estado = { ...POR_DEFECTO };
-
-jest.mock('@/hooks/use-app-install', () => ({
-  useAppInstall: () => ({
-    ...mockEstado,
-    install: mockInstall,
-    decideAskAgain: (decision: string) => mockDecideAskAgain(decision),
-  }),
-}));
-
-jest.mock('@/lib/notice', () => ({
-  showNotice: (...args: unknown[]) => mockShowNotice(...args),
-}));
-
-jest.mock('@expo/vector-icons', () => {
-  const { Text } = require('react-native');
-  return { Ionicons: ({ name }: { name: string }) => <Text>{name}</Text> };
-});
-
-const NO_PREGUNTAR = 'No preguntar más';
-
-// Parte siempre del estado por defecto y no del que dejó el test anterior: el
-// mock muta `shouldAsk` al decidir, y sin esto un test que decidía dejaba al
-// siguiente con el aviso ya callado y sin banner que pulsar.
-function base(overrides: Partial<Estado> = {}) {
-  mockEstado = { ...POR_DEFECTO, ...overrides };
+/**
+ * Todos los caminos de una instalación tienen que acabar en algo que se lea.
+ *
+ * El fallo que motivó esto: al aceptar, el evento se gastaba, `shouldAsk` se
+ * ponía a falso y el aviso desaparecía sin que nada ocupara su sitio. El
+ * proceso se quedaba a medias para siempre y no había forma de saber si había
+ * funcionado.
+ */
+function hook(over: Partial<AppInstall> = {}): AppInstall {
+  return {
+    view: { state: 'instalable', manualSteps: ['Abre el menú del navegador.'], visible: true },
+    platform: 'android',
+    standalone: false,
+    installing: false,
+    veredicto: 'ninguno',
+    cerrarVeredicto: jest.fn(),
+    install: instalarMock,
+    decideAskAgain: jest.fn(),
+    shouldAsk: true,
+    pushNotice: null,
+    ...over,
+  } as AppInstall;
 }
 
-describe('el aviso-emergente de instalar', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    jest.useFakeTimers();
-    base();
+beforeEach(() => {
+  jest.clearAllMocks();
+  jest.useFakeTimers();
+  (useAppInstall as jest.Mock).mockReturnValue(hook());
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
+async function dejarAparecer() {
+  render(<InstallPromptBanner />);
+  await jest.advanceTimersByTimeAsync(1500);
+}
+
+describe('InstallPromptBanner: el aviso', () => {
+  it('pregunta cuando el navegador dice que puede instalar', async () => {
+    await dejarAparecer();
+    expect(screen.getByText('¿Quieres MiCasa en tu pantalla de inicio?')).toBeTruthy();
   });
 
-  afterEach(() => {
-    jest.useRealTimers();
+  it('no aparece cuando ya está instalada', async () => {
+    (useAppInstall as jest.Mock).mockReturnValue(hook({ shouldAsk: false, standalone: true }));
+    await dejarAparecer();
+    expect(screen.queryByText('¿Quieres MiCasa en tu pantalla de inicio?')).toBeNull();
   });
 
-  it('pregunta con un botón, y el botón instala', async () => {
-    const { getByText, queryByText } = render(<InstallPromptBanner />);
+  it('el delay se respeta: antes de 1,2 s no hay nada', () => {
+    render(<InstallPromptBanner />);
+    jest.advanceTimersByTime(500);
+    expect(screen.queryByText('¿Quieres MiCasa en tu pantalla de inicio?')).toBeNull();
+  });
+});
 
-    // Primero no se ve: el evento suele llegar nada más cargar y un cartel que
-    // salta encima de la pantalla mientras se lee no se lee.
-    expect(queryByText('¿Quieres MiCasa en tu pantalla de inicio?')).toBeNull();
-
-    await act(async () => {
-      jest.advanceTimersByTime(1500);
-    });
-
-    expect(getByText('¿Quieres MiCasa en tu pantalla de inicio?')).toBeTruthy();
-    expect(getByText('Instalar')).toBeTruthy();
-
-    await act(async () => {
-      fireEvent.press(getByText('Instalar'));
-    });
-
-    expect(mockInstall).toHaveBeenCalledTimes(1);
+describe('InstallPromptBanner: el veredicto se ve acabar', () => {
+  it('mientras instala, la tarjeta dice que se está instalando', async () => {
+    (useAppInstall as jest.Mock).mockReturnValue(hook({ installing: true, shouldAsk: false }));
+    await dejarAparecer();
+    // `shouldAsk` es falso porque el evento ya se gastó. Si esto no se pinta, la
+    // persona se queda mirando un proceso que no termina.
+    expect(screen.getByText('Instalando MiCasa…')).toBeTruthy();
   });
 
-  it('al instalar dice que se está instalando, y NO dice que ya está instalada', async () => {
-    // El bug que hizo que alguien creyera que la tenía puesta: aceptar el
-    // diálogo del navegador no es instalar. Hasta que llegue `appinstalled`, lo
-    // único cierto es que está en marcha.
-    mockInstall.mockResolvedValue('si' as never);
-    const { getByText } = render(<InstallPromptBanner />);
-    await act(async () => {
-      jest.advanceTimersByTime(1500);
-    });
-
-    await act(async () => {
-      fireEvent.press(getByText('Instalar'));
-    });
-
-    const [titulo, cuerpo] = mockShowNotice.mock.calls[0] as [string, string];
-    expect(titulo).toBe('Se está instalando');
-    expect(cuerpo).toContain('pantalla de inicio');
-    expect(`${titulo} ${cuerpo}`).not.toContain('App instalada');
+  it('si el navegador no confirma, lo dice y dice dónde mirar', async () => {
+    (useAppInstall as jest.Mock).mockReturnValue(hook({ veredicto: 'sin-confirmar', shouldAsk: false }));
+    await dejarAparecer();
+    expect(screen.getByText('No hemos podido confirmar la instalación')).toBeTruthy();
+    // El cajón de aplicaciones: es donde aparece y donde la gente no mira.
+    expect(screen.getByText(/cajón de aplicaciones/)).toBeTruthy();
   });
 
-  it('si la persona lo rechaza, se le dice que se hace desde el menú, no que se instaló', async () => {
-    mockInstall.mockResolvedValue('no' as never);
-    const { getByText } = render(<InstallPromptBanner />);
-    await act(async () => {
-      jest.advanceTimersByTime(1500);
-    });
-
-    await act(async () => {
-      fireEvent.press(getByText('Instalar'));
-    });
-
-    const [titulo, cuerpo] = mockShowNotice.mock.calls[0] as [string, string];
-    expect(titulo).toBe('Se instala desde el navegador');
-    expect(cuerpo).toContain('menú del navegador');
+  it('el veredicto se ve aunque todavía no hayan pasado los 1,2 s del retardo', () => {
+    // El retardo es para el *pregunto*, no para el resultado. Si alguien instala
+    // desde Ajustes en el primer segundo y medio, su resultado también se tiene
+    // que ver: con el retardo delante, ese intento se quedaba mudo.
+    (useAppInstall as jest.Mock).mockReturnValue(hook({ veredicto: 'sin-confirmar', shouldAsk: false }));
+    render(<InstallPromptBanner />);
+    jest.advanceTimersByTime(500);
+    expect(screen.getByText('No hemos podido confirmar la instalación')).toBeTruthy();
   });
 
-  it('"ahora no" lo esconde pero no lo recuerda para siempre', async () => {
-    const { getByText, queryByText, rerender } = render(<InstallPromptBanner />);
-    await act(async () => {
-      jest.advanceTimersByTime(1500);
-    });
-
-    await act(async () => {
-      fireEvent.press(getByText('Ahora no'));
-    });
-    // El hook de verdad cambia de estado al decidir, y eso repinta. El mock no
-    // tiene estado, así que hay que forzar el repintado para ver el efecto.
-    await act(async () => {
-      rerender(<InstallPromptBanner />);
-    });
-
-    expect(mockDecideAskAgain).toHaveBeenCalledWith('no');
-    expect(queryByText('¿Quieres MiCasa en tu pantalla de inicio?')).toBeNull();
+  it('instalada sí, y se dice: el final bueno no es un silencio', async () => {
+    // Instalar bien terminaba sin decir nada: el aviso se retiraba y el icono
+    // aparecía, sin confirmación de que aquello era el fin.
+    (useAppInstall as jest.Mock).mockReturnValue(hook({ veredicto: 'confirmada', shouldAsk: false }));
+    await dejarAparecer();
+    expect(screen.getByText('MiCasa ya está instalada')).toBeTruthy();
   });
 
-  it('"no preguntar más" se puede tocar en el texto y en la X, y se recuerda', async () => {
-    // Las dos vías tienen que hacer lo mismo: la X y el texto.
-    const { getByText, getByLabelText, unmount } = render(<InstallPromptBanner />);
-    await act(async () => {
-      jest.advanceTimersByTime(1500);
-    });
-
-    await act(async () => {
-      fireEvent.press(getByText(NO_PREGUNTAR));
-    });
-    expect(mockDecideAskAgain).toHaveBeenCalledWith('no-preguntar-mas');
-    unmount();
-
-    // La X hace lo mismo, en un montaje limpio: si la preferencia ya estuviera
-    // guardada el aviso ni se enseñaría, así que hay que empezar de cero.
-    base();
-    const otra = render(<InstallPromptBanner />);
-    await act(async () => {
-      jest.advanceTimersByTime(1500);
-    });
-    expect(otra.getByLabelText('No preguntar más')).toBeTruthy();
-    await act(async () => {
-      fireEvent.press(otra.getByLabelText('No preguntar más'));
-    });
-    expect(mockDecideAskAgain).toHaveBeenCalledTimes(2);
-    expect(mockDecideAskAgain).toHaveBeenLastCalledWith('no-preguntar-mas');
+  it('el veredicto se puede cerrar, y se llama al hook', async () => {
+    const cerrarVeredicto = jest.fn();
+    (useAppInstall as jest.Mock).mockReturnValue(hook({ veredicto: 'sin-confirmar', shouldAsk: false, cerrarVeredicto }));
+    await dejarAparecer();
+    fireEvent.press(screen.getByLabelText('Cerrar'));
+    expect(cerrarVeredicto).toHaveBeenCalled();
   });
 
-  it('no se enseña cuando el navegador no puede instalar, ni cuando ya está instalada', async () => {
-    // En iPhone no hay evento, y con la app puesta preguntar es absurdo. En los dos
-    // casos la tarjeta de Ajustes es el sitio, y ahí no aparece esto.
-    base({ shouldAsk: false });
-    const primera = render(<InstallPromptBanner />);
-    await act(async () => {
-      jest.advanceTimersByTime(1500);
-    });
-    expect(primera.queryByText('¿Quieres MiCasa en tu pantalla de inicio?')).toBeNull();
-    primera.unmount();
+  it('mientras instala no se ofrece volver a instalar', async () => {
+    (useAppInstall as jest.Mock).mockReturnValue(hook({ installing: true, shouldAsk: false }));
+    await dejarAparecer();
+    expect(screen.queryByText('Instalar')).toBeNull();
+    expect(screen.queryByText('Ahora no')).toBeNull();
+  });
+});
 
-    base({ shouldAsk: true, standalone: true, shouldAskOverride: undefined } as never);
-    const segunda = render(<InstallPromptBanner />);
-    await act(async () => {
-      jest.advanceTimersByTime(1500);
-    });
-    expect(segunda.queryByText('¿Quieres MiCasa en tu pantalla de inicio?')).toBeTruthy();
+describe('InstallPromptBanner: lo que devuelve instalar', () => {
+  it('un diálogo cerrado por la persona se dice, y no se confunde con "ahora no"', async () => {
+    instalarMock.mockResolvedValue('cerrada');
+    await dejarAparecer();
+    fireEvent.press(screen.getByText('Instalar'));
+    await waitFor(() => expect(showNotice).toHaveBeenCalled());
+    const [titulo, cuerpo] = (showNotice as jest.Mock).mock.calls[0];
+    expect(titulo).toBe('Instalación cancelada');
+    // Antes esto devolvía 'no' y la tarjeta de Ajustes decía "Se instala desde
+    // el navegador", que no es lo que pasó: el diálogo sí se enseñó.
+    expect(cuerpo).toMatch(/cerrado el diálogo/i);
+  });
+
+  it('un navegador que ya no lo permite dice la alternativa que siempre funciona', async () => {
+    instalarMock.mockResolvedValue('no-permitido');
+    await dejarAparecer();
+    fireEvent.press(screen.getByText('Instalar'));
+    await waitFor(() => expect(showNotice).toHaveBeenCalled());
+    expect((showNotice as jest.Mock).mock.calls[0][0]).toBe('No se puede pedir desde aquí');
+  });
+
+  it('sin evento, se remite a los pasos manuales', async () => {
+    instalarMock.mockResolvedValue('todavia-no');
+    await dejarAparecer();
+    fireEvent.press(screen.getByText('Instalar'));
+    await waitFor(() => expect(showNotice).toHaveBeenCalled());
+    expect((showNotice as jest.Mock).mock.calls[0][0]).toBe('Se instala desde el navegador');
+  });
+
+  it('al aceptar no sale ningún alert: el veredicto lo pinta la propia tarjeta', async () => {
+    // Con un alert y nada más, la persona ve un mensaje que se va y un aviso que
+    // ha desaparecido. Sin feedback persistente, el proceso no parece acabar.
+    instalarMock.mockResolvedValue('si');
+    await dejarAparecer();
+    fireEvent.press(screen.getByText('Instalar'));
+    await waitFor(() => expect(instalarMock).toHaveBeenCalled());
+    expect(showNotice).not.toHaveBeenCalled();
   });
 });
