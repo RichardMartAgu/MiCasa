@@ -2,6 +2,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Alert, Platform } from 'react-native';
 
 import AjustesScreen from '@/app/(tabs)/ajustes';
+import type { PromptDecision } from '@/hooks/use-app-install';
 import type { Casa, CasaMember, Profile } from '@/lib/types';
 
 jest.mock('@react-native-community/datetimepicker', () => {
@@ -166,7 +167,7 @@ const mockRenameCasa = jest.fn();
 const mockDeleteCasa = jest.fn();
 const mockRefreshMembers = jest.fn();
 
-const mockInstall = jest.fn(async () => true);
+const mockInstall = jest.fn<Promise<PromptDecision>, []>()
 /** Botones de Ajustes sin la tarjeta de instalar. Lo fija el test del botón. */
 let botonesSinLaTarjetaDeInstalar = 0;
 /**
@@ -195,6 +196,11 @@ function installView(
     },
     platform: 'android',
     standalone: true,
+    installing: false,
+    veredicto: 'ninguno' as const,
+    cerrarVeredicto: jest.fn(),
+    shouldAsk: false,
+    decideAskAgain: jest.fn(),
     install: mockInstall,
     pushNotice: null as { title: string; body: string } | null,
     ...hookOverrides,
@@ -258,7 +264,10 @@ beforeEach(() => {
   // Por defecto la instalación no se enseña, que es lo que pasa en nativo: la
   // tarjeta solo aparece en web y solo si hay algo que hacer.
   mockUseAppInstall.mockReturnValue(installView());
-  mockInstall.mockResolvedValue(true);
+  // 'si' es lo que devuelve `install()` cuando se acepta el diálogo del
+  // navegador. Antes ponía `true`, un booleano que no existe en el contrato: por
+  // eso el bug de `if (installed)` era invisible en los tests.
+  mockInstall.mockResolvedValue('si');
 });
 
 afterEach(() => {
@@ -496,7 +505,15 @@ describe('AjustesScreen', () => {
         await waitFor(() => {
           expect(mockInstall).toHaveBeenCalledTimes(1);
         });
-        expect(alertWebSpy).toHaveBeenCalledWith(expect.stringContaining('icono'));
+        // Antes aquí se exigía un texto con "icono" que venía de la línea
+        // `if (installed)`, o sea de la mentira: el botón no puede afirmar que
+        // está instalada. Lo que puede decir es que se está instalando.
+        expect(mockInstall).toHaveBeenCalledTimes(1);
+        // En web el alert solo lleva el cuerpo, no el título. Lo que importa es
+        // que el cuerpo fala de lo que va a pasar, no de que ya está hecho.
+        const dicho = String(alertWebSpy.mock.calls.at(-1)?.[0] ?? '');
+        expect(dicho).toMatch(/aparecerá en tu pantalla de inicio/i);
+        expect(dicho).not.toMatch(/ya tienes/i);
       } finally {
         Platform.OS = originalOs;
       }
@@ -509,7 +526,8 @@ describe('AjustesScreen', () => {
       Platform.OS = 'web';
       mockIsPushSupported.mockReturnValue(true);
       mockAreNotificationsEnabled.mockResolvedValue(false);
-      mockInstall.mockResolvedValue(false);
+      // Sin evento del navegador: la salida es la instrucción manual.
+      mockInstall.mockResolvedValue('todavia-no');
       mockUseAppInstall.mockReturnValue(
         installView({
           visible: true,
@@ -537,6 +555,55 @@ describe('AjustesScreen', () => {
             expect.stringContaining('Compartir'),
           );
         });
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('no dice "App instalada" con ningun resultado que no sea instalar de verdad', async () => {
+      // Este test es el que faltaba cuando el bug estaba vivo en produccion. La
+      // linea era `if (installed)`, y `install()` devuelve un texto, asi que
+      // cualquier texto era "instalada": tambien "todavia-no", que es lo que
+      // pasa cuando no hay evento del navegador, o sea el caso mas comun en
+      // iPhone. No lo cazaba porque el mock devolvia `false`, un booleano
+      // falsy, y con `false` la linea se comportaba bien. Aqui se devuelven los
+      // valores reales del contrato.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      const alertWebSpy = stubWebAlert();
+      const installable = {
+        visible: true,
+        title: 'Instala la app',
+        body: 'Se abre con su propio icono.',
+        action: 'Instalar ahora',
+        actionIsPrompt: true,
+        manualSteps: ['Abre el menú del navegador.'],
+      };
+
+      try {
+        // Los cuatro valores que `install()` puede devolver de verdad, y solo
+        // esos: 'no' y 'no-preguntar-mas' son de `decideAskAgain`, no de aquí.
+        // Tipado como el contrato real, no como `string`: si mañana el contrato
+        // cambia, este test no compila en vez de pasar probando cualquier cosa.
+        const sinInstalar: PromptDecision[] = ['todavia-no', 'cerrada', 'no-permitido'];
+        for (const decision of sinInstalar) {
+          alertWebSpy.mockClear();
+          mockInstall.mockResolvedValue(decision);
+          mockUseAppInstall.mockReturnValue(
+            installView({ ...installable }, { standalone: false }),
+          );
+          const { getByText, unmount } = setup();
+          await act(async () => {});
+
+          expect(getByText('Instalar ahora')).toBeTruthy();
+          fireEvent.press(getByText('Instalar ahora'));
+          await waitFor(() => expect(alertWebSpy).toHaveBeenCalled());
+          // "App instalada" solo puede aparecer con el evento `appinstalled`,
+          // que reactiva la tarjeta. Nunca desde este botón.
+          const dicho = alertWebSpy.mock.calls.map((c) => String(c[0])).join(' ');
+          expect(dicho).not.toMatch(/ya tienes MiCasa/i);
+          unmount();
+        }
       } finally {
         Platform.OS = originalOs;
       }
@@ -644,7 +711,7 @@ describe('AjustesScreen', () => {
       Platform.OS = 'web';
       mockIsPushSupported.mockReturnValue(true);
       mockAreNotificationsEnabled.mockResolvedValue(false);
-      mockInstall.mockResolvedValue(false);
+      mockInstall.mockResolvedValue('todavia-no');
       mockUseAppInstall.mockReturnValue(
         installView({
           visible: true,

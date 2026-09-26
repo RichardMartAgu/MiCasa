@@ -26,8 +26,32 @@ export interface InstallPromptEvent extends Event {
   readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
+/**
+ * El intento de instalación en curso, también como estado de módulo.
+ *
+ * Va aquí por un motivo concreto, y lo-costoso que fue: `useAppInstall()` se
+ * monta **dos veces**, una en el layout global de las pestañas y otra en Ajustes,
+ * porque cada uno necesita su propio aviso. Con el estado dentro del hook, cada
+ * instancia tenía su propio `installing` y su propio veredicto, así que al
+ * instalar desde la tarjeta de Ajustes el veredicto lo guardaba la instancia de
+ * Ajustes y lo que se despejaba en pantalla era el banner, montado en la otra
+ * instancia: el proceso se quedaba a medias justo en la pantalla desde la que
+ * se había lanzado, y sin nada que lo explicara. Es el mismo problema que
+ * motivó este módulo para el evento, y la misma solución: una sola copia del
+ * estado, leída por todos.
+ */
+export type VeredictoInstall =
+  | 'ninguno'
+  /** Se aceptó el diálogo del navegador, esperando a que confirme. */
+  | 'esperando'
+  /** El navegador confirmó con `appinstalled`. */
+  | 'confirmada'
+  /** Se aceptó pero el evento no llegó: se dice, y se sigue diciendo. */
+  | 'sin-confirmar';
+
 let cached: InstallPromptEvent | null = null;
 let attached = false;
+let veredicto: VeredictoInstall = 'ninguno';
 const subscribers = new Set<() => void>();
 
 /** Si este entorno admite escuchar eventos de `window`. */
@@ -71,6 +95,24 @@ export function consume(): void {
   set(null);
 }
 
+/** Cómo terminó el último intento. Compartido por todas las instancias del hook. */
+export function readVeredicto(): VeredictoInstall {
+  return veredicto;
+}
+
+/**
+ * Fija el veredicto y avisa a quien esté mirando.
+ *
+ * `useSyncExternalStore` compara el valor anterior con el nuevo, así que poner dos
+ * veces el mismo no pinta de más: notificar siempre es seguro y no cuesta un
+ * render extra.
+ */
+export function setVeredicto(next: VeredictoInstall): void {
+  if (veredicto === next) return;
+  veredicto = next;
+  for (const subscriber of subscribers) subscriber();
+}
+
 // Se engancha al importar. En nativo y en los entornos de prueba `canListen()` es
 // falso y no pasa nada.
 attach();
@@ -86,6 +128,7 @@ attach();
 export function resetForTests(): void {
   cached = null;
   attached = false;
+  veredicto = 'ninguno';
   subscribers.clear();
 }
 

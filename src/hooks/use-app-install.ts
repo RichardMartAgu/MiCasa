@@ -3,16 +3,52 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { detectPlatform, installView, pushNeedsInstalledApp, pushNeedingInstallNotice, resolveState, type InstallPlatform, type InstallView } from '@/lib/app-install';
-import { canListen, consume, read, subscribe, type InstallPromptEvent } from '@/lib/install-prompt';
+import {
+  canListen,
+  consume,
+  read,
+  readVeredicto,
+  setVeredicto,
+  subscribe,
+  type InstallPromptEvent,
+  type VeredictoInstall,
+} from '@/lib/install-prompt';
 
-/** Cuánto se espera el evento `appinstalled` antes de dejar de prometer nada. */
-export const INSTALL_CONFIRM_MS = 4000;
+/**
+ * Cuánto se espera el evento `appinstalled` antes de dejar de prometer nada.
+ *
+ * Cuatro segundos era una suposición sin medir, y era corta: en un móvil de verdad
+ * instalar no es un cambio de estado. Diez segundos es una heurística, no
+ * un dato, y por eso el veredicto que se da al vencer no es "no se ha
+ * instalado" sino "no hemos podido confirmarlo": si el evento llega más tarde,
+ * la pantalla se corrige sola y dice que sí está instalada.
+ */
+export const INSTALL_CONFIRM_MS = 10000;
 
 const NO_PREGUNTAR_MAS = 'micasa.no_preguntar_instalar';
 
-/** Que la persona ya ha dicho que no quiere que se le pregunte. */
-export type PromptDecision = 'si' | 'no' | 'no-preguntar-mas' | 'todavia-no';
+export type PromptDecision =
+  /** Se aceptó el diálogo del navegador: la instalación está en marcha. */
+  | 'si'
+  /** Se pulsó "Ahora no" en el aviso. */
+  | 'no'
+  /** "No preguntar más" en el aviso. */
+  | 'no-preguntar-mas'
+  /** No hay evento del navegador: no se puede instalar con un toque. */
+  | 'todavia-no'
+  /** El navegador enseñó su diálogo y la persona lo cerró sin aceptar. */
+  | 'cerrada'
+  /** El navegador ya no permite el diálogo (se ha gastado o no lo admite). */
+  | 'no-permitido';
 
+/**
+ * Cómo terminó el intento de instalar.
+ *
+ * Antes solo había "instalando" y "instalada", y ningún camino intermedio existía: ni
+ * el fallo, ni el diálogo cerrado. Todo lo que no acababa en `appinstalled`
+ * terminaba callado, y por eso se podía reintentar para siempre sin que nadie
+ * supiera qué había pasado.
+ */
 export interface AppInstall {
   view: InstallView;
   platform: InstallPlatform;
@@ -32,7 +68,11 @@ export interface AppInstall {
    * dos nombres para un estado.
    */
   installing: boolean;
-  /** Lanza la instalación. `false` cuando el navegador no dio el evento. */
+  /** Cómo terminó el último intento. Se queda hasta que se cierre o se reintente. */
+  veredicto: VeredictoInstall;
+  /** Cierra el veredicto para que deje de ocupar sitio. */
+  cerrarVeredicto: () => void;
+  /** Lanza la instalación. Dice qué pasó, no solo si se aceptó el diálogo. */
   install: () => Promise<PromptDecision>;
   /** Se llama al rechazar el aviso-emergente, para recordarlo o no. */
   decideAskAgain: (decision: Exclude<PromptDecision, 'todavia-no'>) => void;
@@ -111,7 +151,24 @@ export function useAppInstall(): AppInstall {
   // ni suscripción.
   const promptEvent = usePromptEvent(native);
   const [standalone, setStandalone] = useState(() => (native ? false : readStandalone()));
-  const [installing, setInstalling] = useState(false);
+  // El veredicto de la instalación en curso. Sin esto, aceptar el diálogo de
+  // Chrome acababa en silencio: se dejaba de estar "instalando" y no se pintaba
+  // nada, así que la persona se quedaba sin saber si había funcionado y podía
+  // pulsar el botón otra vez indefinidamente.
+  //
+  // Vive en el almacén de módulo y no en este `useState` porque el hook se monta
+  // dos veces (layout de pestañas y Ajustes) y, con estado local, el aviso y la
+  // tarjeta no veían el mismo intento: el proceso se escondía en la pantalla
+  // desde la que no se había lanzado.
+  // Sin suscripción en nativo: `subscribe` engancha el listener del navegador, y
+  // en nativo no se toca. Es la misma razón por la que el evento se lee con una
+  // suscripción falsa allí.
+  const veredicto: VeredictoInstall = useSyncExternalStore(
+    native ? SIN_SUSCRIPCION : subscribe,
+    readVeredicto,
+    () => 'ninguno',
+  );
+  const installing = veredicto === 'esperando';
   // Dos cosas distintas y que se confundían: lo descartado en esta sesión, que
   // hace callar al aviso ya, y la preferencia guardada, que hace callo para
   // siempre. Con una sola, "Ahora no" no tapaba el aviso: se leía, se contestaba
@@ -151,7 +208,14 @@ export function useAppInstall(): AppInstall {
       // Aquí sí: el navegador ha instalado de verdad. También se guarda que no
       // vuelva a preguntar, porque ya no tiene sentido.
       setStandalone(true);
-      setInstalling(false);
+      // El cartel de "ya está instalada" solo si había un intento en marcha desde
+      // la app. Si la persona la instaló desde el menú del navegador sin tocar
+      // nuestro botón, un `alert` asertivo en mitad de lo que ya estaba haciendo
+      // es una interrumpición que no ha pedido nadie. La tarjeta de Ajustes lo
+      // refleja igualmente por `standalone`.
+      if (readVeredicto() === 'esperando' || readVeredicto() === 'sin-confirmar') {
+        setVeredicto('confirmada');
+      }
       setDescartadoEnEstaSesion(true);
       setPrefGuardada(true);
       void AsyncStorage.setItem(NO_PREGUNTAR_MAS, '1').catch(() => undefined);
@@ -172,38 +236,62 @@ export function useAppInstall(): AppInstall {
     };
   }, [native]);
 
-  // Si se aceptó y el evento no llega en un rato, se deja de estar en "instalando"
-  // sin decir que está instalada. Puede que el navegador la haya instalado y no
-  // lo diga, o que haya fallado; en los dos casos la tarjeta sigue siendo la que
-  // dice la verdad.
+  // Si se aceptó y el evento no llega, se deja de estar en "instalando" sin decir
+  // que está instalada: puede que el navegador la haya instalado y no lo diga, o
+  // que haya fallado. Lo que no puede ser es no decir nada, así que el estado
+  // que queda es un veredicto explícito que la pantalla pinta y que se puede
+  // cerrar, en vez de un silencio que se lee como un fallo.
   useEffect(() => {
-    if (!installing) return;
-    const temporizador = setTimeout(() => setInstalling(false), INSTALL_CONFIRM_MS);
+    if (veredicto !== 'esperando') return;
+    const temporizador = setTimeout(() => setVeredicto('sin-confirmar'), INSTALL_CONFIRM_MS);
     return () => clearTimeout(temporizador);
-  }, [installing]);
+  }, [veredicto]);
 
   const install = useCallback(async (): Promise<PromptDecision> => {
     if (!promptEvent) return 'todavia-no';
+    // El banner y la tarjeta de Ajustes están los dos en pantalla, así que un
+    // doble toque es fácil. La segunda llamada a `prompt()` lanzaría, y además
+    // borraría el estado del intento que sí está en marcha: quien está
+    // instalando se quedaría sin nada que explique su proceso.
+    // Se lee del almacén y no del valor del closure: dos clics en el mismo
+    // fotograma no llegan a re-pintar, así que el closure todavía diría "ninguno"
+    // en el segundo y dejaría pasar los dos `prompt()`.
+    if (readVeredicto() === 'esperando') return 'si';
+    setVeredicto('ninguno');
+
     try {
       await promptEvent.prompt();
-      const choice = await promptEvent.userChoice;
-      const accepted = choice.outcome === 'accepted';
-      // El evento se agota: si la persona no acepta, hay que esperar a que el
-      // navegador lance otro, y el botón no puede ofrecerlo otra vez. El almacén se
-      // vacía también, o un componente que se monte después volvería a encontrar
-      // un evento gastado.
+    } catch (error) {
+      // `prompt()` rechaza con `AbortError` cuando la persona cierra el diálogo
+      // nativo: el diálogo sí se enseñó, así que no es que el navegador no lo
+      // permita. Era lo que se.Before decía "no permitido" y llevaba a la gente
+      // a tocar unos ajustes que no eran el problema.
       consume();
-      if (accepted) {
-        // No se marca como instalada: solo se espera a `appinstalled`.
-        setInstalling(true);
-      }
-      return accepted ? 'si' : 'no';
-    } catch {
-      // Un `prompt()` que lanza significa que el navegador ya no lo permite. No
-      // es un fallo que la persona pueda resolver, asi que se avisa y a seguir.
-      consume();
-      return 'no';
+      return error instanceof Error && error.name === 'AbortError' ? 'cerrada' : 'no-permitido';
     }
+
+    // A partir de aquí el diálogo se ha enseñado. El veredicto se pone ANTES de
+    // esperar `userChoice`: si esa promesa rechaza, la instalación puede estar en
+    // marcha y lo que no puede ser es quedarse sin nada que la explique, que es
+    // justo el silencio que este bloque vino a cerrar.
+    setVeredicto('esperando');
+
+    let accepted = false;
+    try {
+      accepted = (await promptEvent.userChoice).outcome === 'accepted';
+    } catch {
+      // No se puede saber si se aceptó. Se deja el veredicto en 'esperando' y
+      // que el evento `appinstalled` lo confirme: afirmar lo contrario sería
+      // inventar.
+      return 'si';
+    }
+
+    consume();
+    if (!accepted) {
+      setVeredicto('ninguno');
+      return 'cerrada';
+    }
+    return 'si';
   }, [promptEvent]);
 
   const decideAskAgain = useCallback((decision: Exclude<PromptDecision, 'todavia-no'>) => {
@@ -227,11 +315,15 @@ export function useAppInstall(): AppInstall {
   });
   const view = installView(state, platform);
 
+  const cerrarVeredicto = useCallback(() => setVeredicto('ninguno'), []);
+
   return {
     view: { ...view, visible: !native && view.visible },
     platform,
     standalone,
     installing,
+    veredicto,
+    cerrarVeredicto,
     install,
     decideAskAgain,
     shouldAsk:

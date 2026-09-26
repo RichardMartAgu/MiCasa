@@ -268,7 +268,9 @@ describe('useAppInstall', () => {
       decision = await result.current.install();
     });
 
-    expect(decision).toBe('no');
+    // Antes era 'no', igual que el botón "Ahora no" del aviso, y no había forma
+    // de distinguir que el navegador había enseñado su diálogo y se cerró.
+    expect(decision).toBe('cerrada');
     expect(result.current.view.action).toBeNull();
     // Rechazar NO es instalar. Sin esto, la tarjeta podría darle por instalada a
     // quien acaba de decir que no, que es la mentira más visible posible aquí.
@@ -296,7 +298,9 @@ describe('useAppInstall', () => {
       decision = await result.current.install();
     });
 
-    expect(decision).toBe('no');
+    // Distinto de 'no' a propósito: aquí el navegador ni siquiera ha enseñado el
+    // diálogo, así que la salida correcta son los pasos manuales.
+    expect(decision).toBe('no-permitido');
     expect(result.current.view.action).toBeNull();
   });
 
@@ -719,7 +723,10 @@ describe('useAppInstall', () => {
     // y cada elemento es un componente que ya no existe. Por eso se cuenta.
     const browser = stubBrowser();
     const { unmount } = renderHook(() => useAppInstall());
-    expect(subscriberCountForTests()).toBe(1);
+    // Dos, no uno: el hook lee del mismo almacén el evento de instalación y el
+    // veredicto del intento. Lo que se comprueba es que al desmontar no queda
+    // ninguna de las dos colgando.
+    expect(subscriberCountForTests()).toBe(2);
 
     unmount();
 
@@ -939,5 +946,361 @@ describe('el aviso-emergente y la preferencia de no preguntar', () => {
     await act(async () => {});
 
     expect(result.current.shouldAsk).toBe(false);
+  });
+});
+
+describe('el veredicto de la instalación', () => {
+  const originalOs = Platform.OS;
+
+  beforeEach(() => {
+    Platform.OS = 'web';
+    resetForTests();
+  });
+
+  afterEach(() => {
+    Platform.OS = originalOs;
+    jest.useRealTimers();
+  });
+
+  it('aceptar el diálogo deja "esperando", no "instalada"', async () => {
+    jest.useFakeTimers();
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await result.current.install();
+    });
+    expect(result.current.veredicto).toBe('esperando');
+    expect(result.current.installing).toBe(true);
+    // Lo único que no puede ser: decir que ya está instalada.
+    expect(result.current.standalone).toBe(false);
+  });
+
+  it('si el evento no llega, el veredicto es "sin-confirmar" y no se pierde', async () => {
+    // El silencio era el fallo: se dejaba de estar instalando y no se pintaba
+    // nada, y quien lo veía no tenía forma de saber si había funcionado.
+    jest.useFakeTimers();
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await result.current.install();
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(INSTALL_CONFIRM_MS + 1);
+    });
+    expect(result.current.installing).toBe(false);
+    expect(result.current.veredicto).toBe('sin-confirmar');
+    expect(result.current.standalone).toBe(false);
+  });
+
+  it('cerrar el veredicto lo quita', async () => {
+    jest.useFakeTimers();
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await result.current.install();
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(INSTALL_CONFIRM_MS + 1);
+    });
+    act(() => result.current.cerrarVeredicto());
+    expect(result.current.veredicto).toBe('ninguno');
+    expect(result.current.installing).toBe(false);
+  });
+
+  it('un intento nuevo borra el veredicto viejo, que ya no describe lo que pasa', async () => {
+    // El intento anterior se queda en "sin-confirmar" para que se lea. Cuando el
+    // navegador lanza otro `beforeinstallprompt` y se vuelve a instalar, ese
+    // mensaje ya no describe lo que está pasando y tiene que desaparecer.
+    jest.useFakeTimers();
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await result.current.install();
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(INSTALL_CONFIRM_MS + 1);
+    });
+    expect(result.current.veredicto).toBe('sin-confirmar');
+
+    // El evento se había gastado, así que hasta que no llegue otro no se puede
+    // reintentar: y al no poder, el veredicto se queda, que es lo correcto.
+    await act(async () => {
+      await result.current.install();
+    });
+    expect(result.current.veredicto).toBe('sin-confirmar');
+
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await result.current.install();
+    });
+    expect(result.current.veredicto).toBe('esperando');
+  });
+
+  it('un doble toque no llama dos veces a prompt() ni borra el intento en marcha', async () => {
+    // El banner y la tarjeta de Ajustes están los dos en pantalla. La segunda
+    // llamada a `prompt()` lanzaría y, si pasara, dejaría a quien está
+    // instalando sin nada que explique su proceso.
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    const evento = eventoInstallPrompt(true);
+    act(() => {
+      browser.emit('beforeinstallprompt', evento);
+    });
+    let primera = '';
+    let segunda = '';
+    await act(async () => {
+      primera = await result.current.install();
+      // El veredicto ya es 'esperando' para cuando llega el segundo toque.
+      segunda = await result.current.install();
+    });
+    expect(primera).toBe('si');
+    expect(segunda).toBe('si');
+    expect(evento.prompt).toHaveBeenCalledTimes(1);
+    expect(result.current.veredicto).toBe('esperando');
+  });
+
+  it('un `appinstalled` tardío confirma y corrige la pantalla', async () => {
+    jest.useFakeTimers();
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await result.current.install();
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(INSTALL_CONFIRM_MS + 1);
+    });
+    expect(result.current.veredicto).toBe('sin-confirmar');
+    // Llega tarde, pero llega: la pantalla se corrige sola.
+    await act(async () => {
+      browser.emit('appinstalled', new Event('appinstalled'));
+    });
+    expect(result.current.veredicto).toBe('confirmada');
+    expect(result.current.standalone).toBe(true);
+  });
+
+  it('cerrar el diálogo del navegador se distingue de "ahora no"', async () => {
+    // Antes devolvía 'no', igual que el botón "Ahora no" del aviso, así que no
+    // había forma de saber que el diálogo se había cerrado sin instalar.
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(false));
+    });
+    let decision: PromptDecision = 'todavia-no';
+    await act(async () => {
+      decision = await result.current.install();
+    });
+    expect(decision).toBe('cerrada');
+    expect(result.current.veredicto).not.toBe('esperando');
+    expect(result.current.installing).toBe(false);
+  });
+
+  it('un `prompt()` que lanza es "no-permitido", no un "ahora no"', async () => {
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', {
+        preventDefault: jest.fn(),
+        prompt: jest.fn(async () => {
+          throw new Error('no permitido');
+        }),
+        userChoice: Promise.resolve({ outcome: 'dismissed' }),
+      });
+    });
+    let decision: PromptDecision = 'todavia-no';
+    await act(async () => {
+      decision = await result.current.install();
+    });
+    expect(decision).toBe('no-permitido');
+    expect(result.current.installing).toBe(false);
+  });
+});
+
+describe('el veredicto se comparte entre instancias del hook', () => {
+  const originalOs = Platform.OS;
+
+  beforeEach(() => {
+    Platform.OS = 'web';
+    resetForTests();
+  });
+
+  afterEach(() => {
+    Platform.OS = originalOs;
+    jest.useRealTimers();
+  });
+
+  it('lo que ve el banner es lo mismo que ve la tarjeta de Ajustes', async () => {
+    // Este es el fallo que queda vivo si el veredicto vive en el hook: se monta
+    // dos veces, una en el layout de pestañas y otra en Ajustes. Con estado local,
+    // instalar desde Ajustes guardaba el veredicto en la instancia de Ajustes y lo
+    // que se despejaba en pantalla era el banner, en la otra: el proceso se
+    // quedaba a medias en la pantalla desde la que se había lanzado, sin nada que
+    // lo explicara. Con una sola copia del estado, las dos ven lo mismo.
+    jest.useFakeTimers();
+    const browser = stubBrowser();
+    // Las dos instancias, montadas a la vez, como en la app.
+    const banner = renderHook(() => useAppInstall());
+    const ajustes = renderHook(() => useAppInstall());
+
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await ajustes.result.current.install();
+    });
+
+    expect(banner.result.current.veredicto).toBe('esperando');
+    expect(banner.result.current.installing).toBe(true);
+
+    await act(async () => {
+      jest.advanceTimersByTime(INSTALL_CONFIRM_MS + 1);
+    });
+
+    expect(banner.result.current.veredicto).toBe('sin-confirmar');
+    expect(ajustes.result.current.veredicto).toBe('sin-confirmar');
+    expect(ajustes.result.current.installing).toBe(false);
+  });
+
+  it('el evento `appinstalled` lo ven las dos, y las dos dejan de preguntar', async () => {
+    const browser = stubBrowser();
+    const banner = renderHook(() => useAppInstall());
+    const ajustes = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await banner.result.current.install();
+    });
+    await act(async () => {
+      browser.emit('appinstalled', new Event('appinstalled'));
+    });
+    expect(ajustes.result.current.veredicto).toBe('confirmada');
+    expect(ajustes.result.current.standalone).toBe(true);
+    expect(banner.result.current.shouldAsk).toBe(false);
+  });
+});
+
+describe('install(): el diálogo y el botón, por separado', () => {
+  const originalOs = Platform.OS;
+
+  beforeEach(() => {
+    Platform.OS = 'web';
+    resetForTests();
+  });
+
+  afterEach(() => {
+    Platform.OS = originalOs;
+  });
+
+  it('un `prompt()` que lanza con AbortError es un diálogo cerrado, no un navegador que no lo permite', async () => {
+    // `AbortError` en `prompt()` significa que la persona cerró el diálogo
+    // nativo. Decirle "este navegador no deja instalar" lleva a tocar unos
+    // ajustes que no son el problema.
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', {
+        preventDefault: jest.fn(),
+        prompt: jest.fn(async () => {
+          const e = new Error('The user aborted a request.');
+          e.name = 'AbortError';
+          throw e;
+        }),
+        userChoice: Promise.resolve({ outcome: 'dismissed' }),
+      });
+    });
+    let decision: PromptDecision = 'todavia-no';
+    await act(async () => {
+      decision = await result.current.install();
+    });
+    expect(decision).toBe('cerrada');
+  });
+
+  it('un `prompt()` que lanza con otro nombre sí es que el navegador no lo permite', async () => {
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', {
+        preventDefault: jest.fn(),
+        prompt: jest.fn(async () => {
+          const e = new Error('InvalidStateError');
+          e.name = 'InvalidStateError';
+          throw e;
+        }),
+        userChoice: Promise.resolve({ outcome: 'dismissed' }),
+      });
+    });
+    let decision: PromptDecision = 'todavia-no';
+    await act(async () => {
+      decision = await result.current.install();
+    });
+    expect(decision).toBe('no-permitido');
+  });
+
+  it('si `userChoice` falla, se queda esperando en vez de quedarse mudo', async () => {
+    // El diálogo ya se enseñó. Puede que la instalación esté en marcha y no hay
+    // forma de saberlo, así que lo honesto es esperar a `appinstalled` y no
+    // afirmar que el navegador no lo permite.
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', {
+        preventDefault: jest.fn(),
+        prompt: jest.fn(async () => undefined),
+        userChoice: Promise.reject(new Error('se perdió la respuesta')),
+      });
+    });
+    let decision: PromptDecision = 'todavia-no';
+    await act(async () => {
+      decision = await result.current.install();
+    });
+    expect(decision).toBe('si');
+    expect(result.current.veredicto).toBe('esperando');
+  });
+
+  it('instalar desde el menú del navegador no interopela con un cartel que nadie pidió', async () => {
+    // Sin botón, porque la persona ya lo ha hecho ella misma: un `alert`
+    // asertivo en mitad de esa operación es una interrupción no solicitada. La
+    // tarjeta de Ajustes lo refleja igualmente.
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    await act(async () => {
+      browser.emit('appinstalled', new Event('appinstalled'));
+    });
+    expect(result.current.standalone).toBe(true);
+    expect(result.current.veredicto).toBe('ninguno');
+  });
+
+  it('instalar desde el menú del navegador sí confirma si había un intento en marcha', async () => {
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await result.current.install();
+    });
+    expect(result.current.veredicto).toBe('esperando');
+    await act(async () => {
+      browser.emit('appinstalled', new Event('appinstalled'));
+    });
+    expect(result.current.veredicto).toBe('confirmada');
   });
 });
