@@ -599,6 +599,43 @@ describe('AjustesScreen', () => {
       }
     });
 
+    it('con la app ya instalada, se abre la salida del acceso directo', async () => {
+      // El callejon sin salida del Android: la tarjeta dice "App instalada" porque
+      // la pantalla esta a pantalla completa, y eso tb pasa con un acceso directo.
+      // Sin esta linea, quien tiene el acceso directo no tiene forma de conseguir
+      // la app de verdad.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockUseAppInstall.mockReturnValue(
+        installView(
+          {
+            visible: true,
+            title: 'App instalada',
+            body: 'Ya tienes MiCasa en este dispositivo, con su propio icono.',
+            atajoNoEsApp:
+              '¿El icono no se comporta como una app? Añadir a pantalla de inicio desde el menú crea un acceso directo, no la app. Bórralo y usa "Instalar app": así también funcionan los avisos con el móvil bloqueado.',
+          },
+          { standalone: true },
+        ),
+      );
+
+      try {
+        const { getByText } = setup();
+        await act(async () => {});
+
+        expect(getByText('App instalada')).toBeTruthy();
+        expect(
+          getByText(
+            '¿El icono no se comporta como una app? Añadir a pantalla de inicio desde el menú crea un acceso directo, no la app. Bórralo y usa "Instalar app": así también funcionan los avisos con el móvil bloqueado.',
+          ),
+        ).toBeTruthy();
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
     it('si la vista no trae pasos, el aviso de reserva dice donde mirar', async () => {
       // El boton se puede pulsar sin que la vista traiga pasos. Si el texto de
       // reserva estuviera vacio o fuera un relleno, quien lo pulse y lo vea

@@ -319,6 +319,17 @@ export default function AjustesScreen() {
       const result = await withTimeout(sendTestPush(), TEST_PUSH_TIMEOUT_MS, MSG_PUSH_TIMEOUT);
 
       if (result.ok) {
+        // Con cero entregadas no se puede decir "Aviso enviado": la función
+        // responde 200 con lo que consiguió, y una suscripción inservible hace que
+        // delivers cero sin que haya pasado nada. Medido: el botón anunciaba un
+        // envío que no se había enviado a nadie.
+        if (result.delivered === 0) {
+          showNotice(
+            'No se ha enviado a nadie',
+            'Este navegador no tiene ninguna suscripción que sirva. Si acabas de activar los avisos, vuelve a hacerlo: puede que la suscripción anterior se quedara a medias.',
+          );
+          return;
+        }
         showNotice('Aviso enviado', `Enviado a ${result.delivered} navegador(es).`);
         return;
       }
@@ -631,6 +642,12 @@ export default function AjustesScreen() {
               title={appInstall.view.action}
               onPress={() => void handleInstallApp()}
             />
+          ) : null}
+          {/* Solo cuando la pantalla está a pantalla completa, y en ese caso no hay
+              forma de saber si el icono es la app o un acceso directo. Esto es lo
+              único que abre la salida. */}
+          {appInstall.view.atajoNoEsApp ? (
+            <Text style={styles.stepFallbackTitle}>{appInstall.view.atajoNoEsApp}</Text>
           ) : null}
           {appInstall.view.steps.length > 0 ? (
             <View style={styles.stepList}>
