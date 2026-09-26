@@ -13,7 +13,7 @@ App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `
 | [`.opencode/skills/micasa-git/SKILL.md`](.opencode/skills/micasa-git/SKILL.md) | Buenas prácticas de git para este repo: flujo de worktree por rama, comandos destructivos que ya han perdido trabajo, y por qué dependabot mergea en `master` y no en `develop`. | Vigente; leer antes de commitear, pushear, mergear o limpiar ramas. |
 | [`AGENTS.md`](AGENTS.md) | Reglas del proyecto, Expo v57, stack, agentes, calidad, deploy y worktrees. | Vigente; leer primero. |
 | [`CLAUDE.md`](CLAUDE.md) | Redirección a reglas de `AGENTS.md`. | Vigente; 1 línea. |
-| [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-09-25. |
+| [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-09-26. |
 | [`README.md`](README.md) | Descripción del producto, funcionalidades, stack, puesta en marcha, calidad, estructura y modelo de datos. | Vigente. |
 | [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global accionable para continuar sesiones. | Versionado; actualizado 2026-09-25. |
 
@@ -37,6 +37,7 @@ App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `
 | [`docs/list-filtering-plan.md`](docs/list-filtering-plan.md) | Búsqueda y filtros reutilizables en Gastos, Citas y Cumpleaños. | Completado; security APROBADO y QA PASA en bloques registrados. |
 | [`docs/oauth-google-pendiente.md`](docs/oauth-google-pendiente.md) | Estado y pasos de configuración de OAuth Google. | Código listo; faltan credenciales, configuración dashboard y PR. |
 | [`docs/web-push.md`](docs/web-push.md) | Web Push: recordatorios de citas y cumpleaños enviados por el servidor, con service worker, Edge Function y cron. | Mergeado en `develop` (#54) y desplegado; security APROBADO tras dos rondas. Falta prueba en navegador. |
+| [`docs/usuarios-prueba.md`](docs/usuarios-prueba.md) | Cuentas de prueba en producción para reproducir en navegador real lo que los tests no alcanzan, con sus límites de seguridad. | Vigente. `qa-toggle@micasa.dev`; credenciales en `.env.local`, no en el repo. |
 
 ## Orden de acceso
 
