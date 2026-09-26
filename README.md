@@ -56,6 +56,21 @@ npm run web      # o pruébala en el navegador
 npm run android  # emulador Android
 ```
 
+### 4. Instalar la web como app
+
+La versión web es una PWA: se puede instalar y queda con su propio icono, sin barra del navegador. **En Ajustes hay una tarjeta que lo hace**: si tu navegador lo permite sale un botón "Instalar ahora", y si no, salen los pasos de tu navegador.
+
+A mano, que es lo que hace falta en iPhone:
+
+| Navegador | Pasos |
+| --- | --- |
+| iPhone / Safari | **Compartir** → **Añadir a pantalla de inicio** |
+| Android / Chrome | Menú **⋮** → **Instalar app** |
+| Escritorio / Chrome, Edge | Menú del navegador → **Instalar MiCasa** |
+| Firefox | No instala. Guarda un acceso directo |
+
+Los avisos de citas y cumpleaños en **iPhone solo llegan con la app instalada**: en una pestaña normal el navegador dice que puede pero no envía. La tarjeta de Recordatorios te lo explica cuando es tu caso.
+
 ## 🎬 Demo local y despliegue
 
 | Tarea | Comando | Puntero |
