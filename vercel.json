@@ -4,7 +4,6 @@
   "framework": null,
   "rewrites": [
     {
-      "comment": "Fallback de navegación SPA, SOLO para rutas. Con un /(.*) total, cualquier fichero ausente devolvía 200 con el index.html en lugar de 404: un bundle viejo pedía un JS y recibía HTML, y con nosniff el navegador se negaba a ejecutarlo, sin ningún error. Ahora una ruta con extensión que no existe da 404, que es lo que debe pasar.",
       "source": "/((?!.*\\.[a-zA-Z0-9]+$).*)",
       "destination": "/index.html"
     }
