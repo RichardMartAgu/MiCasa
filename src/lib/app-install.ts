@@ -162,9 +162,14 @@ export function installView(state: InstallState, platform: InstallPlatform): Ins
       manualSteps: [],
       action: null,
       actionIsPrompt: false,
+      // El aviso tenía un agujero: decía "bórralo y usa Instalar app", y dentro
+      // de la app instalada ese botón no existe. Quien lo lee está, por
+      // definición, dentro de la app, así que la instrucción no llevaba a ninguna
+      // parte. Se dice el paso que sí funciona desde aquí: abrir la web en una
+      // pestaña del navegador, no desde el icono.
       atajoNoEsApp: platform === 'ios'
         ? null
-        : '¿El icono no se comporta como una app? Añadir a pantalla de inicio desde el menú crea un acceso directo, no la app. Bórralo y usa "Instalar app": así también funcionan los avisos con el móvil bloqueado.',
+        : '¿El icono no se comporta como una app? Añadir a pantalla de inicio desde el menú crea un acceso directo, no la app. Para conseguir la de verdad: sal de aquí y abre la web en una pestaña del navegador, no desde el icono. Allí verás el botón "Instalar ahora". Solo así llegan los avisos con el móvil bloqueado.',
     };
   }
 

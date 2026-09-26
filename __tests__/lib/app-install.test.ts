@@ -205,8 +205,14 @@ describe('installView', () => {
       const texto = installView('instalada', plataforma).atajoNoEsApp ?? '';
       expect(`${plataforma}: ${texto.length > 0}`).toBe(`${plataforma}: true`);
       expect(`${plataforma}: ${texto.includes('acceso directo')}`).toBe(`${plataforma}: true`);
-      // Y tiene que decir como se consegue la de verdad, no solo quejarse.
-      expect(`${plataforma}: ${texto.includes('Instalar app')}`).toBe(`${plataforma}: true`);
+      // Y tiene que decir el paso que funciona desde donde se lee. Antes decía
+      // "usa Instalar app", y quien lee esto está dentro de la app instalada, donde
+      // ese botón no existe: la instrucción no llevaba a ninguna parte.
+      expect(`${plataforma}: ${/pestaña del navegador/.test(texto)}`).toBe(`${plataforma}: true`);
+      expect(`${plataforma}: ${texto.includes('Instalar ahora')}`).toBe(`${plataforma}: true`);
+      // Y ya no puede mandar a un botón que aquí no existe: quien lee la tarjeta está
+      // dentro de la app instalada, y ahí ese botón no está. Este test lo exigía antes.
+      expect(`${plataforma}: ${texto.includes('Instalar app')}`).toBe(`${plataforma}: false`);
     }
   });
 
