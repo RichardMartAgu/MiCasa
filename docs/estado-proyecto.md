@@ -1,5 +1,14 @@
 
-## Sesión actual — 2026-09-26 (fix del interruptor, mergeado y desplegado)
+## Sesión actual — 2026-09-26 (suscripción incompleta, el bloqueo real del usuario)
+
+- El usuario probó en Android y devolvió el mensaje exacto: "No se pudo activar los avisos: suscripción incompleta". El aviso visible confirma que el arreglo de `Alert.alert` funciona, y sitúa el fallo ya muy dentro: el permiso se concedió, `subscribe()` respondió y el service worker estaba disponible.
+- La VAPID pública **es válida**: punto legítimo de la curva P-256 (`y² == x³ + ax + b` en el primo de NIST), 65 bytes, prefijo `0x04`. No era la clave.
+- Causa real: el móvil conservaba una suscripción de un intento anterior, sin `p256dh` ni `auth`. `subscribeAndStore` hacía `existing ?? subscribe(...)` y reutilizaba esa suscripción inservible, así que `toSubscriptionRecord` devolvía `null` y el alta fallaba siempre con el mismo motivo. Como `getSubscription()` devuelve esa misma suscripción siempre, **no había ninguna acción del usuario que lo desbloqueara**: era un callejón sin salida.
+- Arreglo: si la suscripción existente viene incompleta, se da de baja y se vuelve a crear. La que está completa se reutiliza, porque tirar una buena dejaría al navegador sin nada.
+- QA: `npx tsc --noEmit` limpio, `npx expo lint` limpio, `npx jest` 45/45 suites y 548/548 tests. Los dos tests nuevos fallan con el bug presente, verificado revirtiendo el fichero.
+- Este era el bug que se buscaba desde el principio del hilo: los tres arreglos anteriores habilitaban el camino, pero ninguno podía completar un alta que empezaba con una suscripción a medias.
+
+## Sesión anterior — 2026-09-26 (fix del interruptor, mergeado y desplegado)
 
 - PR #57 `fix(push): que el interruptor de avisos se pueda activar y avise` mergeado en `c9e0f8a` y desplegado a `https://micasa-demo.vercel.app` (HTTP 200, bundle de 3.06 MB con el fix dentro). CI verde en 1m17s. Mergeado con `--admin`: `develop` exige revisión aprobatoria y el repo tiene `allow_auto_merge = false`. Autorizado expresamente por el usuario.
 - Orden corregido: el primer despliegue salió de la rama **sin commitear**, con producción por delante de `develop`. El deploy bueno salió de `develop` después del merge. Un `git pull --ff-only` en este repo puede no avanzar: se comprobó con `git rev-list --count HEAD..origin/develop` y se resolvió con `git merge --ff-only`.
