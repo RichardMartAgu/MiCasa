@@ -19,14 +19,24 @@ export type InstallPlatform = 'ios' | 'android' | 'desktop' | 'otro';
  * Qué se puede hacer ahora mismo desde la app.
  *
  * - `instalada`: ya se está ejecutando como app. No hay nada que ofrecer.
- * - `instalable`: el navegador ha dicho que puede instalarla y hay un boton que
- *   lo hace el mismo. Es el unico caso en el que se puede instalar con un toque.
- * - `manual`: se puede instalar, pero el navegador no da el evento. Pasa en
- *   iPhone y en Firefox, y ahi los pasos los tiene que hacer la persona.
- * - `no-instalable`: este navegador no la instalara nunca. Decirlo es mejor que
- *   mostrar unos pasos que no funcionan.
+ * - `instalable`: el navegador ha dicho que puede instalarla y hay un botón que
+ *   lo hace el mismo. Aun así se enseñan también los pasos, por si el botón no
+ *   aparece o la persona no lo ve.
+ * - `manual`: no hay botón, y los pasos los tiene que hacer la persona. Pasa en
+ *   iPhone, donde el evento no existe, y durante los primeros segundos en el
+ *   resto, antes de que el navegador decida.
+ *
+ * Aquí no hay un estado "no instalable", y es a propósito. Se tenía, y afirmaba
+ * que el navegador no podía instalar la app. Se basaba en que `beforeinstallprompt`
+ * no hubiera llegado, y eso no prueba nada: el evento sale cuando el navegador
+ * cumple sus criterios, y hay un rato en el que todavía no ha salido. Medido en
+ * un Chromium de verdad: el navegador informaba de cero errores de
+ * instalabilidad y la tarjeta decía que no se podía instalar. Es decir, la app
+ * contradecía al navegador en la cara. Ahora sin evento se enseñan los pasos, que
+ * son válidos en cualquier navegador, con el acceso directo a favoritos como
+ * plan B.
  */
-export type InstallState = 'instalada' | 'instalable' | 'manual' | 'no-instalable';
+export type InstallState = 'instalada' | 'instalable' | 'manual';
 
 export interface InstallView {
   /** Si la tarjeta se enseña. En nativo no hay nada que instalar. */
@@ -37,20 +47,18 @@ export interface InstallView {
   /** Los pasos, en orden. Vacio cuando no hay que hacer nada. */
   steps: string[];
   /**
-   * Los pasos siempre, aunque no se enseñen.
+   * Los pasos, aunque no se pinten.
    *
-   * En `instalable` la tarjeta enseña el botón y no los pasos, porque hay un
-   * camino de un toque. Pero si la persona lo rechaza, o si el navegador se
-   * gasta el evento, el aviso tiene que poder decir cómo se hace a mano, y para
-   * eso hacen falta aunque no se estén pintando.
+   * Se parece a `steps`, pero sobrevive a que se gaste el evento: si la persona
+   * rechaza el diálogo del navegador, el botón desaparece y el aviso de "se
+   * instala desde el navegador" necesita decir cómo se hace a mano. Para eso hace
+   * falta tenerlos aunque en ese momento no se estén pintando.
    */
   manualSteps: string[];
   /** Texto del boton. `null` cuando no hay boton que pulsar. */
   action: string | null;
   /** Un boton con un toque solo cuando el navegador lo permite. */
   actionIsPrompt: boolean;
-  /** El paso mas importante, para el que solo lee el titulo. */
-  highlight: string | null;
 }
 
 /**
@@ -82,11 +90,12 @@ export function detectPlatform(
 }
 
 /**
- * Que estado corresponde a lo que se ha medido.
+ * Qué estado corresponde a lo que se ha medido.
  *
- * El navegador solo da el evento cuando puede instalarla de verdad, asi que
- * `instalable` no se deduce: se espera. Por eso la comprobacion de "ya
- * instalada" va antes que ninguna otra.
+ * El botón solo se ofrece cuando el navegador ha dicho que puede instalar, así que
+ * `instalable` no se deduce: se espera. Por eso la comprobación de "ya instalada"
+ * va antes que ninguna otra, y por eso la ausencia de evento no lleva a ningún
+ * sitio que afirme que no se puede instalar.
  */
 export function resolveState(input: {
   platform: InstallPlatform;
@@ -98,33 +107,35 @@ export function resolveState(input: {
   if (input.native) return 'instalada';
   if (input.standalone) return 'instalada';
   if (input.promptAvailable) return 'instalable';
-  if (input.platform === 'ios' || input.platform === 'otro') return 'manual';
-  return 'no-instalable';
+  return 'manual';
 }
 
 const STEPS: Record<InstallPlatform, string[]> = {
   ios: [
     'Abre el menú Compartir, el cuadrado con la flecha hacia arriba.',
     'Abajo, "Añadir a pantalla de inicio".',
-    'Confirma con "Añadir". La app se abre con su propio icono, sin barra del navegador.',
+    'Confirma con "Añadir".',
   ],
   android: [
     'Abre el menú del navegador, los tres puntos de arriba a la derecha.',
     'Toca "Instalar app" o "Añadir a pantalla de inicio".',
-    'Confirma. La app se abre con su propio icono, sin barra del navegador.',
+    'Confirma con "Instalar".',
+    'Si en tu navegador no aparece esa opción, guárdala en favoritos: MiCasa funciona igual.',
   ],
   desktop: [
-    'Abre el menú del navegador, arriba a la derecha.',
+    'Abre el menú del navegador.',
     'Toca "Instalar MiCasa" o "Crear acceso directo".',
-    'La app se abre en su propia ventana, sin barra de direcciones.',
+    'Sigue lo que te indique el navegador y quedará como una app.',
+    'Si tu navegador no ofrece ninguna de las dos, guárdala en favoritos y se abre en un toque.',
   ],
   otro: [
     'En el menú del navegador, busca la opción de instalar o de añadir a la pantalla de inicio.',
-    'Si no aparece, este navegador no puede instalarla: usa el icono de favoritos como acceso directo.',
+    'Si no aparece, guárdala en favoritos: MiCasa funciona igual abierta aquí.',
   ],
 };
+
 /**
- * Que se le enseña a la persona, según el estado.
+ * Qué se le enseña a la persona, según el estado.
  *
  * El texto va en función de lo que la persona va a encontrar en su navegador,
  * no de lo que se ha medido por dentro: quien tiene iOS lee "Compartir" y no
@@ -140,33 +151,24 @@ export function installView(state: InstallState, platform: InstallPlatform): Ins
       manualSteps: [],
       action: null,
       actionIsPrompt: false,
-      highlight: null,
     };
   }
 
   if (state === 'instalable') {
+    // Los pasos se enseñan tambien con el boton. Antes no se enseñaban, y
+    // entonces la tarjeta cambiaba sola de los pasos al boton segun el
+    // navegador hubiera firmado el evento: un texto que se movia debajo del dedo
+    // de la persona. Con el boton delante y los pasos debajo, siempre es cierto
+    // y no hay nada que se mueva.
+    const pasosConBoton = STEPS[platform] ?? STEPS.otro;
     return {
       visible: true,
       title: 'Instala la app',
-      body: 'MiCasa se puede instalar como app: se abre con su propio icono y sin barra del navegador, y los avisos de citas y cumpleaños funcionan mejor.',
-      steps: [],
-      manualSteps: STEPS[platform],
+      body: 'Se abre en su propia ventana, con su propio icono.',
+      steps: pasosConBoton,
+      manualSteps: pasosConBoton,
       action: 'Instalar ahora',
       actionIsPrompt: true,
-      highlight: null,
-    };
-  }
-
-  if (state === 'no-instalable') {
-    return {
-      visible: true,
-      title: 'Esta web ya es la app',
-      body: 'Este navegador no puede instalarla, pero no la necesitas: MiCasa funciona igual abierta aquí. Guárdala en favoritos para abrirla en un toque.',
-      steps: [],
-      manualSteps: [],
-      action: null,
-      actionIsPrompt: false,
-      highlight: null,
     };
   }
 
@@ -180,13 +182,12 @@ export function installView(state: InstallState, platform: InstallPlatform): Ins
     visible: true,
     title: 'Instala la app',
     body: sharesIos
-      ? 'En iPhone la app se añade desde el menú Compartir. Tarda diez segundos y a partir de ahí se abre con su propio icono.'
-      : 'MiCasa se puede instalar como app: se abre con su propio icono y sin barra del navegador.',
+      ? 'En iPhone la app se añade desde el menú Compartir. Tarda diez segundos y luego se abre con su propio icono.'
+      : 'Se abre en su propia ventana, con su propio icono.',
     steps: pasos,
     manualSteps: pasos,
     action: null,
     actionIsPrompt: false,
-    highlight: pasos[0],
   };
 }
 

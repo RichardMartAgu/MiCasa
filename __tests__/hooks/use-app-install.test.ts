@@ -106,14 +106,19 @@ describe('useAppInstall', () => {
     Platform.OS = originalOs;
   });
 
-  it('sin evento del navegador, en Android, dice que no se puede instalar', () => {
-    // Chrome lanza el evento cuando puede. Si no ha llegado, no se promete un
-    // boton: es mejor decir que no se puede que ofrecer un boton que no hace nada.
+  it('sin evento del navegador, en Android, da los pasos y no promete un boton', () => {
+    // Chrome lanza el evento cuando puede, pero hasta que lo lanza no se sabe si
+    // va a poder. Así que sin evento no se promete un botón que igual no funciona,
+    // y se dan los pasos, que son ciertos en cualquier navegador. Antes aquí se
+    // decía que el navegador no podía instalar, y en un Chromium de verdad que
+    // informaba de cero errores de instalabilidad, eso era falso.
     stubBrowser();
     const { result } = renderHook(() => useAppInstall());
 
     expect(result.current.view.actionIsPrompt).toBe(false);
-    expect(result.current.view.body).toContain('favoritos');
+    expect(result.current.view.action).toBeNull();
+    expect(result.current.view.steps.length).toBeGreaterThan(0);
+    expect(result.current.view.steps.join(' ')).toContain('favoritos');
   });
 
   it('si el navegador lanza el evento, aparece el boton de instalar', () => {

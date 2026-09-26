@@ -622,8 +622,23 @@ export default function AjustesScreen() {
         <Card>
           <Text style={styles.sectionTitle}>{appInstall.view.title}</Text>
           <Text style={styles.cardMeta}>{appInstall.view.body}</Text>
+          {/* El botón va delante de los pasos, no en su lugar. Con los dos a la
+              vista la tarjeta no cambia de texto cuando el navegador firma el
+              evento, que es lo que pasaba antes: aparecía el botón y los pasos
+              desaparecían debajo del dedo de la persona. */}
+          {appInstall.view.action ? (
+            <Button
+              title={appInstall.view.action}
+              onPress={() => void handleInstallApp()}
+            />
+          ) : null}
           {appInstall.view.steps.length > 0 ? (
             <View style={styles.stepList}>
+              {appInstall.view.action ? (
+                <Text style={styles.stepFallbackTitle}>
+                  Si prefieres hacerlo a mano, o el botón no aparece:
+                </Text>
+              ) : null}
               {appInstall.view.steps.map((paso, index) => (
                 <View key={paso} style={styles.stepRow}>
                   <View style={[styles.stepNumber, index === 0 && styles.stepNumberFirst]}>
@@ -641,12 +656,6 @@ export default function AjustesScreen() {
                 </View>
               ))}
             </View>
-          ) : null}
-          {appInstall.view.action ? (
-            <Button
-              title={appInstall.view.action}
-              onPress={() => void handleInstallApp()}
-            />
           ) : null}
         </Card>
       ) : null}
@@ -859,6 +868,7 @@ const styles = StyleSheet.create({
   // Los pasos de instalación van numerados, y el primero destacado: es el que
   // dice dónde tocar, y es lo único que lee quien solo quiere el dato rápido.
   stepList: { gap: Spacing.two, marginTop: Spacing.two },
+  stepFallbackTitle: { fontSize: 13, color: Palette.textSecondary, fontWeight: '600' },
   stepRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
   stepNumber: {
     width: 24,
