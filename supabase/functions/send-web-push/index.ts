@@ -69,6 +69,25 @@ async function readSecret(db: Db, name: string, fallback: string): Promise<strin
   return typeof data === "string" ? data : "";
 }
 
+/**
+ * Lee el par de claves VAPID. Van aparte de `readSecret` porque los dos caminos
+ * de la función los necesitan en momentos distintos: el dispatcher solo puede
+ * leerlas después de pasar el gate del cron, y el aviso de prueba solo puede
+ * leerlas después de validar la sesión de quien lo pide. Quien llama decide el
+ * orden; este helper solo agrupa la lectura y el mensaje de error.
+ */
+async function readVapidKeys(
+  db: Db,
+): Promise<{ publicKey: string; privateKey: string } | null> {
+  const publicKey = await readSecret(db, "vapid_public_key", Deno.env.get("VAPID_PUBLIC_KEY") ?? "");
+  const privateKey = await readSecret(db, "vapid_private_key", Deno.env.get("VAPID_PRIVATE_KEY") ?? "");
+  if (!publicKey || !privateKey) {
+    console.error("send-web-push: faltan las claves VAPID en Vault o en el entorno");
+    return null;
+  }
+  return { publicKey, privateKey };
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -230,6 +249,12 @@ async function sendToUser(
   userId: string,
   payload: { title: string; body: string; tag: string; url: string },
 ): Promise<{ delivered: number; removed: number }> {
+  // Configurar las claves VAPID aquí y no en quien llama: `sendToUser` es el
+  // único sitio que despacha, y hay dos caminos que llegan (el dispatcher y el
+  // aviso de prueba). Configurarlas solo en el dispatcher dejaba al aviso de
+  // prueba enviando sin VAPID, que es un rechazo del.push service.
+  webpush.setVapidDetails(VAPID_SUBJECT, secrets.publicKey, secrets.privateKey);
+
   const { data: subs, error } = await db
     .from("push_subscriptions")
     .select("id, endpoint, p256dh, auth, failure_count")
@@ -340,8 +365,6 @@ async function runTestPush(
 async function runDispatch(db: Db, secrets: PushSecrets): Promise<Record<string, unknown>> {
   const now = new Date();
   const windowStart = new Date(now.getTime() - CATCHUP_MINUTES * 60_000);
-
-  webpush.setVapidDetails(VAPID_SUBJECT, secrets.publicKey, secrets.privateKey);
 
   const { data: subs, error: subsError } = await db
     .from("push_subscriptions")
@@ -470,31 +493,17 @@ Deno.serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // Antes de autenticar solo se lee el secreto del cron, y se hace por entorno
-  // si existe. Así, una petición sin credencial no llega a leer la clave VAPID
-  // privada ni a despachar nada. (El cliente con service role sí se crea antes,
-  // porque hace falta para el RPC; lo que no se evita es esa consulta a Vault.)
-  const cronSecret = await readSecret(db, "push_cron_secret", Deno.env.get("PUSH_CRON_SECRET") ?? "");
-  const provided = req.headers.get("x-cron-secret") ?? "";
-  // Si falta la configuración se responde igual que con secreto incorrecto: un
-  // 500 distincto serviría de oráculo para saber si las claves están cargadas.
-  if (cronSecret.length === 0) {
-    console.error("send-web-push: falta PUSH_CRON_SECRET en Vault o en el entorno");
-    return json({ error: "no autorizado" }, 401);
-  }
-  if (!safeEqual(provided, cronSecret)) return json({ error: "no autorizado" }, 401);
-
-  const secrets: PushSecrets = {
-    cronSecret,
-    publicKey: await readSecret(db, "vapid_public_key", Deno.env.get("VAPID_PUBLIC_KEY") ?? ""),
-    privateKey: await readSecret(db, "vapid_private_key", Deno.env.get("VAPID_PRIVATE_KEY") ?? ""),
-  };
-  if (!secrets.publicKey || !secrets.privateKey) {
-    console.error("send-web-push: faltan las claves VAPID en Vault o en el entorno");
-    return json({ error: "no autorizado" }, 401);
-  }
-
   // Aviso de prueba: lo pide el usuario con su propia sesión, no el dispatcher.
+  //
+  // Esta rama va ANTES del gate del secreto del cron, y no por descuido: ese
+  // gate protege al dispatcher, que tiene alcance global, y el aviso de prueba
+  // no lo tiene porque solo puede avisar a quien se acaba de autenticar. Con el
+  // gate delante, el botón de Ajustes no tenía forma de mandar el secreto (no
+  // debe viajar en un bundle) y respondía 401 siempre: estaba muerto.
+  //
+  // El orden que sí importa es otro: primero se valida la sesión y solo después
+  // se leen las claves VAPID de Vault, para que una petición sin sesión válida
+  // no llegue a tocar ningún secreto.
   if (new URL(req.url).searchParams.get("mode") === "test") {
     const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
     if (token.length === 0) return json({ error: "falta la sesion" }, 401);
@@ -502,8 +511,32 @@ Deno.serve(async (req) => {
     const { data: userData, error: userError } = await db.auth.getUser(token);
     if (userError || !userData?.user) return json({ error: "sesion no valida" }, 401);
 
-    return json(await runTestPush(db, secrets, userData.user.id));
+    const testVapid = await readVapidKeys(db);
+    if (!testVapid) return json({ error: "no autorizado" }, 401);
+
+    // `cronSecret` vacío a propósito: este camino no lo usa, y así no se
+    // construye un valor que luego se lee sin querer.
+    return json(await runTestPush(db, { cronSecret: "", ...testVapid }, userData.user.id));
   }
+
+  // Antes de autenticar solo se lee el secreto del cron, y se hace por entorno
+  // si existe. Así, una petición sin credencial no llega a leer la clave VAPID
+  // privada ni a despachar nada. (El cliente con service role sí se crea antes,
+  // porque hace falta para el RPC; lo que no se evita es esa consulta a Vault.)
+  const cronSecret = await readSecret(db, "push_cron_secret", Deno.env.get("PUSH_CRON_SECRET") ?? "");
+  const provided = req.headers.get("x-cron-secret") ?? "";
+  // Si falta la configuración se responde igual que con secreto incorrecto: un
+  // 500 distinto serviría de oráculo para saber si las claves están cargadas.
+  if (cronSecret.length === 0) {
+    console.error("send-web-push: falta PUSH_CRON_SECRET en Vault o en el entorno");
+    return json({ error: "no autorizado" }, 401);
+  }
+  if (!safeEqual(provided, cronSecret)) return json({ error: "no autorizado" }, 401);
+
+  const vapid = await readVapidKeys(db);
+  if (!vapid) return json({ error: "no autorizado" }, 401);
+
+  const secrets: PushSecrets = { cronSecret, ...vapid };
 
   const sync = new URL(req.url).searchParams.get("sync") === "1";
   if (sync) {
