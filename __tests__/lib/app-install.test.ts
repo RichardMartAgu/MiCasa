@@ -195,6 +195,37 @@ describe('installView', () => {
     expect(installView('manual', 'desktop').steps.join(' ')).not.toContain('arriba a la derecha');
   });
 
+  it('instalada abre la salida para quien tiene un acceso directo, no un icono de app', () => {
+    // El callejon sin salida que se apareció en un Android: la tarjeta dice
+    // "App instalada" porque la pantalla esta a pantalla completa, y eso tambien
+    // pasa con un acceso directo hecho con "Añadir a pantalla de inicio" del
+    // menu. No hay API que distinga los dos, y sin esta linea quien tiene el
+    // acceso directo se queda sin poder conseguir la app de verdad.
+    for (const plataforma of ['android', 'desktop', 'otro'] as InstallPlatform[]) {
+      const texto = installView('instalada', plataforma).atajoNoEsApp ?? '';
+      expect(`${plataforma}: ${texto.length > 0}`).toBe(`${plataforma}: true`);
+      expect(`${plataforma}: ${texto.includes('acceso directo')}`).toBe(`${plataforma}: true`);
+      // Y tiene que decir como se consegue la de verdad, no solo quejarse.
+      expect(`${plataforma}: ${texto.includes('Instalar app')}`).toBe(`${plataforma}: true`);
+    }
+  });
+
+  it('instalada no dice nada de eso en iOS, donde el acceso directo si es la app', () => {
+    // En iPhone, "Añadir a pantalla de inicio" ES el método oficial y lo que
+    // hace falta para los avisos. Decirle a alguien que lo borre seria justo al
+    // reves: le diria que se quite la unica via que tiene.
+    expect(installView('instalada', 'ios').atajoNoEsApp).toBeNull();
+  });
+
+  it('la salida solo existe cuando la pantalla esta a pantalla completa', () => {
+    for (const estado of ['instalable', 'manual'] as InstallState[]) {
+      for (const plataforma of ['ios', 'android', 'desktop', 'otro'] as InstallPlatform[]) {
+        const view = installView(estado, plataforma);
+        expect(`${estado}/${plataforma}: ${view.atajoNoEsApp}`).toBe(`${estado}/${plataforma}: null`);
+      }
+    }
+  });
+
   it('los pasos dicen donde tocar en cada plataforma', () => {
     const ios = installView('manual', 'ios').steps.join(' ');
     expect(ios).toContain('Compartir');

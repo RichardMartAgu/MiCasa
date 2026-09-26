@@ -59,6 +59,11 @@ export interface InstallView {
   action: string | null;
   /** Un boton con un toque solo cuando el navegador lo permite. */
   actionIsPrompt: boolean;
+  /**
+   * Aviso para quien tiene un icono que no es la app, y solo se pinta en ese
+   * caso. Ver `installView` y por qué hace falta.
+   */
+  atajoNoEsApp: string | null;
 }
 
 /**
@@ -143,6 +148,12 @@ const STEPS: Record<InstallPlatform, string[]> = {
  */
 export function installView(state: InstallState, platform: InstallPlatform): InstallView {
   if (state === 'instalada') {
+    // Dice "instalada" porque se está ejecutando a pantalla completa, y eso es
+    // verdad. Pero no se puede distinguir de un acceso directo hecho con "Añadir a
+    // pantalla de inicio" del menú, que en Android también se abre sin barra del
+    // navegador: no hay ninguna API que diga cuál de los dos es. Sin la salida
+    // de abajo, quien tiene el acceso directo se queda sin forma de conseguir la
+    // app de verdad, y sin ninguna explicación de por qué.
     return {
       visible: true,
       title: 'App instalada',
@@ -151,6 +162,9 @@ export function installView(state: InstallState, platform: InstallPlatform): Ins
       manualSteps: [],
       action: null,
       actionIsPrompt: false,
+      atajoNoEsApp: platform === 'ios'
+        ? null
+        : '¿El icono no se comporta como una app? Añadir a pantalla de inicio desde el menú crea un acceso directo, no la app. Bórralo y usa "Instalar app": así también funcionan los avisos con el móvil bloqueado.',
     };
   }
 
@@ -169,6 +183,7 @@ export function installView(state: InstallState, platform: InstallPlatform): Ins
       manualSteps: pasosConBoton,
       action: 'Instalar ahora',
       actionIsPrompt: true,
+      atajoNoEsApp: null,
     };
   }
 
@@ -188,6 +203,7 @@ export function installView(state: InstallState, platform: InstallPlatform): Ins
     manualSteps: pasos,
     action: null,
     actionIsPrompt: false,
+    atajoNoEsApp: null,
   };
 }
 

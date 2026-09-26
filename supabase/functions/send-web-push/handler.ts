@@ -77,6 +77,27 @@ interface PushSecrets {
  * petición sin credencial no debe poder forzar la creación del cliente con
  * service role ni la lectura de la clave VAPID privada.
  */
+/**
+ * Si esta suscripción no puede volver a funcionar nunca.
+ *
+ * Un 404 o un 410 del servicio de push significa que el endpoint caducó, y eso ya
+ * lo treatment el llamador. Lo que no estaba tratado es el otro caso permanent: unas
+ * claves que el navegador no puede haber dado de verdad. Medido: una fila con
+ * `p256dh` de nueve caracteres, suficiente para pasar cualquier validación de
+ * forma pero imposible de cifrar, hacia que `web-push` lanzara un `TypeError` al
+ * descifrar. Esa fila no se borraba nunca: el botón de aviso de prueba fallaba con
+ * un error de criptografía en la cara de la persona, y el reparto la reintentaba
+ * cada cinco minutos para siempre.
+ *
+ * Se distinguen de un fallo de red, que sí es transitorio: aquí el error es de
+ * tipo, no de estado, y viene de leer las claves.
+ */
+export function isUnusableSubscription(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false;
+  const message = String((error as Error).message ?? "").toLowerCase();
+  return message.includes("base64") || message.includes("decode") || message.includes("key");
+}
+
 async function readSecret(db: Db, name: string, fallback: string): Promise<string> {
   if (fallback.length > 0) return fallback;
   const { data, error } = await db.rpc("push_service_secret", { secret_name: name });
@@ -303,7 +324,7 @@ async function sendToUser(
         .eq("id", sub.id);
     } catch (error) {
       const status = (error as { statusCode?: number }).statusCode;
-      if (status === 404 || status === 410) {
+      if (status === 404 || status === 410 || isUnusableSubscription(error)) {
         dead.push(sub.id);
         continue;
       }
@@ -450,6 +471,12 @@ async function runDispatch(db: Db, secrets: PushSecrets): Promise<Record<string,
         const status = (error as { statusCode?: number }).statusCode;
         if (status === 404 || status === 410) {
           // El navegador se dio de baja o el servicio caducó el endpoint.
+          dead.push(sub.id);
+          continue;
+        }
+        if (isUnusableSubscription(error)) {
+          // Las claves no sirven y no van a servirlas nunca: no tiene sentido
+          //dejarlo para el próximo intento ni contar un fallo más.
           dead.push(sub.id);
           continue;
         }
