@@ -1,5 +1,15 @@
 
-## Sesión actual — 2026-09-26 (interruptor de avisos en Android)
+## Sesión actual — 2026-09-26 (fix del interruptor, mergeado y desplegado)
+
+- PR #57 `fix(push): que el interruptor de avisos se pueda activar y avise` mergeado en `c9e0f8a` y desplegado a `https://micasa-demo.vercel.app` (HTTP 200, bundle de 3.06 MB con el fix dentro). CI verde en 1m17s. Mergeado con `--admin`: `develop` exige revisión aprobatoria y el repo tiene `allow_auto_merge = false`. Autorizado expresamente por el usuario.
+- Orden corregido: el primer despliegue salió de la rama **sin commitear**, con producción por delante de `develop`. El deploy bueno salió de `develop` después del merge. Un `git pull --ff-only` en este repo puede no avanzar: se comprobó con `git rev-list --count HEAD..origin/develop` y se resolvió con `git merge --ff-only`.
+- `gh` estaba instalado (`~/.local/bin/gh`, fuera del PATH) y autenticado como `RichardMartAgu`. `gh auth status` funciona; lo que fallaba era el PATH del shell.
+- Vercel tampoco tenía credenciales en el entorno, pero `VERCEL_TOKEN` está en `~/.bashrc` (línea 159). Como `.bashrc` hace `return` temprano en shells no interactivos, `source ~/.bashrc` no lo carga: hay que extraerlo con `sed -n 's/^export VERCEL_TOKEN="\(.*\)"$/\1/p' ~/.bashrc`.
+- Documentado en [`docs/usuarios-prueba.md`](usuarios-prueba.md): la cuenta `qa-toggle@micasa.dev` se conserva a petición del usuario para reproducir en navegador real. Credenciales en `.env.local` (fuera de git), no en el repo.
+- Sin verificar: `deno check` de la Edge Function (Deno no está instalado en esta máquina) y el comportamiento en un Android real. El cambio del gate del cron en `send-web-push` es el que más necesita verificarse.
+- Pendiente conocido y fuera de alcance: `Alert.alert` sigue siendo no-op en el resto de pantallas de la web. El peor caso es `citas.tsx:273`, que llama a `askEnableNotifications` sin guardia `isWeb`, así que en web una cita con recordatorio no se agenda y no avisa de nada.
+
+## Sesión anterior — 2026-09-26 (interruptor de avisos en Android)
 
 - Objetivo: el interruptor de notificaciones de Ajustes, en Android desde el navegador, pedía permiso, lo aceptaba y se quedaba "inmóvil, sin activar nada". En producción no había ni una fila en `push_subscriptions`: el alta nunca se completaba.
 - Worktree: `/home/richard/MiCasa-web-push-toggle`, rama `fix/web-push-toggle-android`.
