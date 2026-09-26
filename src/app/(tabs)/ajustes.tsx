@@ -20,6 +20,7 @@ import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
+import { useAppInstall } from '@/hooks/use-app-install';
 import {
   fetchAppointments,
   fetchContacts,
@@ -67,6 +68,14 @@ import { validateCasaName, validateInviteCode } from '@/lib/validation';
  */
 const MSG_PUSH_TIMEOUT =
   'Los avisos no se han activado a tiempo. Cierra otras pestañas de MiCasa y vuelve a intentarlo.';
+
+/**
+ * Último recurso si la vista no trae pasos. Hoy `installView` siempre los da en
+ * los estados en los que el botón puede fallar, así que es alcanzable solo si esa
+ * función cambia: sin texto, quien pulse el botón y lo vea fallar se queda sin
+ * ninguna instrucción.
+ */
+const SIN_PASOS_DE_INSTALACION = 'Abre el menú del navegador y elige la opción de instalar.';
 
 /**
  * Tope del aviso de prueba. Es una petición a la Edge Function en frío, que
@@ -131,6 +140,10 @@ export default function AjustesScreen() {
   // interruptor.
   const pushReadSeq = useRef(0);
   const [testPushBusy, setTestPushBusy] = useState(false);
+  // La instalación de la web como app. En nativo no se enseña nada, y en web
+  // solo aparece si hay algo que hacer: o se instala con un toque, o hay pasos
+  // que dependen del navegador que tiene la persona.
+  const appInstall = useAppInstall();
 
   const { data: appointments } = useRealtimeCollection<Appointment>(
     () => (currentCasa ? fetchAppointments(currentCasa.id) : Promise.resolve([])),
@@ -223,10 +236,13 @@ export default function AjustesScreen() {
         return;
       }
       if (result.status === 'unsupported') {
-        showNotice(
-          'No disponible',
-          'Este navegador no admite avisos push. En iPhone hace falta instalar la app en la pantalla de inicio.',
-        );
+        // Solo llega si el navegador no tiene las tres APIs de push, y en ese
+        // caso el interruptor está desactivado y no se puede pulsar, así que es
+        // una rama de seguridad. El aviso de "añádela a la pantalla de inicio" no
+        // va aquí: en iPhone el navegador SÍ dice que puede, y el problema es
+        // que no envía en una pestaña. Eso lo explica la descripción del
+        // interruptor, que mira la plataforma y el modo de visualización.
+        showNotice('No disponible', 'Este navegador no admite avisos push.');
         return;
       }
       if (result.status === 'timeout') {
@@ -262,6 +278,30 @@ export default function AjustesScreen() {
           .catch(() => undefined);
       }
     }
+  }
+
+  /**
+   * Instala la web como app, si el navegador lo permite con un toque.
+   *
+   * El botón solo aparece cuando el navegador ha lanzado el evento, así que
+   * aquí casi siempre va a funcionar. Pero si la persona lo rechaza, o si el
+   * evento ya se gastó, se le dice cómo se hace a mano en lugar de dejar el
+   * botón ahí para que lo pulse otra vez y no pase nada.
+   */
+  async function handleInstallApp() {
+    const installed = await appInstall.install();
+    if (installed) {
+      showNotice('App instalada', 'Ya tienes MiCasa con su propio icono en este dispositivo.');
+      return;
+    }
+    // El primer paso ya está escrito como una instrucción entera ("Abre el menú
+    // Compartir, el cuadrado con la flecha hacia arriba."), así que se enseña tal
+    // cual en vez de recortarlo. Si el estado era `instalable` los pasos no se
+    // estaban pintando, pero siguen siendo la salida cuando el botón falla.
+    // Con `?.` porque la única regla de esta pantalla es que no se rompe: esta
+    // tarjeta es opcional y no puede ser el motivo de que Ajustes no abra.
+    const primerPaso = appInstall.view.manualSteps?.[0];
+    showNotice('Se instala desde el navegador', primerPaso ?? SIN_PASOS_DE_INSTALACION);
   }
 
   /**
@@ -528,6 +568,13 @@ export default function AjustesScreen() {
                     : 'Avisos de citas y cumpleaños, aunque cierres la app'
                 : 'Avisos de citas y cumpleaños'}
             </Text>
+            {/* En iPhone el navegador dice que puede enviar pero no envia en una
+                pestaña normal. El aviso va DESPUÉS de la descripción y no en vez
+                de ella: quien no sabe qué hace el interruptor lo pulses o no, y
+                sin esa frase no entiende por qué se le pide instalar. */}
+            {isWeb && appInstall.pushNotice ? (
+              <Text style={styles.cardMeta}>{appInstall.pushNotice.body}</Text>
+            ) : null}
           </View>
           <Switch
             value={notificationsEnabled}
@@ -570,6 +617,39 @@ export default function AjustesScreen() {
           ))}
         </View>
       </Card>
+
+      {appInstall.view.visible ? (
+        <Card>
+          <Text style={styles.sectionTitle}>{appInstall.view.title}</Text>
+          <Text style={styles.cardMeta}>{appInstall.view.body}</Text>
+          {appInstall.view.steps.length > 0 ? (
+            <View style={styles.stepList}>
+              {appInstall.view.steps.map((paso, index) => (
+                <View key={paso} style={styles.stepRow}>
+                  <View style={[styles.stepNumber, index === 0 && styles.stepNumberFirst]}>
+                    <Text
+                      style={[
+                        styles.stepNumberText,
+                        index === 0 && styles.stepNumberTextFirst,
+                      ]}>
+                      {index + 1}
+                    </Text>
+                  </View>
+                  <Text style={[styles.stepText, index === 0 && styles.stepTextFirst]}>
+                    {paso}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {appInstall.view.action ? (
+            <Button
+              title={appInstall.view.action}
+              onPress={() => void handleInstallApp()}
+            />
+          ) : null}
+        </Card>
+      ) : null}
 
       <Card>
         <Text style={styles.sectionTitle}>Miembros ({members.length})</Text>
@@ -776,6 +856,23 @@ const styles = StyleSheet.create({
   },
   settingText: { flex: 1, gap: 2 },
   settingLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  // Los pasos de instalación van numerados, y el primero destacado: es el que
+  // dice dónde tocar, y es lo único que lee quien solo quiere el dato rápido.
+  stepList: { gap: Spacing.two, marginTop: Spacing.two },
+  stepRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
+  stepNumber: {
+    width: 24,
+    height: 24,
+    borderRadius: Radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Palette.surfaceAlt,
+  },
+  stepNumberFirst: { backgroundColor: Palette.primarySoft },
+  stepNumberText: { fontSize: 12, fontWeight: '700', color: Palette.textSecondary },
+  stepNumberTextFirst: { color: Palette.accent },
+  stepText: { flex: 1, fontSize: 14, color: Palette.textSecondary, lineHeight: 20 },
+  stepTextFirst: { color: Palette.textStrong, fontWeight: '600' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
   chip: {
     paddingHorizontal: Spacing.three,

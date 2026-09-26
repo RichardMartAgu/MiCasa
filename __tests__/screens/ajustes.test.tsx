@@ -33,6 +33,14 @@ jest.mock('@/hooks/use-realtime-collection', () => ({
   useRealtimeCollection: (...args: unknown[]) => mockUseRealtimeCollection(...args),
 }));
 
+// La instalación se aisla con su hook entero: lo que se prueba aquí es cómo la
+// tarjeta se pinta y qué hace el botón, no el evento del navegador, que ya
+// tiene sus tests en `__tests__/hooks/use-app-install.test.ts`.
+const mockUseAppInstall = jest.fn();
+jest.mock('@/hooks/use-app-install', () => ({
+  useAppInstall: () => mockUseAppInstall(),
+}));
+
 const mockRemoveCasaMember = jest.fn();
 const mockSetCasaMemberRole = jest.fn();
 jest.mock('@/lib/api', () => ({
@@ -158,6 +166,41 @@ const mockRenameCasa = jest.fn();
 const mockDeleteCasa = jest.fn();
 const mockRefreshMembers = jest.fn();
 
+const mockInstall = jest.fn(async () => true);
+/** Botones de Ajustes sin la tarjeta de instalar. Lo fija el test del botón. */
+let botonesSinLaTarjetaDeInstalar = 0;
+/**
+ * Vista por defecto: la app ya instalada, que es lo que se ve en nativo.
+ *
+ * Los parámetros van separados porque `view` y el resto del hook son cosas
+ * distintas: la plataforma y el aviso de push son de la segunda, no de la
+ * primera, y mezclarlos hacía que un test creyera estar probando iPhone cuando
+ * solo cambiaba un texto.
+ */
+function installView(
+  viewOverrides: Record<string, unknown> = {},
+  hookOverrides: Record<string, unknown> = {},
+) {
+  return {
+    view: {
+      visible: false,
+      title: 'App instalada',
+      body: 'Ya tienes MiCasa en este dispositivo, con su propio icono.',
+      steps: [] as string[],
+      manualSteps: [] as string[],
+      action: null as string | null,
+      actionIsPrompt: false,
+      highlight: null as string | null,
+      ...viewOverrides,
+    },
+    platform: 'android',
+    standalone: true,
+    install: mockInstall,
+    pushNotice: null as { title: string; body: string } | null,
+    ...hookOverrides,
+  };
+}
+
 function setup(
   casas: Casa[] = [casa1, casa2],
   currentCasa = casa1,
@@ -212,6 +255,10 @@ beforeEach(() => {
   mockSyncAll.mockResolvedValue(undefined);
   mockValidateCasaName.mockReturnValue({ valid: true });
   mockValidateInviteCode.mockReturnValue({ valid: true });
+  // Por defecto la instalación no se enseña, que es lo que pasa en nativo: la
+  // tarjeta solo aparece en web y solo si hay algo que hacer.
+  mockUseAppInstall.mockReturnValue(installView());
+  mockInstall.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -394,6 +441,256 @@ describe('AjustesScreen', () => {
     }
   });
 
+  describe('web: instalar la app', () => {
+    it('con el evento del navegador, un boton instala con un toque', async () => {
+      // El caso bueno: Chromium lanza `beforeinstallprompt` y el boton hace el
+      // trabajo. Es el unico caso en el que se puede instalar tocando una vez.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockUseAppInstall.mockReturnValue(
+        installView({
+          visible: true,
+          title: 'Instala la app',
+          body: 'MiCasa se puede instalar como app: se abre con su propio icono.',
+          action: 'Instalar ahora',
+          actionIsPrompt: true,
+        }),
+      );
+      const alertWebSpy = stubWebAlert();
+
+      try {
+        const { getByText, queryAllByRole } = setup();
+        await act(async () => {});
+
+        // Se cuentan los botones de Ajustes sin la tarjeta de instalar. Es la
+        // referencia que usa el test de los pasos: la tarjeta tiene que añadir
+        // exactamente un botón cuando tiene acción, y ninguno cuando no.
+        botonesSinLaTarjetaDeInstalar = queryAllByRole('button').length - 1;
+        fireEvent.press(getByText('Instalar ahora'));
+        await waitFor(() => {
+          expect(mockInstall).toHaveBeenCalledTimes(1);
+        });
+        expect(alertWebSpy).toHaveBeenCalledWith(expect.stringContaining('icono'));
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('si la persona no acepta, se le dice como se hace a mano y no con un boton inútil', async () => {
+      // El boton se queda, pero el aviso dice dónde tocar. Un boton que no hace
+      // nada es peor que no tenerlo: parece que la app está rota.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockInstall.mockResolvedValue(false);
+      mockUseAppInstall.mockReturnValue(
+        installView({
+          visible: true,
+          title: 'Instala la app',
+          body: 'En iPhone la app se añade desde el menú Compartir.',
+          action: 'Instalar ahora',
+          actionIsPrompt: true,
+          highlight: 'Abre el menú Compartir, el cuadrado con la flecha hacia arriba.',
+          // Estado `instalable`: los pasos no se pintan, pero tienen que estar
+          // para el aviso de cuando el boton no funciona.
+          manualSteps: ['Abre el menú Compartir, el cuadrado con la flecha hacia arriba.'],
+        }),
+      );
+      const alertWebSpy = stubWebAlert();
+
+      try {
+        const { getByText } = setup();
+        await act(async () => {});
+
+        fireEvent.press(getByText('Instalar ahora'));
+        await waitFor(() => {
+          // En web `showNotice` solo enseña el mensaje, asi que el titulo no
+          // llega al alert. Lo que importa es que el paso sea el de esa plataforma.
+          expect(alertWebSpy).toHaveBeenCalledWith(
+            expect.stringContaining('Compartir'),
+          );
+        });
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('el titulo y el cuerpo de la tarjeta son los del estado, no un texto fijo', async () => {
+      // Los valores están fijados en la función pura, pero el enlace de la pantalla
+      // a esos textos no: con un título hardcodeado, el caso "App instalada"
+      // aparecería como "Instala la app" y la suite seguiría en verde.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+
+      try {
+        mockUseAppInstall.mockReturnValue(
+          installView({
+            visible: true,
+            title: 'App instalada',
+            body: 'Ya tienes MiCasa en este dispositivo, con su propio icono.',
+          }),
+        );
+        const installed = setup();
+        await act(async () => {});
+        expect(installed.getByText('App instalada')).toBeTruthy();
+        expect(
+          installed.getByText('Ya tienes MiCasa en este dispositivo, con su propio icono.'),
+        ).toBeTruthy();
+        installed.unmount();
+
+        mockUseAppInstall.mockReturnValue(
+          installView({
+            visible: true,
+            title: 'Esta web ya es la app',
+            body: 'Este navegador no puede instalarla, pero no la necesitas: MiCasa funciona igual abierta aquí. Guárdala en favoritos para abrirla en un toque.',
+          }),
+        );
+        const noInstalable = setup();
+        await act(async () => {});
+        expect(noInstalable.getByText('Esta web ya es la app')).toBeTruthy();
+        expect(noInstalable.getByText(/Guárdala en favoritos/)).toBeTruthy();
+        // Y sin pasos ni botón, que es lo que hace que en Firefox no haya una
+        // lista de instrucciones que no funcionan.
+        expect(noInstalable.queryByText('1')).toBeNull();
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('si la vista no trae pasos, el aviso de reserva dice donde mirar', async () => {
+      // El boton se puede pulsar sin que la vista traiga pasos. Si el texto de
+      // reserva estuviera vacio o fuera un relleno, quien lo pulse y lo vea
+      // fallar se quedaria sin instruccion ninguna.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockInstall.mockResolvedValue(false);
+      mockUseAppInstall.mockReturnValue(
+        installView({
+          visible: true,
+          title: 'Instala la app',
+          body: 'MiCasa se puede instalar como app.',
+          action: 'Instalar ahora',
+          actionIsPrompt: true,
+          manualSteps: [],
+        }),
+      );
+      const alertWebSpy = stubWebAlert();
+
+      try {
+        const { getByText } = setup();
+        await act(async () => {});
+
+        fireEvent.press(getByText('Instalar ahora'));
+        await waitFor(() => {
+          expect(alertWebSpy).toHaveBeenCalledWith(
+            'Abre el menú del navegador y elige la opción de instalar.',
+          );
+        });
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('sin evento del navegador se enseñan los pasos numerados, sin boton', async () => {
+      // iPhone y Firefox: no hay evento, no hay boton, y lo util son los pasos.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockUseAppInstall.mockReturnValue(
+        installView({
+          visible: true,
+          title: 'Instala la app',
+          body: 'En iPhone la app se añade desde el menú Compartir.',
+          steps: [
+            'Abre el menú Compartir, el cuadrado con la flecha hacia arriba.',
+            'Abajo, "Añadir a pantalla de inicio".',
+          ],
+          highlight: 'Abre el menú Compartir, el cuadrado con la flecha hacia arriba.',
+        }),
+      );
+
+      try {
+        const { getByText, queryByText, queryAllByRole } = setup();
+        await act(async () => {});
+
+        expect(getByText('1')).toBeTruthy();
+        expect(getByText('2')).toBeTruthy();
+        expect(getByText('Abre el menú Compartir, el cuadrado con la flecha hacia arriba.')).toBeTruthy();
+        expect(getByText('Abajo, "Añadir a pantalla de inicio".')).toBeTruthy();
+        // Sin botón, y no solo sin el texto: un botón con el título a null se
+        // pinta igual, con fondo y sin nada dentro, que es peor que no pintarlo.
+        // Se comparan los botones de Ajustes con los del caso anterior, que es el
+        // mismo estado salvo por la tarjeta: la diferencia tiene que ser uno.
+        expect(queryByText('Instalar ahora')).toBeNull();
+        expect(queryAllByRole('button')).toHaveLength(botonesSinLaTarjetaDeInstalar);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('en nativo no se enseña la tarjeta', async () => {
+      // En la app ya instalada no hay nada que instalar, y una tarjeta que lo
+      // pidiera sería ruido.
+      const { queryByText } = setup();
+      await act(async () => {});
+
+      expect(queryByText('Instala la app')).toBeNull();
+      expect(queryByText('App instalada')).toBeNull();
+    });
+
+    it('en iPhone, el interruptor de avisos explica que hay que instalarla', async () => {
+      // El aviso que hacia falta y nunca se veía: en iOS el push existe pero no
+      // funciona en una pestaña, y el interruptor no dice por qué.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockUseAppInstall.mockReturnValue(
+        installView(
+          {
+            visible: true,
+            title: 'Instala la app',
+            body: 'En iPhone la app se añade desde el menú Compartir.',
+            steps: ['Abre el menú Compartir.'],
+            manualSteps: ['Abre el menú Compartir.'],
+            highlight: 'Abre el menú Compartir.',
+          },
+          {
+            platform: 'ios',
+            standalone: false,
+            pushNotice: {
+              title: 'Añádela a la pantalla de inicio',
+              body: 'En iPhone los avisos solo llegan si MiCasa está en la pantalla de inicio. Búscala en el menú Compartir.',
+            },
+          },
+        ),
+      );
+
+      try {
+        const { getByText } = setup();
+        await act(async () => {});
+
+        // El aviso va ademas de la descripcion, no en vez de ella: quien no sabe
+        // que hace el interruptor lo pulses o no, y sin esa frase no entiende por
+        // que se le pide instalar.
+        expect(
+          getByText('En iPhone los avisos solo llegan si MiCasa está en la pantalla de inicio. Búscala en el menú Compartir.'),
+        ).toBeTruthy();
+        expect(getByText('Avisos de citas y cumpleaños, aunque cierres la app')).toBeTruthy();
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+  });
+
   describe('web: interruptor de notificaciones', () => {
     it('avisa por el camino de web, no por Alert, cuando el permiso se deniega', async () => {
       const originalOs = Platform.OS;
@@ -525,6 +822,36 @@ describe('AjustesScreen', () => {
         const toggle = getByLabelText('Activar notificaciones');
         expect(toggle.props.disabled).toBe(false);
         expect(toggle.props.value).toBe(false);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('si el navegador no soporta push, el aviso no manda a instalar la app', async () => {
+      // La copia que había aquí decía "En iPhone hace falta instalar la app en la
+      // pantalla de inicio" dentro de la rama `unsupported`. Eso es inalcanzable
+      // (en iPhone el navegador SÍ dice que puede) y confunde: el caso de iPhone
+      // lo explica la descripción del interruptor, no este aviso. Si alguien
+      // revirtiera el cambio, este test falla.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockEnableWebPush.mockResolvedValue({ status: 'unsupported' } as never);
+      const alertWebSpy = stubWebAlert();
+
+      try {
+        const { getByLabelText } = setup();
+        await act(async () => {});
+
+        fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', true);
+        await waitFor(() => {
+          // En web `showNotice` solo enseña el mensaje, no el título.
+          expect(alertWebSpy).toHaveBeenCalledWith('Este navegador no admite avisos push.');
+        });
+        expect(alertWebSpy).not.toHaveBeenCalledWith(
+          expect.stringContaining('pantalla de inicio'),
+        );
       } finally {
         Platform.OS = originalOs;
       }
