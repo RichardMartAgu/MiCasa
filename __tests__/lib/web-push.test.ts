@@ -1228,3 +1228,41 @@ describe('sendTestPush: el contrato con la Edge Function', () => {
     await expect(sendTestPush()).resolves.toEqual({ ok: true, delivered: 0 });
   });
 });
+
+describe('la clave VAPID del frontend', () => {
+  it('es una clave publica P-256 utilizable por el navegador', () => {
+    const bytes = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+    expect(bytes.length).toBe(65);
+    expect(bytes[0]).toBe(4);
+  });
+
+  it('es un punto real de la curva P-256, no solo 65 bytes que empiezan por 0x04', () => {
+    // El fallo historico de esta clave fue una que cumplia los dos requisitos
+    // de tamano y prefijo y aun asi no era un punto de la curva. Un test que
+    // fija un literal solo sabe decir si el literal sigue ahi, no si la clave
+    // significa nada. Esto se comprueba con la ecuacion de la curva sobre el primo
+    // de NIST: y^2 == x^3 + ax + b (mod p). Sobrevive a cualquier rotacion.
+    const bytes = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+    const P = 2n ** 256n - 2n ** 224n + 2n ** 192n + 2n ** 96n - 1n;
+    const A = -3n;
+    const B = 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604bn;
+    const x = BigInt('0x' + Buffer.from(bytes.subarray(1, 33)).toString('hex'));
+    const y = BigInt('0x' + Buffer.from(bytes.subarray(33, 65)).toString('hex'));
+
+    const mod = (v: bigint) => ((v % P) + P) % P;
+    expect(mod(y * y)).toBe(mod(x * x * x + A * x + B));
+  });
+
+  it('es la clave que rotamos en el PR #73, y no la anterior', () => {
+    // Con la clave anterior, el navegador Chrome 153 devolvia una suscripcion con
+    // endpoint pero sin `p256dh` ni `auth`, seis veces seguidas. Ese par en
+    // concreto esta en la base, en el Vault, y esta en el bundle. Si alguien
+    // cambia una de las tres sin cambiar las otras dos, los avisos dejan de
+    // firmarse en silencio: es exactamente el fallo que se midio.
+    expect(VAPID_PUBLIC_KEY).toBe(
+      'BHJV5jOQoaXKdrI90Z7O-7tYh29DANfUB7jSMS8w3M_szTkpfCXaQx7uzoW5IixMuaCHmKJeVvW4Cz_oHaUpmrg',
+    );
+    // Y la anterior no puede volver a colarse.
+    expect(VAPID_PUBLIC_KEY).not.toMatch(/^BGAx5MQzNUhQM9/);
+  });
+});

@@ -98,8 +98,30 @@ const DIAGNOSTIC_WRITE_TIMEOUT_MS = 3000;
 /** Tope de una sola lectura de la suscripción dentro de la espera. */
 const LECTURA_TIMEOUT_MS = 1500;
 
+/**
+ * Clave publica VAPID: la que el navegador usa al suscribirse. Es publica por
+ * diseño, va en el bundle, y su pareja privada vive en el Vault del servidor.
+ *
+ * Se rotaron las dos en el PR #73. Motivo, medido en un Android real con Chrome
+ * 153: la suscripcion llegaba con endpoint pero sin `p256dh` ni `auth`, y el
+ * navegador repetia el fallo indefinidamente. Lo que genera esas claves es FCM,
+ * no el navegador, asi que la causa estaba en el registro; pero mientras el
+ * navegador conserve la suscripcion vieja, `subscribe()` con una clave distinta no
+ * puede devolver nada utilizable, y por eso los seis intentos eran el mismo objeto
+ * roto seis veces y no seis pruebas.
+ *
+ * Ojo con lo que **no** hace esto: rotar la clave no borra la suscripcion vieja
+ * del navegador. Lo que la elimina es `subscribeAndStore`, que la ve incompleta y
+ * la da de baja antes de pedir una nueva. Y cambiar el `id` del manifest tampoco
+ * ayudaba: la suscripcion push y el registro del service worker se llavean por
+ * origin y scope, no por identidad de aplicacion. Se probo y se revirtio.
+ *
+ * El par se verifico por derivacion (OpenSSL) y por aritmetica pura de la curva
+ * P-256, no mirando que las dos cadenas pareciesen parecidas. Eso importa: una vez
+ * se compararon mal dos cadenas y casi se reporto un bug que no existia.
+ */
 export const VAPID_PUBLIC_KEY =
-  'BGAx5MQzNUhQM9rZxoKqQ5YlUG0Aj83vKNRGls0p2qAHn2ZGYT5CGKPokPzCWjgDaddVzL_0MIHp7P_rzcKr9P0';
+  'BHJV5jOQoaXKdrI90Z7O-7tYh29DANfUB7jSMS8w3M_szTkpfCXaQx7uzoW5IixMuaCHmKJeVvW4Cz_oHaUpmrg';
 
 /** Rutas internas a las que puede llevar un aviso. Espejo de sw-src.js. */
 export const ALLOWED_PUSH_ROUTES = ['/citas', '/cumpleanos'] as const;

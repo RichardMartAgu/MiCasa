@@ -195,3 +195,61 @@ Verificado en producción: sin sesión `401`, con un token inválido `401`, y co
 - Worktree: `/home/richard/MiCasa-web-push`, rama `feat/web-push`.
 - La base es `5f0c373` (PWA, rebasado sobre `develop`), así que este PR incluye el commit de la PWA mientras `#51` no esté mergeado. Al mergear `#51` el diff de este PR baja solo.
 - `node_modules` es un symlink al del worktree de la PWA para no reinstalar; `.gitignore` cubre los symlinks con el patrón sin barra.
+
+## Cómo rotar el par de claves VAPID
+
+Hay **tres copias** del par y tienen que cambiar juntas. Si la pública del bundle y
+la privada de Vault no son el mismo par, **el push no funciona en ningún
+dispositivo** y no hay ningún error visible: el navegador se suscribe bien y el
+envío falla al firmar. Por eso el orden importa.
+
+1. Generar el par y **verificarlo por derivación**, no mirando que las dos cadenas
+   se parezcan:
+
+   ```bash
+   node -e "
+   const c=require('node:crypto'); const e=c.createECDH('prime256v1'); e.generateKeys();
+   const p=e.getPrivateKey(), u=e.getPublicKey();
+   const v=c.createECDH('prime256v1'); v.setPrivateKey(p);
+   if (v.getPublicKey().toString('base64url') !== u.toString('base64url')) throw new Error('el par no cuadra');
+   console.log('privada', p.toString('base64url').length, 'chars');
+   console.log('publica', u.toString('base64url'));
+   "
+   ```
+
+   La privada se copia **del fichero de salida**, nunca de memoria. Escribirla a
+   mano es un fallo real que ya se ha cometido una vez aquí.
+
+2. Actualizar **las dos** de Vault, en la misma ventana que el despliegue:
+
+   ```sql
+   select vault.update_secret(id, '<privada>', null, 'VAPID privada P-256.')
+     from vault.secrets where name = 'vapid_private_key';
+   select vault.update_secret(id, '<publica>', null, 'VAPID publica P-256, 65 bytes.')
+     from vault.secrets where name = 'vapid_public_key';
+   ```
+
+   `update_secret` toma el **uuid primero**; pasar el nombre duplica clave
+   (`23505 secrets_name_idx`).
+
+3. Actualizar `VAPID_PUBLIC_KEY` en `src/lib/web-push.ts` con la pública.
+
+4. **Verificar las tres copias antes de mergear**, con la privada real de Vault:
+
+   ```bash
+   node -e "
+   const c=require('node:crypto'), fs=require('node:fs');
+   const priv='<la de Vault>'; const pub=fs.readFileSync('src/lib/web-push.ts','utf8').match(/VAPID_PUBLIC_KEY =\s*'([^']+)'/s)[1];
+   const e=c.createECDH('prime256v1'); e.setPrivateKey(Buffer.from(priv,'base64url'));
+   console.log('la privada de Vault deriva la publica del bundle:', e.getPublicKey().toString('base64url')===pub);
+   "
+   ```
+
+5. Qué rompe y qué no, para no perder el tiempo:
+   - Las suscripciones viejas **quedan inservibles** (el push service responde 403).
+     Se limpian solas al reintentarse, porque `subscribeAndStore` ve la suscripción
+     sin claves y la da de baja.
+   - **No** hay que cambiar el `id` del manifest. Se probó y se revirtió: la
+     suscripción push y el registro del service worker se llavean por origin y
+     scope, no por identidad de aplicación. `scripts/verify-pwa.cjs` además lo fija
+     a `/`, y poner otra cosa rompe esa puerta en silencio.
