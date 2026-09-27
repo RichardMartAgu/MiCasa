@@ -79,7 +79,7 @@ const SIN_PASOS_DE_INSTALACION = 'Abre el menú del navegador y elige la opción
 
 /**
  * Tope del aviso de prueba. Es una petición a la Edge Function en frío, que
- * además tiene que contacting con el push service, así que se le da margen de
+ * además tiene que contacta con el push service, así que se le da margen de
  * sobra: el objetivo es que un cuelgue no deje el botón muerto, no que el botón
  * falle pronto.
  */
@@ -347,7 +347,7 @@ export default function AjustesScreen() {
       if (result.ok) {
         // Con cero entregadas no se puede decir "Aviso enviado": la función
         // responde 200 con lo que consiguió, y una suscripción inservible hace que
-        // delivers cero sin que haya pasado nada. Medido: el botón anunciaba un
+        // deja el contador a cero sin que haya pasado nada. Medido: el botón anunciaba un
         // envío que no se había enviado a nadie.
         if (result.delivered === 0) {
           showNotice(

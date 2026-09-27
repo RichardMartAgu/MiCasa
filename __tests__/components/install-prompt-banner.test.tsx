@@ -102,6 +102,16 @@ describe('InstallPromptBanner: el veredicto se ve acabar', () => {
     expect(screen.getByText('MiCasa ya está instalada')).toBeTruthy();
   });
 
+  it('mientras instala no hay forma de cerrar el cartel', async () => {
+    // Con el cierre, tocar el cartel lo hacia desaparecer sin decir nada: se
+    // cancelaba el aviso de "no hemos podido confirmar" y no quedaba nada en
+    // pantalla. Es lo que se vio en un Android real.
+    (useAppInstall as jest.Mock).mockReturnValue(hook({ installing: true, shouldAsk: false }));
+    await dejarAparecer();
+    expect(screen.getByText('Instalando MiCasa…')).toBeTruthy();
+    expect(screen.queryByLabelText('Cerrar')).toBeNull();
+  });
+
   it('el veredicto se puede cerrar, y se llama al hook', async () => {
     const cerrarVeredicto = jest.fn();
     (useAppInstall as jest.Mock).mockReturnValue(hook({ veredicto: 'sin-confirmar', shouldAsk: false, cerrarVeredicto }));

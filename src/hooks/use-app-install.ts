@@ -315,7 +315,16 @@ export function useAppInstall(): AppInstall {
   });
   const view = installView(state, platform);
 
-  const cerrarVeredicto = useCallback(() => setVeredicto('ninguno'), []);
+  // Cerrar el veredicto no puede cancelar una instalación en marcha. Se podrá
+  // cerrar cuando ya haya terminado de bien o de mal, pero no mientras sigue:
+  // hacerlo borraba el temporizador que iba a decir "no hemos podido confirmar",
+  // y con el evento ya gastado no quedaba nada en pantalla. El resultado era que
+  // tocar el cartel mientras instalaba lo hacía desaparecer, que es justo lo que
+  // se vio en un Android real.
+  const cerrarVeredicto = useCallback(() => {
+    if (readVeredicto() === 'esperando') return;
+    setVeredicto('ninguno');
+  }, []);
 
   return {
     view: { ...view, visible: !native && view.visible },

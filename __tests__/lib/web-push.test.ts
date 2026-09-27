@@ -11,6 +11,9 @@ import { supabase } from '@/lib/supabase';
 import { SUBSCRIBE_FAILURE_MESSAGES } from '@/lib/push-failures';
 import {
   ACTIVATION_TIMEOUT_MS,
+  CLAVES_PASO_MS,
+  CLAVES_TIMEOUT_MS,
+  SW_READY_TIMEOUT_MS,
   incompleteReason,
   INCOMPLETE_MESSAGES,
   ALLOWED_PUSH_ROUTES,
@@ -20,7 +23,6 @@ import {
   getActiveSubscription,
   PERMISSION_TIMEOUT_MS,
   sendTestPush,
-  SW_READY_TIMEOUT_MS,
   toSubscriptionRecord,
   urlBase64ToUint8Array,
   VAPID_PUBLIC_KEY,
@@ -100,18 +102,25 @@ describe('presupuestos de tiempo de la activación', () => {
   });
 
   it('la suscripción y la red tienen un techo estrecho, porque no dependen de nadie', () => {
-    expect(ACTIVATION_TIMEOUT_MS).toBe(30_000);
+    // Subió de 30 a 35 s para pagar la espera de las claves. Con 30 no había
+    // margen: el registro del worker puede gastar 20 y para FCM, la red y la
+    // espera quedaban ~7 s, con lo que el corte saltaba y la persona veía "no ha
+    // terminado a tiempo" en lugar del motivo real.
+    expect(ACTIVATION_TIMEOUT_MS).toBe(35_000);
   });
 
   it('el tope global de Ajustes es la suma de los dos con margen', () => {
-    expect(WEB_PUSH_TIMEOUT_MS).toBe(100_000);
+    expect(WEB_PUSH_TIMEOUT_MS).toBe(105_000);
     expect(WEB_PUSH_TIMEOUT_MS).toBeGreaterThan(PERMISSION_TIMEOUT_MS + ACTIVATION_TIMEOUT_MS);
   });
 
-  it('el registro y la activación del service worker caben en el presupuesto', () => {
-    // Son dos fases del mismo tope, y si sumaran más que el presupuesto de
-    // activación el corte global las dejaría a medias sin avisar de nada.
+  it('el registro, la activación y la espera de las claves caben en el presupuesto', () => {
+    // El reparto de tiempos es lo que evita que el corte global se coma una fase
+    // sin avisar. Con la espera nueva, el test anterior no la miraba: por eso
+    // faltaba esta fase en el reparto.
     expect(SW_READY_TIMEOUT_MS * 2).toBeLessThanOrEqual(ACTIVATION_TIMEOUT_MS);
+    const conClaves = SW_READY_TIMEOUT_MS * 2 + CLAVES_TIMEOUT_MS + 5_000;
+    expect(conClaves).toBeLessThanOrEqual(ACTIVATION_TIMEOUT_MS);
   });
 });
 
@@ -174,7 +183,12 @@ describe('el estado real del navegador manda sobre la interfaz', () => {
   ) {
     const { active = true, subscribed = true } = overrides;
     const opts = { installingWorker: overrides.installingWorker ?? false };
-    const getSubscription = jest.fn(async () => (subscribed ? { endpoint: 'https://push.test/e' } : null));
+    // Con `keys`, como una suscripción real. Antes este stub devolvía solo el
+    // endpoint, y por eso daba igual que la suscripción estuviera incompleta: los
+    // tests daban "hay suscripción" con un objeto que no sirve para enviar nada.
+    const getSubscription = jest.fn(async () =>
+      subscribed ? { endpoint: 'https://push.test/e', keys: { p256dh: 'p', auth: 'a' } } : null,
+    );
     // Sin worker activo, `installing` tiene que pasar a `activated` a través de
     // `statechange`, que es por donde `waitForActivation` escucha. Con
     // `installing` a null esa función devuelve null en el acto y el camino a
@@ -259,12 +273,279 @@ describe('el estado real del navegador manda sobre la interfaz', () => {
   });
 
   it('devuelve null de verdad cuando el navegador no está suscrito', async () => {
-    // Sin esta aserción, este test también pasaría si `isPushSupported`-cutting
+    // Sin esta aserción, este test también pasaría si `isPushSupported`, lo recorta
     // devolviera null antes de preguntar nada, que es como pasó al principio.
     const { getSubscription } = stubBrowser({ subscribed: false });
 
     await expect(getActiveSubscription()).resolves.toBeNull();
     expect(getSubscription).toHaveBeenCalled();
+  });
+});
+
+
+/** Lo justo de Supabase para este bloque: insertar suscripción y anotar motivo. */
+function stubDb() {
+  const insert = jest.fn(async () => ({ error: null }));
+  const deleteEq = jest.fn(async () => ({ error: null }));
+  const fromPushLog = jest.fn(async () => ({ error: null }));
+  (supabase.from as jest.Mock).mockImplementation((table: string) =>
+    table === 'push_subscriptions'
+      ? { delete: () => ({ eq: deleteEq }), insert }
+      : table === 'push_log'
+        ? { insert: fromPushLog }
+        : { upsert: jest.fn(async () => ({ error: null })) },
+  );
+  return { insert, fromPushLog };
+}
+
+describe('una suscripción sin claves no cuenta como activa', () => {
+  // El defecto medido en un Android real: el navegador devuelve una suscripción
+  // con endpoint pero sin `p256dh` ni `auth`. La lectura la contaba como activa,
+  // el interruptor decía "activado" y en la base no había ni una fila. Un estado
+  // que miente, que además engañó al propio diagnóstico cuando se buscaba la
+  // causa de que no llegaran los avisos.
+  const originalOs = Platform.OS;
+  let pushManager: { getSubscription: jest.Mock; subscribe: jest.Mock };
+
+  beforeEach(() => {
+    Platform.OS = 'web';
+    jest.useFakeTimers();
+    pushManager = { getSubscription: jest.fn(), subscribe: jest.fn() };
+    const registration = {
+      active: { state: 'activated', addEventListener: jest.fn(), removeEventListener: jest.fn() },
+      installing: null,
+      waiting: null,
+      pushManager,
+    };
+    Object.assign(global.window, {
+      Notification: Object.assign(function Notification() {}, {
+        permission: 'granted',
+        // Sin esto, `enableWebPush` falla al pedir permiso y nunca llega a la
+        // suscripción: el test pasaba por otro motivo del que decía probar.
+        requestPermission: jest.fn(async () => 'granted'),
+      }),
+      PushManager: function PushManager() {},
+    });
+    Object.assign(global.navigator, {
+      serviceWorker: {
+        getRegistration: jest.fn(async () => registration),
+        register: jest.fn(async () => registration),
+        ready: Promise.resolve(registration),
+      },
+    });
+  });
+
+  afterEach(() => {
+    Platform.OS = originalOs;
+    jest.useRealTimers();
+  });
+
+  it('la lectura devuelve null y NO da de baja nada', async () => {
+    const unsubscribe = jest.fn(async () => true);
+    pushManager.getSubscription.mockResolvedValue({
+      endpoint: 'https://fcm.googleapis.com/fcm/send/sin-claves',
+      keys: null,
+      unsubscribe,
+    });
+
+    await expect(getActiveSubscription()).resolves.toBeNull();
+    // Y no toca nada. Dar de baja desde una lectura es una carrera: Ajustes lee al
+    // montar y al volver del segundo plano, y si pilla la suscripción a medio
+    // hacer del alta que ella misma está haciendo, la tira y el alta falla con un
+    // motivo inventado. La limpieza va en `subscribeAndStore`, que es secuencial.
+    expect(unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('un objeto sin método unsubscribe no rompe la lectura', async () => {
+    // Este navegador ya ha devuelto objetos a medias. Si puede faltar `keys`, no
+    // cuesta nada que un método pueda faltar también: un TypeError aquí caería la
+    // lectura que decide si hay algo que limpiar.
+    pushManager.getSubscription.mockResolvedValue({ endpoint: 'https://push.test/e', keys: null });
+
+    await expect(getActiveSubscription()).resolves.toBeNull();
+  });
+
+  it('una suscripción completa sí cuenta como activa', async () => {
+    // El otro lado del contrato: sin esto, el arreglo de arriba podría pasar
+    // simplemente deixando de devolver nada nunca.
+    pushManager.getSubscription.mockResolvedValue({
+      endpoint: 'https://fcm.googleapis.com/fcm/send/buena',
+      keys: { p256dh: 'p', auth: 'a' },
+    });
+
+    await expect(getActiveSubscription()).resolves.toMatchObject({
+      endpoint: 'https://fcm.googleapis.com/fcm/send/buena',
+    });
+  });
+
+  it('espera a que las claves aparezcan antes de declarar la suscripción mala', async () => {
+    // Chrome genera `p256dh` y `auth` de forma asíncrona, después de crear la
+    // suscripción. Leerla en el acto la encuentra sin claves aunque las vaya a
+    // tener: medido en un Android real, seis intentos seguidos fallaron así.
+    const unsubscribe = jest.fn(async () => true);
+    const db = stubDb();
+    let conClaves = false;
+    setTimeout(() => {
+      conClaves = true;
+    }, 1000);
+    // Un único objeto, como en el navegador: `getSubscription()` devuelve la
+    // misma suscripción y lo que cambia son sus `keys`. Con dos objetos
+    // distintos, el que trae las claves no tenía `unsubscribe` y una baja de más
+    // sobre él pasaba inadvertida.
+    const suscripcion = { endpoint: 'https://push.test/e', keys: null as { p256dh: string; auth: string } | null, unsubscribe };
+    suscripcion.keys = { p256dh: 'p', auth: 'a' };
+    pushManager.getSubscription.mockImplementation(async () => {
+      suscripcion.keys = conClaves ? { p256dh: 'p', auth: 'a' } : null;
+      return suscripcion;
+    });
+    pushManager.subscribe.mockResolvedValue(suscripcion);
+
+    const promesa = enableWebPush({ id: 'user-1' } as never);
+    await jest.advanceTimersByTimeAsync(1500);
+    const result = await promesa;
+
+    expect(result.status).toBe('enabled');
+    // Y se guarda **la** que trae las claves, no la que se creó a medias. Sin esto,
+    // un mutante que devolviera las claves bien y aun así diera de baja la
+    // suscripción nueva pasaría: `status` seguiría siendo `enabled` y el insert
+    // seguiría llamándose, con el navegador sin nada y la base diciendo que sí.
+    expect(db.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: 'https://push.test/e', active: true }),
+    );
+    // Una sola baja, y es la de siempre: la suscripción que ya había y venía sin
+    // claves, que se limpia antes de pedir otra. Lo que se prueba es que la
+    // suscripción nueva, que sí tiene claves, NO se da de baja. Sin la espera se
+    // habría declarado mala y el alta habría fallado.
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('la espera termina aunque la lectura se quede colgada', async () => {
+    // El invariante del módulo: nada se cuelga sin techo. Se comprueba con las dos
+    // protecciones a la vez, porque cada una tapa un agujero distinto: el tope por
+    // lectura evita que un `getSubscription()` que no resuelve deje la espera
+    // viva, y el de iteraciones evita que un bucle se realimente sin fin.
+    // Sin cualquiera de las dos, esta prueba no termina.
+    const unsubscribe = jest.fn(async () => true);
+    stubDb();
+    let lecturas = 0;
+    pushManager.getSubscription.mockImplementation(() => {
+      lecturas += 1;
+      return new Promise<PushSubscription>(() => {
+        /* nunca resuelve: la lectura se queda colgada */
+      });
+    });
+    pushManager.subscribe.mockResolvedValue({ endpoint: 'https://push.test/e', keys: null, unsubscribe });
+
+    const promesa = enableWebPush({ id: 'user-1' } as never);
+    await jest.advanceTimersByTimeAsync(30_000);
+    const result = await promesa;
+
+    // Termina, que es lo importante. Y con un veredicto concreto en vez de
+    // colgarse: la suscripción volvió sin claves y no se pudo volver a leer, así
+    // que lo honesto es decir que el navegador no dio las claves.
+    expect(result.status).toBe('failed');
+
+    // Y el bucle está acotado, no solo el flujo. Sin el tope de iteraciones el
+    // resultado sería el mismo ('timeout', por el tope exterior) pero el trabajo
+    // seguiría creciendo sin fin por debajo, y eso no se ve desde fuera.
+    const maxLecturas = Math.ceil(CLAVES_TIMEOUT_MS / CLAVES_PASO_MS) + 3;
+    expect(lecturas).toBeLessThanOrEqual(maxLecturas);
+  });
+
+  it('una consulta de registro colgada no deja el alta esperando', async () => {
+    // La usan la lectura, el alta y la baja. Sin tope, un `getRegistration()` que
+    // no resuelve deja el alta entera esperando el corte exterior, con el trabajo
+    // siguiendo por debajo: exactamente lo que la cabecera del módulo promete que
+    // no pasa.
+    stubDb();
+    pushManager.subscribe.mockResolvedValue({ endpoint: 'https://push.test/e', keys: { p256dh: 'p', auth: 'a' } });
+    (global.navigator as unknown as { serviceWorker: { getRegistration: jest.Mock } }).serviceWorker.getRegistration =
+      jest.fn(() => new Promise(() => {
+        /* nunca resuelve */
+      }));
+
+    const promesa = enableWebPush({ id: 'user-1' } as never);
+    await jest.advanceTimersByTimeAsync(SW_READY_TIMEOUT_MS + 1000);
+    const result = await promesa;
+
+    // Termina con un motivo, no colgada.
+    expect(result.status).not.toBe('enabled');
+  });
+
+  it('la baja de la suscripción tampoco se queda colgada', async () => {
+    // `unsubscribe()` no es local: el navegador puede hablar con su servicio de
+    // push. Con la red caída no resuelve, y sin tope el alta entera se quedaba
+    // esperando sin mensaje.
+    const unsubscribe = jest.fn(() => new Promise<boolean>(() => {
+      /* nunca resuelve */
+    }));
+    stubDb();
+    pushManager.getSubscription.mockResolvedValue(null);
+    pushManager.subscribe.mockResolvedValue({ endpoint: 'https://push.test/e', keys: null, unsubscribe });
+
+    const promesa = enableWebPush({ id: 'user-1' } as never);
+    await jest.advanceTimersByTimeAsync(30_000);
+    const result = await promesa;
+
+    expect(result.status).toBe('failed');
+  });
+
+  it('un error de verdad en la espera no se reintenta ni se disfraza de "sin claves"', async () => {
+    // Reintentar un `InvalidStateError` no lo arregla: el worker caído no se
+    // levanta insistir. Y si al final se informara de "el navegador no ha dado
+    // las claves", la persona acabaría en los servicios de Google Play cuando el
+    // problema es otro. Es el mismo defecto que causó el bug original: un motivo
+    // que manda por el camino equivocado.
+    const unsubscribe = jest.fn(async () => true);
+    const db = stubDb();
+    let lecturas = 0;
+    pushManager.getSubscription.mockImplementation(() => {
+      lecturas += 1;
+      return Promise.reject(new Error('el worker se ha caído'));
+    });
+    pushManager.subscribe.mockResolvedValue({ endpoint: 'https://push.test/e', keys: null, unsubscribe });
+
+    const promesa = enableWebPush({ id: 'user-1' } as never);
+    await jest.advanceTimersByTimeAsync(2000);
+    const result = await promesa;
+
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      // Ni "sin claves" (mandaría a mirar Play Services cuando el problema es
+      // otro) ni el texto crudo del navegador (un motivo que nadie puede usar).
+      expect(result.reason).not.toMatch(/claves de cifrado/i);
+      expect(result.reason).toBe(SUBSCRIBE_FAILURE_MESSAGES['desconocido']);
+    }
+    // Y el motivo queda anotado, que es lo que permite leerlo después sin
+    // depender de que alguien describa lo que vio en el alert.
+    expect(db.fromPushLog).toHaveBeenCalled();
+    // Y sin insistir: dos lecturas, no seis. La primera es la que se hace antes de
+    // pedir una suscripción nueva, y ahí el error sí se enmascara a propósito:
+    // esa lectura solo sirve para limpiar una suscripción vieja, así que lo
+    // razonable es seguir adelante y dejar que el alta de verdad diga qué pasa.
+    expect(lecturas).toBe(2);
+  });
+
+  it('si las claves no llegan, da de baja la suscripción y anota el motivo', async () => {
+    const unsubscribe = jest.fn(async () => true);
+    const db = stubDb();
+    // `getSubscription()` devuelve null a propósito: no hay suscripción previa que
+    // limpiar, así que la única llamada a `unsubscribe` que puede ocurrir es la
+    // nueva, sobre la suscripción que acaba de devolver `subscribe()` sin claves.
+    // Con una suscripción previa, la daba de baja el camino viejo y el test pasaba
+    // aunque el nuevo se borrara.
+    pushManager.getSubscription.mockResolvedValue(null);
+    pushManager.subscribe.mockResolvedValue({ endpoint: 'https://push.test/e', keys: null, unsubscribe });
+
+    const promesa = enableWebPush({ id: 'user-1' } as never);
+    await jest.advanceTimersByTimeAsync(4000);
+    const result = await promesa;
+
+    expect(result.status).toBe('failed');
+    // La baja es lo nuevo: antes se dejaba viva y el navegador la devolvía en
+    // cada intento posterior, con lo que un fallo se repetía indefinidamente.
+    expect(unsubscribe).toHaveBeenCalled();
+    expect(db.fromPushLog).toHaveBeenCalled();
   });
 });
 
@@ -379,7 +660,7 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     await jest.advanceTimersByTimeAsync(PERMISSION_TIMEOUT_MS + 1);
     const result = await promise;
 
-    // `failed`would dir "algo ha fallado"; `timeout` dice que se quedó esperando.
+    // `failed` diría "algo ha fallado"; `timeout` dice que se quedó esperando.
     expect(result.status).toBe('timeout');
   });
 
@@ -613,7 +894,7 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
   });
 
   it('si la anotación del motivo se cuelga, el motivo del fallo sigue llegando', async () => {
-    // El Symptoma sería "no ha terminado a tiempo" en lugar de "Play Services",
+    // El síntoma sería "no ha terminado a tiempo" en lugar de "Play Services",
     // que es justo el motivo que hacía falta. La anotación es un extra: si se
     // cuelga, se traga ella sola.
     const colgado = new Promise<never>(() => {
@@ -739,7 +1020,7 @@ describe('disableWebPush: la baja tiene que borrar de verdad', () => {
   }
 
   // `existing` a undefined significa "la suscripcion que el navegador tiene", que
-  // es el mismo objeto que se devuelve, para poder asserting sobre el.
+  // es el mismo objeto que se devuelve, para poder comprobar sobre el.
   function stubBrowser(existing?: unknown) {
     const subscription = {
       endpoint: 'https://push.test/e',
@@ -804,12 +1085,12 @@ describe('disableWebPush: la baja tiene que borrar de verdad', () => {
   it('un borrado que falla en la base no se reporta como baja hecha', async () => {
     // El endpoint es una credencial: si la fila sigue viva, ese navegador
     // seguiria recibiendo avisos aunque la interfaz diga lo contrario.
-    stubDb({ deleteError: { message: 'violacion de politicas' } });
+    stubDb({ deleteError: { message: 'violación de políticas' } });
     stubBrowser();
 
     const result = await disableWebPush(user);
 
-    expect(result).toEqual({ status: 'failed', reason: 'violacion de politicas' });
+    expect(result).toEqual({ status: 'failed', reason: 'violación de políticas' });
   });
 
   it('una baja que no termina es timeout, no un fallo que se puede ignorar', async () => {
@@ -903,7 +1184,7 @@ describe('sendTestPush: el contrato con la Edge Function', () => {
 
   it('un enfriamiento dice cuanto falta, no solo que hay que esperar', async () => {
     // Sin el segundo, la pantalla inventa un minuto y el usuario lo aprieta
-    // otra vez y vuelve a Fallar.
+    // otra vez y vuelve a fallar.
     stubFetch(async () => stubResponse({ error: 'demasiado rapido', retryInSeconds: 300 }));
 
     await expect(sendTestPush()).resolves.toEqual({
@@ -947,4 +1228,3 @@ describe('sendTestPush: el contrato con la Edge Function', () => {
     await expect(sendTestPush()).resolves.toEqual({ ok: true, delivered: 0 });
   });
 });
-

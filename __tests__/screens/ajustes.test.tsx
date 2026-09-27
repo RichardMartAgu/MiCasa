@@ -3,6 +3,7 @@ import { Alert, Platform } from 'react-native';
 
 import AjustesScreen from '@/app/(tabs)/ajustes';
 import type { PromptDecision } from '@/hooks/use-app-install';
+import { WEB_PUSH_TIMEOUT_MS } from '@/lib/web-push-timeouts';
 import type { Casa, CasaMember, Profile } from '@/lib/types';
 
 jest.mock('@react-native-community/datetimepicker', () => {
@@ -80,7 +81,16 @@ function stubWebAlert(): jest.Mock {
   return spy;
 }
 
-jest.mock('@/lib/web-push', () => ({
+jest.mock('@/lib/web-push', () => {
+  // El tope se lee de `web-push-timeouts`, no de una constante declarada aquí ni
+  // de `web-push` con `requireActual` (que arrastra el cliente de Supabase y
+  // revienta sin variables de entorno). `jest.mock` se eleva por encima de los
+  // imports, así que una `const` de este fichero todavía no existiría cuando la
+  // fábrica se invoca: el mock recibía `undefined`, `withTimeout(..., undefined)`
+  // cortaba al instante y el test del tope pasaba sin comprobar nada.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const topes = jest.requireActual('@/lib/web-push-timeouts') as { WEB_PUSH_TIMEOUT_MS: number };
+  return {
   isPushSupported: () => mockIsPushSupported(),
   getActiveSubscription: () => mockGetActiveSubscription(),
   notificationPermission: () => mockNotificationPermission(),
@@ -88,12 +98,9 @@ jest.mock('@/lib/web-push', () => ({
   enableWebPush: (user: unknown) => mockEnableWebPush(user),
   disableWebPush: (user: unknown) => mockDisableWebPush(user),
   sendTestPush: () => mockSendTestPush(),
-  // Espejo del valor real (PERMISSION 60s + ACTIVATION 30s + 10s de margen), que
-  // fija `__tests__/lib/web-push.test.ts`. No se importa el módulo de verdad
-  // porque al cargarse abre un cliente de Supabase y aquí solo hacen falta las
-  // funciones de web-push que ya van simuladas.
-  WEB_PUSH_TIMEOUT_MS: 100_000,
-}));
+    WEB_PUSH_TIMEOUT_MS: topes.WEB_PUSH_TIMEOUT_MS,
+  };
+});
 
 jest.mock('@/lib/notifications', () => ({
   areNotificationsEnabled: (...args: unknown[]) => mockAreNotificationsEnabled(...args),
@@ -929,7 +936,10 @@ describe('AjustesScreen', () => {
         expect(getByLabelText('Activar notificaciones').props.disabled).toBe(true);
 
         await act(async () => {
-          jest.advanceTimersByTime(100_000);
+          // Con el valor del espejo de arriba, no escrito a mano: si cambia el
+          // presupuesto y este número se queda corto, el test pasa por no
+          // agotar el tiempo y no llega a comprobar nada.
+          jest.advanceTimersByTime(WEB_PUSH_TIMEOUT_MS);
         });
 
         expect(alertWebSpy).toHaveBeenCalledWith(MSG_PUSH_TIMEOUT);
