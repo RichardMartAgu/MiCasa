@@ -95,14 +95,20 @@ export function InstallPromptBanner() {
             <Text style={styles.titulo}>
               {appInstall.installing ? 'Instalando MiCasa…' : 'No hemos podido confirmar la instalación'}
             </Text>
-            <Pressable
-              onPress={appInstall.cerrarVeredicto}
-              accessibilityRole="button"
-              accessibilityLabel="Cerrar"
-              hitSlop={8}
-              style={styles.cerrar}>
-              <Ionicons name="close" size={18} color={Palette.textSecondary} />
-            </Pressable>
+            {/* Mientras se está instalando no hay cierre. El cierre cancelaba el
+                temporizador que informa de "no hemos podido confirmar", así que
+                tocarlo dejaba la pantalla sin ninguna señal de lo que estaba
+                pasando. Y con el evento ya gastado no aparecía nada en su lugar. */}
+            {appInstall.installing ? null : (
+              <Pressable
+                onPress={appInstall.cerrarVeredicto}
+                accessibilityRole="button"
+                accessibilityLabel="Cerrar"
+                hitSlop={8}
+                style={styles.cerrar}>
+                <Ionicons name="close" size={18} color={Palette.textSecondary} />
+              </Pressable>
+            )}
           </View>
           <Text style={styles.texto}>
             {appInstall.installing

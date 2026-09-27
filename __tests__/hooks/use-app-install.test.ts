@@ -998,6 +998,50 @@ describe('el veredicto de la instalación', () => {
     expect(result.current.standalone).toBe(false);
   });
 
+  it('cerrar el veredicto NO puede cancelar una instalación en marcha', async () => {
+    // El fallo medido en un Android real: tocando el cartel "Instalando…" lo
+    // hacía desaparecer. El cierre borraba el veredicto, y con él el temporizador
+    // que iba a decir "no hemos podido confirmar"; y como el evento ya estaba
+    // gastado, no quedaba nada en pantalla.
+    jest.useFakeTimers();
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await result.current.install();
+    });
+    expect(result.current.veredicto).toBe('esperando');
+
+    act(() => result.current.cerrarVeredicto());
+    expect(result.current.veredicto).toBe('esperando');
+
+    // Y el veredicto sigue llegando cuando toca, que es lo que se había perdido.
+    await act(async () => {
+      jest.advanceTimersByTime(INSTALL_CONFIRM_MS + 1);
+    });
+    expect(result.current.veredicto).toBe('sin-confirmar');
+  });
+
+  it('cerrado ya terminado, el veredicto sí se quita', async () => {
+    jest.useFakeTimers();
+    const browser = stubBrowser();
+    const { result } = renderHook(() => useAppInstall());
+    act(() => {
+      browser.emit('beforeinstallprompt', eventoInstallPrompt(true));
+    });
+    await act(async () => {
+      await result.current.install();
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(INSTALL_CONFIRM_MS + 1);
+    });
+    expect(result.current.veredicto).toBe('sin-confirmar');
+    act(() => result.current.cerrarVeredicto());
+    expect(result.current.veredicto).toBe('ninguno');
+  });
+
   it('cerrar el veredicto lo quita', async () => {
     jest.useFakeTimers();
     const browser = stubBrowser();

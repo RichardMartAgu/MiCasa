@@ -34,6 +34,43 @@ import {
   SUBSCRIBE_FAILURE_MESSAGES,
   type SubscribeFailure,
 } from './push-failures';
+import {
+  ACTIVATION_TIMEOUT_MS,
+  CLAVES_PASO_MS,
+  CLAVES_TIMEOUT_MS,
+  PERMISSION_TIMEOUT_MS,
+  SW_READY_TIMEOUT_MS,
+  WEB_PUSH_TIMEOUT_MS,
+} from '@/lib/web-push-timeouts';
+
+// Se re-exportan para que quien ya importaba estos números de aquí siga
+// haciéndolo, y para que la fuente de verdad siga siendo un único fichero: están
+// en `web-push-timeouts.ts` porque ese módulo no importa nada, y así un test puede
+// leerlos de verdad sin arrastrar el cliente de Supabase ni depender del orden de
+// inicialización de un `jest.mock`.
+export {
+  PERMISSION_TIMEOUT_MS,
+  SW_READY_TIMEOUT_MS,
+  CLAVES_TIMEOUT_MS,
+  CLAVES_PASO_MS,
+  ACTIVATION_TIMEOUT_MS,
+  WEB_PUSH_TIMEOUT_MS,
+};
+
+/**
+ * Tope del diálogo de permisos, la única parte del flujo que depende de una
+ * persona: en Android el diálogo nativo puede quedarse en pantalla un rato, y
+ * cortar antes de que conteste produce el fallo que se quiere evitar (permiso
+ * denegado sin haberlo denegado). Por eso va holgado y existe solo para que un
+ * `requestPermission()` colgado no deje el interruptor muerto.
+ */
+/**
+ * Registro y posterior activación del service worker: descargar e instalar el
+ * precaché entero del build en una móvil lenta es lo más caro de este flujo, y
+ * aun así no depende de ninguna persona. Son dos fases con este mismo tope, así
+ * que lo peor que pueden consumir juntas es el doble, que sigue entrando de
+ * sobra en el presupuesto de activación.
+ */
 
 /**
  * Clave pública VAPID. Es pública por diseño: el navegador la necesita para
@@ -47,6 +84,19 @@ import {
  * de todos modos y lo que no puede pasar es que se pierda el motivo.
  */
 const DIAGNOSTIC_WRITE_TIMEOUT_MS = 3000;
+
+/**
+ * Cuánto se espera a que el navegador rellene las claves de una suscripción.
+ *
+ * Chrome crea la suscripción con el endpoint y genera `p256dh` y `auth` después,
+ * de forma asíncrona, cuando termina de registrarse con el servicio de
+ * notificaciones. Leerla en el acto y encontrarla sin claves no significa que no
+ * vaya a tenerlas: significa que todavía no las tiene. Sin esta espera, un alta
+ * que iba a funcionar se declaraba "suscripción sin claves" y se tiraba.
+ */
+
+/** Tope de una sola lectura de la suscripción dentro de la espera. */
+const LECTURA_TIMEOUT_MS = 1500;
 
 export const VAPID_PUBLIC_KEY =
   'BGAx5MQzNUhQM9rZxoKqQ5YlUG0Aj83vKNRGls0p2qAHn2ZGYT5CGKPokPzCWjgDaddVzL_0MIHp7P_rzcKr9P0';
@@ -135,6 +185,97 @@ export const INCOMPLETE_MESSAGES: Record<IncompleteReason, string> = {
   'sin-auth': 'El navegador no ha dado la clave de autenticación de los avisos.',
 };
 
+/**
+ * Da de baja una suscripción sin dar por hecho que tenga todos sus métodos.
+ *
+ * No es paranoia: este navegador ya ha devuelto una suscripción **a medias**, sin
+ * claves. Si puede faltar `keys`, no cuesta nada asumir que un método pueda
+ * faltar también, y un `TypeError` aquí dejaría el interruptor peor que antes,
+ * porque se caería la propia lectura que va a decidir si hay algo que limpiar.
+ */
+async function darDeBaja(subscription: PushSubscription | null): Promise<void> {
+  // Con tope: `unsubscribe()` no es local, el navegador puede hablar con su
+  // servicio de push para dar de baja el endpoint, y con la red caída no resuelve.
+  try {
+    if (typeof subscription?.unsubscribe !== 'function') return;
+    await withTimeout(subscription.unsubscribe(), LECTURA_TIMEOUT_MS, 'baja de la suscripción');
+  } catch {
+    // Si no se puede dar de baja, se sigue: el registro se limpia igual y el
+    // siguiente intento parte de una suscripción nueva.
+  }
+}
+
+/**
+ * Espera a que una suscripción reciba sus claves y, si las recibe, la devuelve
+ * con su registro ya normalizado. Devuelve `null` si se agotó el tiempo o si el
+ * navegador ya no la tiene.
+ *
+ * Releer con `getSubscription()` y no con el objeto recibido es a propósito: es
+ * la misma llamada que hará el siguiente intento, así que lo que se comprueba es
+ * exactamente lo que el navegador sigue teniendo.
+ */
+export async function esperarClaves(
+  registration: ServiceWorkerRegistration,
+  user: User | null,
+): Promise<{ subscription: PushSubscription; record: PushSubscriptionRecord } | null> {
+  // El coste de esta fase es `CLAVES_TIMEOUT_MS` y se reparte entre lecturas y
+  // pausas, para que el presupuesto global siga siendo cierto. Antes cada lectura
+  // podía gastar su propio tope y el bucle acababa costando 12,75 s en el peor
+  // caso, con lo que el test de presupuesto certificaba una cuenta falsa. El suelo
+  // de 200 ms deja la cuenta real en 3,05 s: cabe de sobra y evita un tope tan
+  // corto que un poco de lentitud en el móvil se lea como una suscripción sin
+  // claves. En el camino bueno no se nota, porque la primera lectura ya las trae.
+  //
+  // Tope de iteraciones y no solo de reloj, por dos motivos concretos: una lectura
+  // que no resuelve deja el plazo sin mirar nunca, porque se comprueba después del
+  // `await`; y un reloj que salta hacia atrás, o un `Date` no falseado en un test
+  // futuro, alarga el bucle sin fin. Con los dos topes, ni eso ni un
+  // `getSubscription()` colgado pueden dejar el bucle vivo.
+  const maxIntentos = Math.ceil(CLAVES_TIMEOUT_MS / CLAVES_PASO_MS);
+  const porLectura = Math.max(
+    200,
+    Math.floor((CLAVES_TIMEOUT_MS - (maxIntentos - 1) * CLAVES_PASO_MS) / maxIntentos),
+  );
+  for (let intento = 0; intento < maxIntentos; intento++) {
+    if (intento > 0) {
+      await new Promise((resolve) => setTimeout(resolve, CLAVES_PASO_MS));
+    }
+    // Una lectura que se cuelga no tira la espera: se reintenta hasta el tope.
+    // Un tirón puntual del navegador no debería dar por perdida una suscripción
+    // que va a aparecer un instante después, y sin este `catch` el bucle solo
+    // daba una vuelta y el tope de iteraciones no tenía sentido.
+    const actual = await withTimeout(
+      registration.pushManager.getSubscription(),
+      porLectura,
+      'lectura de la suscripción',
+    ).catch(async (error) => {
+      // Solo se reintenta un cuelgue. Un error de verdad —worker caído, contexto
+      // no seguro— no se va a arreglar insistir, y si lo reintentáramos al final
+      // se informaría de "no ha dado las claves" cuando el problema es otro: el
+      // mismo defecto que causó el bug original, un motivo que manda a la persona
+      // por el camino equivocado, ahora además tras 12 s de espera.
+      if (!isTimeout(error)) {
+        // Un fallo real no se reintenta, y tampoco sale crudo a un `window.alert`.
+        // Se clasifica y se anota, que es lo que permite leerlo después sin
+        // depender de que alguien describa lo que vio. Antes el `DOMException` de
+        // Chromium se mostraba tal cual y con un motivo interno, que no es un
+        // motivo que nadie pueda usar.
+        const reason = classifySubscribeFailure(error);
+        await noteSubscriptionProblem(user, reason);
+        throw new Error(SUBSCRIBE_FAILURE_MESSAGES[reason]);
+      }
+      return undefined;
+    });
+    // `undefined` es que la lectura se colgó; `null` es que el navegador ya no
+    // tiene suscripción, y eso no se reintenta: no hay nada que esperar.
+    if (actual === null) return null;
+    if (actual === undefined) continue;
+    const record = toSubscriptionRecord(actual);
+    if (record) return { subscription: actual, record };
+  }
+  return null;
+}
+
 /** Normaliza lo que devuelve `PushSubscription` a lo que espera la tabla. */
 export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubscriptionRecord | null {
   const endpoint = subscription.endpoint ?? null;
@@ -185,7 +326,7 @@ const SW_SCOPE = '/';
  * El registro del service worker ha fallado en esta sesión de página y no se
  * reintenta. Vive a nivel de módulo a propósito: la sorpresa que produce es de
  * página, no de componente, y así todos los caminos que necesitan el worker se
- * leveragesan el mismo veredicto en vez de repetir el intento por su cuenta.
+ * aprovechan el mismo veredicto en vez de repetir el intento por su cuenta.
  */
 let registerUnavailable = false;
 
@@ -196,7 +337,6 @@ let registerUnavailable = false;
  * que lo peor que pueden consumir juntas es el doble, que sigue entrando de
  * sobra en `ACTIVATION_TIMEOUT_MS`.
  */
-export const SW_READY_TIMEOUT_MS = 10_000;
 
 /**
  * Tope del diálogo de permisos, la única parte del flujo que depende de una
@@ -205,7 +345,7 @@ export const SW_READY_TIMEOUT_MS = 10_000;
  * (permiso denegado sin haberlo denegado). Por eso va holgado y existe solo para
  * que un `requestPermission()` colgado no deje el interruptor muerto.
  */
-export const PERMISSION_TIMEOUT_MS = 60_000;
+
 
 /**
  * Tope de lo que ya no depende de nadie: alta del service worker,
@@ -214,7 +354,12 @@ export const PERMISSION_TIMEOUT_MS = 60_000;
  * móvil y estrechos para quien está mirando el interruptor, que es lo que hace
  * útil el aviso de "no ha terminado" en lugar de una espera muda.
  */
-export const ACTIVATION_TIMEOUT_MS = 30_000;
+// 30 s no daba margen para la espera de las claves: el registro del service worker
+// puede gastar hasta 20 s (dos fases de `SW_READY_TIMEOUT_MS`) y luego quedaban
+// ~7 s para FCM, la red y la espera nueva, con lo que el corte saltaba más a
+// menudo y la persona veía "no ha terminado a tiempo" en lugar del motivo real.
+// Y como el tope no cancela el trabajo pendiente, un alta que acabara tarde
+// insertaba la fila después de que la interfaz ya hubiera dicho que no terminó.
 
 /**
  * Tope global que aplica Ajustes como último recurso. Es la suma de los dos
@@ -223,7 +368,6 @@ export const ACTIVATION_TIMEOUT_MS = 30_000;
  * está por encima (y el interruptor nunca queda muerto ni aunque la capa de push
  * se rompa del todo).
  */
-export const WEB_PUSH_TIMEOUT_MS = PERMISSION_TIMEOUT_MS + ACTIVATION_TIMEOUT_MS + 10_000;
 
 /**
  * El registro que ya existe en este navegador, sin crear nada. Para leer el
@@ -237,7 +381,17 @@ export const WEB_PUSH_TIMEOUT_MS = PERMISSION_TIMEOUT_MS + ACTIVATION_TIMEOUT_MS
  */
 async function existingRegistration(): Promise<ServiceWorkerRegistration | null> {
   if (!('serviceWorker' in navigator)) return null;
-  return (await navigator.serviceWorker.getRegistration()) ?? null;
+  // Con tope, y lo usan la lectura, el alta y la baja; `register()` ya lo tiene.
+  // Un `getRegistration()` colgado dejaba el alta esperando hasta el corte
+  // exterior, con el trabajo siguiendo por debajo, que es justo lo que la
+  // cabecera de este módulo promete que no pasa.
+  return (
+    (await withTimeout(
+      navigator.serviceWorker.getRegistration(),
+      SW_READY_TIMEOUT_MS,
+      'el service worker no respondió a la consulta de registro',
+    )) ?? null
+  );
 }
 
 /**
@@ -390,7 +544,29 @@ export async function getActiveSubscription(): Promise<PushSubscription | null> 
   if (!isPushSupported()) return null;
   const registration = await ensureRegistration();
   if (!registration) return null;
-  return registration.pushManager.getSubscription();
+  const subscription = await withTimeout(
+    registration.pushManager.getSubscription(),
+    LECTURA_TIMEOUT_MS,
+    'lectura de la suscripción',
+  ).catch(() => null);
+  if (!subscription) return null;
+
+  // El navegador puede devolver una suscripción **sin claves**: existe, tiene
+  // endpoint, y no sirve para enviar absolutamente nada. Contarla como activada
+  // hace que el interruptor diga "activado" cuando en la base no hay ni una fila
+  // y no hay a quién enviar. Es un estado que miente, y el peor efecto que tiene
+  // es que engaña también al diagnóstico: cuando se estuvo buscando por qué no
+  // llegaban los avisos, el interruptor que "activado" era mentira.
+  //
+  //
+  // Aquí NO se da de baja, y es deliberado. Dar de baja desde una lectura es una
+  // carrera: Ajustes lee al montar y al volver del segundo plano, y si pilla la
+  // suscripción a medio hacer del alta que ella misma está haciendo, la tira y el
+  // alta falla con un motivo inventado. La limpieza la hace `subscribeAndStore`
+  // antes de pedir una suscripción nueva, que es donde tiene sentido: ahí el
+  // borrado es secuencial y no pisa a nadie.
+  if (!toSubscriptionRecord(subscription)) return null;
+  return subscription;
 }
 
 /**
@@ -457,7 +633,14 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   const registration = await ensureRegistration({ requireActive: true });
   if (!registration) throw new Error('service worker no disponible');
 
-  const existing = await registration.pushManager.getSubscription();
+  // Con tope por la misma razón que la espera: sin él, un `getSubscription()`
+  // que no resuelve deja el alta entera colgada, sin mensaje ni `failed`, que es
+  // justo lo que este módulo promete que no pasa.
+  const existing = await withTimeout(
+    registration.pushManager.getSubscription(),
+    LECTURA_TIMEOUT_MS,
+    'lectura de la suscripción',
+  ).catch(() => null);
 
   // Una suscripción sin `p256dh` o sin `auth` no sirve para enviar nada, y es
   // irrecuperable por la vía normal: `getSubscription()` la devuelve siempre, así
@@ -468,11 +651,10 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   if (existing && !usable) {
     // Con `try/catch` y no solo `.catch()`: si el navegador no permite darla de
     // baja, se sigue adelante con la nueva, que es lo que desbloquea al usuario.
-    try {
-      await existing.unsubscribe();
-    } catch {
-      // Se intenta de nuevo con una suscripción nueva igualmente.
-    }
+    // Con tope: `unsubscribe()` puede hablar con el push service. Este es el
+    // camino de recuperación del alta, así que colgarse aquí devolvía al usuario
+    // al mismo callejón sin salida que este bloque vino a cerrar.
+    await darDeBaja(existing);
   }
 
   // El `subscribe()` es donde el navegador dice que no, y lo dice en inglés y sin
@@ -506,13 +688,29 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
     }
   }
 
-  const record = toSubscriptionRecord(subscription);
+  let record = toSubscriptionRecord(subscription);
+  if (!record) {
+    // Las claves llegan después, no nunca. Se espera antes de declarar la
+    // suscripción mala: medido en un Android real, seis intentos seguidos
+    // fallaron todos con "sin claves" y en todos el navegador las tenía a los
+    // pocos segundos.
+    const conClaves = await esperarClaves(registration, user);
+    if (conClaves) {
+      subscription = conClaves.subscription;
+      record = conClaves.record;
+    }
+  }
   if (!record) {
     const reason = incompleteReason(subscription) ?? 'sin-claves';
     // Se anota en `push_log` para poder leer qué devuelve el navegador sin
     // depender de que nadie informe: "suscripción incompleta" a secas no
     // distingue entre claves ausentes y una suscripción que nunca se registró.
     await noteSubscriptionProblem(user, reason);
+    // Y se da de baja. Antes se dejaba viva: el navegador la daba por buena, la
+    // devolvía en cada intento posterior, y así un fallo que se podía repetir
+    // muchísimo, con la misma suscripción rota una y otra vez. El camino del
+    // fallo del insert ya lo hacía, y con el mismo motivo.
+    await darDeBaja(subscription);
     throw new Error(INCOMPLETE_MESSAGES[reason]);
   }
 
@@ -542,7 +740,7 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
     // navegador sigue recibiendo los avisos de la cuenta anterior mientras el
     // interruptor marca que no hay nada que arreglar. Se da de baja local para
     // que el estado visible y el real coincidan.
-    await subscription.unsubscribe().catch(() => undefined);
+    await darDeBaja(subscription);
     throw new Error(
       error.code === '23505' ? 'este navegador ya está registrado en otra cuenta' : error.message,
     );
@@ -554,7 +752,7 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
     // La fila ya está escrita, así que los avisos van a llegar aunque la
     // preferencia haya fallado. Se dice igual, porque el usuario no puede
     // arreglarlo y suprimirlo dejaría un estado que no se puede recuperar.
-    await subscription.unsubscribe().catch(() => undefined);
+    await darDeBaja(subscription);
     throw error;
   }
   return record;
@@ -585,10 +783,47 @@ async function unsubscribeAndDelete(user: User | null): Promise<void> {
   // con el worker instalándose, y una baja no puede quedarse esperando 10 s a que
   // termine el precaché para luego avisar de que no se pudo dar de baja.
   const registration = await ensureRegistration();
-  const subscription = registration ? await registration.pushManager.getSubscription() : null;
+  // Una lectura que no responde **no** es lo mismo que no tener suscripción: en el
+  // primer caso no se sabe ni qué endpoint hay que borrar, y decir "desactivado"
+  // sería una afirmación que el código no puede sostener. Se anota el fallo y se
+  // sigue; el veredicto se da al final.
+  let bajaSinConfirmar: unknown = null;
+  let subscription: PushSubscription | null = null;
+  if (registration) {
+    try {
+      subscription = await withTimeout(
+        registration.pushManager.getSubscription(),
+        LECTURA_TIMEOUT_MS,
+        'la baja no ha terminado a tiempo',
+      );
+    } catch (error) {
+      bajaSinConfirmar = error;
+      subscription = null;
+    }
+  }
   const endpoint = subscription?.endpoint ?? null;
 
-  if (subscription) await subscription.unsubscribe();
+  // La baja en el navegador se intenta, pero **no decide el resultado**: si se
+  // cuelga, se sigue adelante con la fila y con la preferencia, y el fallo se
+  // informa al final. Con otro orden, un `unsubscribe()` colgado dejaba la fila
+  // y la preferencia como estaban, y los avisos seguían llegando a un sitio que
+  // el interruptor dice que está apagado.
+  //
+  // Y se informa en vez de tragarse el fallo, porque la fila borrada es lo que
+  // impide que el servidor siga mandando, pero no es lo mismo que haber
+  // liberado la suscripción del navegador: quien se queda con un dispositivo
+  // ajeno tiene que enterarse.
+  if (typeof subscription?.unsubscribe === 'function') {
+    try {
+      await withTimeout(
+        subscription.unsubscribe(),
+        LECTURA_TIMEOUT_MS,
+        'la baja no ha terminado a tiempo',
+      );
+    } catch (error) {
+      bajaSinConfirmar = error;
+    }
+  }
 
   if (endpoint) {
     const { error } = await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
@@ -596,6 +831,8 @@ async function unsubscribeAndDelete(user: User | null): Promise<void> {
   }
 
   await syncPushPreferences(user, { enabled: false });
+
+  if (bajaSinConfirmar) throw bajaSinConfirmar;
 }
 
 /**
