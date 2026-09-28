@@ -31,14 +31,18 @@ export const SW_READY_TIMEOUT_MS = 10_000;
  * lugar del motivo real. Y como el tope no cancela el trabajo pendiente, un alta
  * que acabara tarde insertaba la fila después de que la interfaz ya hubiera dicho
  * que no terminó.
+ *
+ * `CLAVES_TIMEOUT_MS` subió a 30 s: en algunos Redmi/Xiaomi FCM puede tardar
+ * 20+ segundos en generar `p256dh`/`auth` tras el `subscribe()`. El bucle
+ * reintenta cada `CLAVES_PASO_MS` (3 s) hasta el tope.
  */
-export const ACTIVATION_TIMEOUT_MS = 35_000;
+export const ACTIVATION_TIMEOUT_MS = 60_000;
 
 /** Cuánto se espera a que el navegador rellene las claves de cifrado. */
-export const CLAVES_TIMEOUT_MS = 3_000;
+export const CLAVES_TIMEOUT_MS = 30_000;
 
 /** Pausa entre relecturas durante esa espera. */
-export const CLAVES_PASO_MS = 750;
+export const CLAVES_PASO_MS = 3_000;
 
 /** Tope global de la pantalla de Ajustes: la suma de los dos con margen. */
 export const WEB_PUSH_TIMEOUT_MS = PERMISSION_TIMEOUT_MS + ACTIVATION_TIMEOUT_MS + 10_000;

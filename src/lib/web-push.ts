@@ -301,8 +301,8 @@ export async function esperarClaves(
 /** Normaliza lo que devuelve `PushSubscription` a lo que espera la tabla. */
 export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubscriptionRecord | null {
   const endpoint = subscription.endpoint ?? null;
-  const p256dh = subscription.keys?.p256dh ?? null;
-  const auth = subscription.keys?.auth ?? null;
+  const p256dh = subscription.getKey?.('p256dh') ?? subscription.keys?.get?.('p256dh') ?? null;
+  const auth = subscription.getKey?.('auth') ?? subscription.keys?.get?.('auth') ?? null;
   if (!endpoint || !p256dh || !auth) return null;
 
   let userAgent: string | null = null;
@@ -312,10 +312,17 @@ export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubsc
     userAgent = null;
   }
 
+  const toBase64Url = (buf: ArrayBuffer): string => {
+    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+  };
+
   return {
     endpoint,
-    p256dh,
-    auth,
+    p256dh: toBase64Url(p256dh),
+    auth: toBase64Url(auth),
     timezone: detectTimeZone(),
     user_agent: userAgent,
   };

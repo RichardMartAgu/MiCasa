@@ -99,7 +99,7 @@ self.addEventListener('push', (event) => {
     self.registration.showNotification(title, {
       body,
       icon: '/icon-192.png',
-      badge: '/icon-192.png',
+      badge: '/badge-192.png',
       // Una notificación por referencia: un aviso nuevo sustituye al anterior
       // en lugar de apilar. renotify false evita el sonido si ya estaba visible.
       tag: `${type}:${id}`,
