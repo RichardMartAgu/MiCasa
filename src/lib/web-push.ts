@@ -692,15 +692,22 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   if (existing) {
     try {
       const existingKey = existing.options?.applicationServerKey;
+      console.log('existingKey type:', typeof existingKey, existingKey);
       if (existingKey) {
         const existingKeyBytes = new Uint8Array(existingKey);
         const currentKeyBytes = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+        console.log('existingKeyBytes:', Array.from(existingKeyBytes));
+        console.log('currentKeyBytes:', Array.from(currentKeyBytes));
         // Comparar byte a byte
         if (existingKeyBytes.length !== currentKeyBytes.length ||
             !existingKeyBytes.every((b, i) => b === currentKeyBytes[i])) {
           console.log('Clave VAPID de la suscripción no coincide con la actual, forzando re-suscripción');
           forceResubscribe = true;
+        } else {
+          console.log('Clave VAPID coincide, reusando suscripción');
         }
+      } else {
+        console.log('existing.options.applicationServerKey es null/undefined');
       }
       // También guardar versión en localStorage para futuras visitas
       const storedVersion = localStorage.getItem('micasa:vapid-key-version');
@@ -709,15 +716,19 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
         forceResubscribe = true;
       }
       localStorage.setItem('micasa:vapid-key-version', VAPID_KEY_VERSION);
-    } catch {
+    } catch (e) {
+      console.log('Error comprobando VAPID:', e);
       // localStorage no disponible o error leyendo options: no bloquear
     }
   }
 
   // Una suscripción sin `p256dh` o sin `auth` no sirve para enviar nada.
   const usable = existing && !forceResubscribe ? toSubscriptionRecord(existing) : null;
+  console.log('usable:', !!usable, 'forceResubscribe:', forceResubscribe);
   if (existing && (!usable || forceResubscribe)) {
+    console.log('Dando de baja suscripción existente');
     await darDeBaja(existing);
+    console.log('Suscripción dada de baja');
   }
 
   // El `subscribe()` es donde el navegador dice que no, y lo dice en inglés y sin
