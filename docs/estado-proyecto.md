@@ -4,25 +4,43 @@
 Viven aquí y no en el chat, que es donde se pierden. Lo que sigue se confirmó después
 de cerrar los bloques; nada de esto es hipótesis.
 
-### 1. Rotar `GITHUB_PAT` — **lo primero, y es del usuario**
+### 1. Falta CSP en `vercel.json`
 
-El token se filtró en un log durante una sesión anterior: apareció en la salida de
-un comando de `gh`, que quedó en el historial de la conversación. **Un token
-filtrado se da por quemado aunque el repositorio sea privado.**
-
-- Está pendiente desde entonces y en ningún momento se rotó.
-- **Vive en `~/.bashrc`, en claro** (`GITHUB_PAT`, línea ~156), junto al
-  `VERCEL_TOKEN` (~159). Se encontró el 2026-09-28 buscando dónde estaba el token de
-  Vercel: el `grep` que lo sacó lo imprimió en el log de esa sesión, así que ha vuelto a
-  filtrarse por el mismo motivo. En la máquina, además, lo lee cualquier usuario.
-- **No lo puede hacer el agente**: rotarlo exige crear un token nuevo en GitHub y
-  revocar el viejo desde la cuenta del usuario. Anything que diga "hecho" sin que el
-  token nuevo exista en GitHub es mentira.
-- Al rotarlo, comprobar que nada más del entorno usa el viejo: Vercel, CI
-  (`.github/workflows`), y el propio `gh auth`. Y sacarlo de `~/.bashrc`: en ese fichero
-  las claves en claro sobreviven a todo, y a `chmod 600` no las protege nadie más.
+`vercel.json` lleva `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` y
+`Permissions-Policy`, pero **no hay `Content-Security-Policy`**. La app carga JavaScript
+de un bundle propio, así que una CSP restrictiva es viable. Anotado en
+`docs/pwa-installable.md` (F4) desde el principio y sigue abierto.
 
 ---
+
+## Riesgos revisados y aceptados
+
+No son pendientes: se revisaron y se decidió dejarlos como están. Se dejan escritos para
+que la decisión no se pierda y nadie los vuelva a plantear como una tarea abierta.
+
+### `GITHUB_PAT` y `VERCEL_TOKEN` sin rotar
+
+El 2026-09-28 el usuario revisó la filtración de `GITHUB_PAT` y decidió **no rotarlo**.
+Se documenta lo que se comprobó, para que la decisión tenga base:
+
+- El token **no está en el repositorio**: cero coincidencias en `git log --all` sobre 145
+  commits, cero en el working tree. `MiCasa` es público, pero el PAT es de la cuenta
+  entera, no de este repo.
+- En la máquina solo vive en `~/.bashrc` (~156 el PAT, ~159 el token de Vercel), en claro
+  y con permisos `644`. No aparece en `~/.bash_history`, ni en el almacenamiento de
+  sesiones de opencode, ni en `/tmp`.
+- No lo usa CI: `.github/workflows/ci.yml` no referencia ningún secret. Y `gh` usa un
+  token `gho_` distinto, así que rotarlo no rompería nada. Por eso la decisión de no
+  hacerlo no tiene coste operativo.
+- Lo que sí sale de la máquina es el historial de las conversaciones donde un `grep` lo
+  imprimió, y eso ya no se puede deshacer. Cuánto tiempo se retenga depende del proveedor
+  de inferencia configurado, y eso es lo único que queda sin comprobar.
+- `.gitignore` ya cubre `.env*`, `.env*.local` y `.vercel`, verificado con
+  `git check-ignore`, así que la vía de commitear un secreto está cerrada.
+
+En su lugar se puso una barrera: reglas de permisos en `~/.config/opencode/opencode.json`
+que niegan a las herramientas de lectura y a `bash` el acceso a `~/.bashrc`, para que el
+token no vuelva a salir impreso en un log.
 
 ## Sesión actual — 2026-09-28 (la preferencia de cumpleaños de Ajustes no se leía en web)
 
