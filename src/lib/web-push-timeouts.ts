@@ -36,13 +36,13 @@ export const SW_READY_TIMEOUT_MS = 10_000;
  * 20+ segundos en generar `p256dh`/`auth` tras el `subscribe()`. El bucle
  * reintenta cada `CLAVES_PASO_MS` (3 s) hasta el tope.
  */
-export const ACTIVATION_TIMEOUT_MS = 60_000;
+export const ACTIVATION_TIMEOUT_MS = 90_000;
 
 /** Cuánto se espera a que el navegador rellene las claves de cifrado. */
-export const CLAVES_TIMEOUT_MS = 30_000;
+export const CLAVES_TIMEOUT_MS = 60_000;
 
 /** Pausa entre relecturas durante esa espera. */
 export const CLAVES_PASO_MS = 3_000;
 
 /** Tope global de la pantalla de Ajustes: la suma de los dos con margen. */
-export const WEB_PUSH_TIMEOUT_MS = PERMISSION_TIMEOUT_MS + ACTIVATION_TIMEOUT_MS + 10_000;
+export const WEB_PUSH_TIMEOUT_MS = PERMISSION_TIMEOUT_MS + ACTIVATION_TIMEOUT_MS + 15_000;
