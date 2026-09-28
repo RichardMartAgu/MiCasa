@@ -42,6 +42,69 @@ En su lugar se puso una barrera: reglas de permisos en `~/.config/opencode/openc
 que niegan a las herramientas de lectura y a `bash` el acceso a `~/.bashrc`, para que el
 token no vuelva a salir impreso en un log.
 
+## Sesión actual — 2026-09-28 (el interruptor maestro se apagaba con la suscripción viva)
+
+Es la cola de la anterior, y salió de desplegar su fix (#75): con la preferencia de
+cumpleaños ya leyéndose de la base, en web el interruptor maestro se quedaba en `off`
+aunque el navegador tuviera suscripción push activa. **El push nunca dejó de llegar**;
+la Edge Function lee la fila de `push_preferences` directamente, así que lo que mentía
+era la pantalla. Eso es lo que confunde el síntoma: se parece a "no me llegan avisos"
+y no lo es.
+
+La causa fue el orden, y para encontrarlo se compararon los dos despliegues de producción
+bundle a bundle con `vercel curl` (los `*.vercel.app` de despliegue están detrás de Vercel
+SSO; el token de bypass lo genera el propio CLI). `sw.js` resultó idéntico salvo los
+hashes de `precacheAndRoute`, y en `entry.js` de 3 MB lo único funcional que cambiaba era
+la lectura de cumpleaños. El alta de suscripción y el envío no se habían tocado.
+
+El fallo: en web `areNotificationsEnabled()` (`src/lib/notifications.ts:189`) devuelve
+`false` fijo sin consultar nada, y el efecto de preferencias lo pintaba **sin `pushReadSeq`**.
+Ese `Promise.all` se resolvía en microtask, así que escribía primero y la lectura buena
+lo corregía detrás. Al añadirle la consulta de `push_preferences` (5 s) dejó de ser la
+primera: con el worker registrado, `getActiveSubscription` gana por milisegundos y el
+`false` llega encima. Volvía con cada `TOKEN_REFRESHED`, porque el efecto corre otra vez
+con un `user` nuevo.
+
+Y de ahí la lección: **guardar la escritura con `pushReadSeq` no era arreglo**, porque el
+efecto vuelve a correr y toma un número más alto. No era un problema de secuencia sino de
+que en web no había nada que escribir: un `false` constante. En web ese efecto ya no
+escribe el estado maestro; en nativo no cambia, porque allí sí lee AsyncStorage. PR #78,
+`c2bc971`.
+
+Los dos tests nuevos fallan contra el código viejo, y el segundo cubre justo el por dónde
+volvía (el mismo componente recibiendo la sesión después). De paso apareció una fuga de
+mock: el `beforeEach` global no fijaba defecto para `mockGetActiveSubscription` y
+`clearAllMocks` no borra implementaciones, así que un test pasaba sin comprobar lo que
+decía y el siguiente se quedaba esperando un interruptor que ya no llegaba.
+
+### El despliegue no se puso solo, y por casi nadie lo nota
+
+`npm run deploy:vercel` terminó en `✓ Ready` y **no era el mismo bundle que el `dist/`
+local**: Vercel compila en su propio entorno, así que el hash del entry nunca coincide
+con el local. Al comprobarlo se vio que `micasa-demo.vercel.app` seguía sirviendo el
+despliegue anterior. No era caché de la edge —`vercel alias ls` mostró que el rollback
+había dejado el dominio público apuntando al despliegue viejo, y el nuevo solo había
+tomado el alias con sufijo de equipo. Se corrigió con
+`npx vercel alias set <despliegue> micasa-demo.vercel.app`.
+
+Dos cosas que salieron de mirar, y que conviene no volver a asumir:
+
+- **Un `✓ Ready` no es un despliegue en producción.** Después de un rollback, hay que
+  comprobar el alias, no el estado del despliegue. El `age: 0` en la respuesta confirma
+  que la edge se purgó al cambiar el alias.
+- **Un bundle viejo pedido a un despliegue nuevo da 404**, no HTML (la corrección de
+  `vercel.json` de la sesión del service worker). Es la razón de que esto sea un 404
+  visible y no una app rota en silencio: en el momento de la comprobación el HTML que
+  servía la edge era antiguo, y su bundle sí pedía un fichero que ya no estaba.
+
+Pendiente que sale de aquí, y es el mismo suelo del bloque anterior:
+`areNotificationsEnabled()` sigue devolviendo `false` fijo en web, así que el interruptor
+es una foto del montaje y no una vista viva: si la suscripción desaparece con la pantalla
+abierta, no vuelve a `false` hasta recargar. Bloque propio, y security dejó además dos
+decisiones abiertas para el usuario: si un fallo de red al leer la suscripción debe pintar
+"apagado" (sentido peligroso, porque el servidor sigue mandando los avisos) y si el
+interruptor debe representar este navegador o el maestro del servidor.
+
 ## Sesión actual — 2026-09-28 (la preferencia de cumpleaños de Ajustes no se leía en web)
 
 Reportado por el usuario: en Ajustes, elegir a quién avisar en los cumpleaños se perdía al
