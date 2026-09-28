@@ -15,7 +15,7 @@ App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `
 | [`CLAUDE.md`](CLAUDE.md) | Redirección a reglas de `AGENTS.md`. | Vigente; 1 línea. |
 | [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-09-26. |
 | [`README.md`](README.md) | Descripción del producto, funcionalidades, stack, puesta en marcha, calidad, estructura y modelo de datos. | Vigente. |
-| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global accionable para continuar sesiones. | Versionado; actualizado 2026-09-25. |
+| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global accionable para continuar sesiones. **Empieza por su sección «Pendientes».** | Versionado; actualizado 2026-09-28. |
 
 ### Bugs resueltos o documentados
 
