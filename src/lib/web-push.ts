@@ -123,6 +123,9 @@ const LECTURA_TIMEOUT_MS = 1500;
 export const VAPID_PUBLIC_KEY =
   'BIlEd_yFpScEXLveFhIUT0mdo8HWzb8ckI6sd5VhhEG09LP-2yM7LiaCkqRDMR734Ms_wXKFZ5E9cRc8mO-F1hs';
 
+/** Versión de la clave VAPID. Cámbiala al rotar la clave para forzar re-suscripción. */
+export const VAPID_KEY_VERSION = '2026-09-28-v2';
+
 /** Rutas internas a las que puede llevar un aviso. Espejo de sw-src.js. */
 export const ALLOWED_PUSH_ROUTES = ['/citas', '/cumpleanos'] as const;
 
@@ -682,19 +685,30 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
     'lectura de la suscripción',
   ).catch(() => null);
 
-  // Una suscripción sin `p256dh` o sin `auth` no sirve para enviar nada, y es
-  // irrecuperable por la vía normal: `getSubscription()` la devuelve siempre, así
-  // que un intento anterior que la dejó a medias convertía el alta en un
-  // "suscripción incompleta" permanente con el que el usuario no puede hacer
-  // nada. Por eso, si viene incompleta, se da de baja y se vuelve a crear.
-  const usable = existing ? toSubscriptionRecord(existing) : null;
-  if (existing && !usable) {
-    // Con `try/catch` y no solo `.catch()`: si el navegador no permite darla de
-    // baja, se sigue adelante con la nueva, que es lo que desbloquea al usuario.
-    // Con tope: `unsubscribe()` puede hablar con el push service. Este es el
-    // camino de recuperación del alta, así que colgarse aquí devolvía al usuario
-    // al mismo callejón sin salida que este bloque vino a cerrar.
-    await darDeBaja(existing);
+  // Si la suscripción existe, comprobar versión de clave VAPID guardada en localStorage.
+  // Si cambió, dar de baja la antigua y forzar re-suscripción.
+  let usable = existing ? toSubscriptionRecord(existing) : null;
+  if (existing) {
+    try {
+      const storedVersion = localStorage.getItem('micasa:vapid-key-version');
+      if (storedVersion && storedVersion !== VAPID_KEY_VERSION) {
+        console.log('Clave VAPID cambiada (versión guardada:', storedVersion, 'actual:', VAPID_KEY_VERSION, '), forzando re-suscripción');
+        await darDeBaja(existing);
+        usable = null;
+      }
+      // Guardar versión actual para futuras comparaciones
+      localStorage.setItem('micasa:vapid-key-version', VAPID_KEY_VERSION);
+    } catch {
+      // localStorage no disponible (modo privado, etc.): no bloquear
+    }
+    if (!usable) {
+      // Con `try/catch` y no solo `.catch()`: si el navegador no permite darla de
+      // baja, se sigue adelante con la nueva, que es lo que desbloquea al usuario.
+      // Con tope: `unsubscribe()` puede hablar con el push service. Este es el
+      // camino de recuperación del alta, así que colgarse aquí devolvía al usuario
+      // al mismo callejón sin salida que este bloque vino a cerrar.
+      await darDeBaja(existing);
+    }
   }
 
   // El `subscribe()` es donde el navegador dice que no, y lo dice en inglés y sin
