@@ -121,10 +121,10 @@ const LECTURA_TIMEOUT_MS = 1500;
  * se compararon mal dos cadenas y casi se reporto un bug que no existia.
  */
 export const VAPID_PUBLIC_KEY =
-  'BIlEd_yFpScEXLveFhIUT0mdo8HWzb8ckI6sd5VhhEG09LP-2yM7LiaCkqRDMR734Ms_wXKFZ5E9cRc8mO-F1hs';
+  'BE0dUENG6OObo-glDTMYOygHGnpsmwm81wN-ipjZZgOL9wBFyNDoYnGZ8cRwSevW9DEVsNQnF4zFGoA8eQt85FI';
 
 /** Versión de la clave VAPID. Cámbiala al rotar la clave para forzar re-suscripción. */
-export const VAPID_KEY_VERSION = '2026-09-28-v2';
+export const VAPID_KEY_VERSION = '2026-09-28-v3';
 
 /** Rutas internas a las que puede llevar un aviso. Espejo de sw-src.js. */
 export const ALLOWED_PUSH_ROUTES = ['/citas', '/cumpleanos'] as const;
@@ -267,7 +267,6 @@ export async function esperarClaves(
     200,
     Math.floor((CLAVES_TIMEOUT_MS - (maxIntentos - 1) * CLAVES_PASO_MS) / maxIntentos),
   );
-  console.log('esperarClaves: maxIntentos', maxIntentos, 'porLectura', porLectura);
   for (let intento = 0; intento < maxIntentos; intento++) {
     if (intento > 0) {
       await new Promise((resolve) => setTimeout(resolve, CLAVES_PASO_MS));
@@ -298,13 +297,11 @@ export async function esperarClaves(
       }
       return undefined;
     });
-    console.log('esperarClaves intento', intento, 'actual:', actual ? 'subscription' : actual);
     // `undefined` es que la lectura se colgó; `null` es que el navegador ya no
     // tiene suscripción, y eso no se reintenta: no hay nada que esperar.
     if (actual === null) return null;
     if (actual === undefined) continue;
     const record = toSubscriptionRecord(actual);
-    console.log('esperarClaves intento', intento, 'toSubscriptionRecord:', !!record);
     if (record) return { subscription: actual, record };
   }
   return null;
@@ -695,43 +692,30 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   if (existing) {
     try {
       const existingKey = existing.options?.applicationServerKey;
-      console.log('existingKey type:', typeof existingKey, existingKey);
       if (existingKey) {
         const existingKeyBytes = new Uint8Array(existingKey);
         const currentKeyBytes = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
-        console.log('existingKeyBytes:', Array.from(existingKeyBytes));
-        console.log('currentKeyBytes:', Array.from(currentKeyBytes));
         // Comparar byte a byte
         if (existingKeyBytes.length !== currentKeyBytes.length ||
             !existingKeyBytes.every((b, i) => b === currentKeyBytes[i])) {
-          console.log('Clave VAPID de la suscripción no coincide con la actual, forzando re-suscripción');
           forceResubscribe = true;
-        } else {
-          console.log('Clave VAPID coincide, reusando suscripción');
         }
-      } else {
-        console.log('existing.options.applicationServerKey es null/undefined');
       }
       // También guardar versión en localStorage para futuras visitas
       const storedVersion = localStorage.getItem('micasa:vapid-key-version');
       if (storedVersion && storedVersion !== VAPID_KEY_VERSION) {
-        console.log('Versión VAPID en localStorage cambió, forzando re-suscripción');
         forceResubscribe = true;
       }
       localStorage.setItem('micasa:vapid-key-version', VAPID_KEY_VERSION);
-    } catch (e) {
-      console.log('Error comprobando VAPID:', e);
+    } catch {
       // localStorage no disponible o error leyendo options: no bloquear
     }
   }
 
   // Una suscripción sin `p256dh` o sin `auth` no sirve para enviar nada.
   const usable = existing && !forceResubscribe ? toSubscriptionRecord(existing) : null;
-  console.log('usable:', !!usable, 'forceResubscribe:', forceResubscribe);
   if (existing && (!usable || forceResubscribe)) {
-    console.log('Dando de baja suscripción existente');
     await darDeBaja(existing);
-    console.log('Suscripción dada de baja');
   }
 
   // El `subscribe()` es donde el navegador dice que no, y lo dice en inglés y sin
@@ -741,17 +725,13 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   let subscription: PushSubscription;
   if (usable && existing) {
     subscription = existing;
-    console.log('Reusando suscripción existente');
   } else {
-    console.log('Creando nueva suscripción con VAPID:', VAPID_PUBLIC_KEY.slice(0, 20) + '...');
     try {
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
       });
-      console.log('subscribe() OK, subscription:', subscription?.endpoint?.slice(0, 50));
     } catch (error) {
-      console.log('subscribe() error:', error);
       const reason = classifySubscribeFailure(
         error,
         typeof Notification === 'undefined' ? undefined : Notification.permission,
@@ -770,7 +750,6 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   }
 
   let record = toSubscriptionRecord(subscription);
-  console.log('toSubscriptionRecord result:', !!record);
   if (!record) {
     // Las claves llegan después, no nunca. Se espera antes de declarar la
     // suscripción mala: medido en un Android real, seis intentos seguidos
