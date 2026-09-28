@@ -97,6 +97,77 @@ describe('toSubscriptionRecord', () => {
   it('devuelve null si no hay claves', () => {
     expect(toSubscriptionRecord({ endpoint: 'https://x', keys: null })).toBeNull();
   });
+
+  // Regresión del bug que dejó los avisos rotos: `PushSubscription` no tiene
+  // atributo `keys`. Comprobado en Chrome 153 con una suscripción real contra
+  // FCM: `sub.keys` es `undefined` y `Object.getOwnPropertyNames(sub)` está
+  // vacío; las claves solo están en `getKey()` y en `toJSON().keys`. El lector
+  // anterior exigía `subscription.keys`, devolvía `null` siempre y toda suscripción
+  // real acababa en "sin claves" mientras los tests, que sí mockean `keys`,
+  // seguían pasando.
+  it('lee la suscripción real, que no tiene `keys` sino `getKey()`', () => {
+    const p256dh = new TextEncoder().encode('clave-publica').buffer;
+    const auth = new TextEncoder().encode('secreto').buffer;
+    const real = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+      getKey: (name: 'p256dh' | 'auth') => (name === 'p256dh' ? p256dh : auth),
+      toJSON: () => ({ keys: { p256dh: 'ignorada', auth: 'ignorada' } }),
+    };
+
+    const record = toSubscriptionRecord(real);
+
+    expect(record).not.toBeNull();
+    expect(record?.p256dh).toBe('Y2xhdmUtcHVibGljYQ');
+    expect(record?.auth).toBe('c2VjcmV0bw');
+    expect(incompleteReason(real)).toBeNull();
+  });
+
+  it('lee la suscripción solo con `toJSON().keys`, en base64url', () => {
+    const real = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+      toJSON: () => ({
+        keys: {
+          p256dh: 'BOXzAaHrgCPxEpzBsCWL6ZCGoFM2Nfc1EnNPMzMBwsO4XTBWSHbtj-lgOEE4jQ3dIJl1MQhFJ34sLGw-s1mlxRk',
+          auth: '7AbebBG9PLxPkDuIWZ9YXg',
+        },
+      }),
+    };
+
+    const record = toSubscriptionRecord(real);
+
+    // base64url de `toJSON` se copia tal cual: re-codificarlo lo arruinaría.
+    expect(record?.p256dh).toBe(
+      'BOXzAaHrgCPxEpzBsCWL6ZCGoFM2Nfc1EnNPMzMBwsO4XTBWSHbtj-lgOEE4jQ3dIJl1MQhFJ34sLGw-s1mlxRk',
+    );
+    expect(record?.auth).toBe('7AbebBG9PLxPkDuIWZ9YXg');
+  });
+
+  it('una suscripción real sin claves todavía se reporta como tal', () => {
+    const sinClaves = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+      getKey: () => null,
+      toJSON: () => ({ keys: {} }),
+    };
+
+    expect(toSubscriptionRecord(sinClaves)).toBeNull();
+    expect(incompleteReason(sinClaves)).toBe('sin-claves');
+  });
+
+  it('distingue qué clave falta cuando solo falta una', () => {
+    const p256dh = new TextEncoder().encode('clave').buffer;
+    expect(
+      incompleteReason({
+        endpoint: 'https://x',
+        getKey: (name: 'p256dh' | 'auth') => (name === 'p256dh' ? p256dh : null),
+      }),
+    ).toBe('sin-auth');
+    expect(
+      incompleteReason({
+        endpoint: 'https://x',
+        getKey: (name: 'p256dh' | 'auth') => (name === 'auth' ? p256dh : null),
+      }),
+    ).toBe('sin-p256dh');
+  });
 });
 
 describe('presupuestos de tiempo de la activación', () => {
@@ -1269,16 +1340,21 @@ describe('la clave VAPID del frontend', () => {
     expect(mod(y * y)).toBe(mod(x * x * x + A * x + B));
   });
 
-  it('es la clave que rotamos en el PR #73, y no la anterior', () => {
-    // Con la clave anterior, el navegador Chrome 153 devolvia una suscripcion con
-    // endpoint pero sin `p256dh` ni `auth`, seis veces seguidas. Ese par en
-    // concreto esta en la base, en el Vault, y esta en el bundle. Si alguien
-    // cambia una de las tres sin cambiar las otras dos, los avisos dejan de
-    // firmarse en silencio: es exactamente el fallo que se midio.
+  it('es la clave que esta ahora en el Vault, y no una anterior', () => {
+    // El par vive en tres sitios a la vez: en este bundle, en el Vault de
+    // Supabase y en la configuracion de la Edge Function. Si alguien cambia una
+    // sin cambiar las otras dos, los avisos dejan de firmarse en silencio.
+    //
+    // Nota sobre el diagnostico antiguo: durante mucho tiempo se culpo a la
+    // clave de que Chrome 153 devolviera una suscripcion sin `p256dh` ni `auth`.
+    // La causa real era el lector, que miraba `subscription.keys`, un atributo
+    // que PushSubscription no tiene; la clave no tenia nada que ver.
     expect(VAPID_PUBLIC_KEY).toBe(
-      'BHJV5jOQoaXKdrI90Z7O-7tYh29DANfUB7jSMS8w3M_szTkpfCXaQx7uzoW5IixMuaCHmKJeVvW4Cz_oHaUpmrg',
+      'BE0dUENG6OObo-glDTMYOygHGnpsmwm81wN-ipjZZgOL9wBFyNDoYnGZ8cRwSevW9DEVsNQnF4zFGoA8eQt85FI',
     );
-    // Y la anterior no puede volver a colarse.
+    // Y ninguna de las anteriores puede volver a colarse.
     expect(VAPID_PUBLIC_KEY).not.toMatch(/^BGAx5MQzNUhQM9/);
+    expect(VAPID_PUBLIC_KEY).not.toMatch(/^BHJV5jOQoaXKdrI/);
+    expect(VAPID_PUBLIC_KEY).not.toMatch(/^BIlEd_yFpScEXL/);
   });
 });

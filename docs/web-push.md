@@ -72,6 +72,7 @@ El acceso es `public.push_service_secret(text)`, `security definer` con `search_
 - **El comentario puede romper el build.** `self.__WB_MANIFEST` debe aparecer **exactamente una vez** en `sw-src.js`; la primera versión lo mencionaba también en el comentario de cabecera y Workbox se negaba a generar.
 - **La zona horaria no es la del servidor.** `nineAmUtc` calcula el instante UTC que son las 09:00 locales con `Intl`, corrigiendo el offset dos veces para cubrir cambios de horario. La primera versión sumaba el offset sobre un ancla ya en UTC y salía una hora tarde. Los tests lo cazaron.
 - **El slot "día antes" se calculaba desde el día equivocado.** `candidatesFor` construye los candidatos desde el día del evento (el aviso sale hoy si el evento es mañana), no al revés.
+- **`PushSubscription` no tiene atributo `keys`.** Comprobado en Chrome 153 con una suscripción real contra FCM: `sub.keys` es `undefined`, `Object.getOwnPropertyNames(sub)` está vacío, y las claves solo están en `getKey()` —síncrono, `ArrayBuffer` o `null`— y en `toJSON().keys`, ya en base64url. El lector exigía `subscription.keys`, devolvía `null` siempre y **toda** suscripción real acababa en "sin claves" mientras los tests, que sí mockean `keys`, seguían pasando. De ahí la ronda entera de rotaciones de VAPID: la clave no tenía nada que ver, y el diagnóstico "FCM no devuelve claves" era en realidad el lector que no sabía leerlas. `readKey()` prueba las tres formas, en orden, y `toBase64Url` copia tal cual lo que ya viene en base64url.
 
 ## Auditoría de seguridad
 

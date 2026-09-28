@@ -182,7 +182,65 @@ export interface SubscriptionShape {
     | { get: (name: 'p256dh' | 'auth') => ArrayBuffer | null }
     | { p256dh?: string | null; auth?: string | null }
     | null;
-  getKey?: (name: 'p256dh' | 'auth') => ArrayBuffer | null;
+  getKey?: (name: 'p256dh' | 'auth') => ArrayBuffer | null | Promise<ArrayBuffer | null>;
+  toJSON?: () =>
+    | { endpoint?: string | null; keys?: Record<string, string | null> | null }
+    | null;
+}
+
+/**
+ * Lee una clave de la suscripción sin suponer cómo la expone el navegador.
+ *
+ * `PushSubscription` **no tiene** atributo `keys`: comprobado en Chrome 153 con
+ * una suscripción real contra FCM, `sub.keys` es `undefined` y
+ * `Object.getOwnPropertyNames(sub)` está vacío. Las claves viven en el
+ * `ArrayBuffer` que devuelve `getKey()` —síncrono, según la WebIDL de la
+ * especificación— y, ya codificadas en base64url, en `toJSON().keys`.
+ *
+ * Leer `subscription.keys` a secas hacía que toda suscripción real se juzgara
+ * incompleta: el lector devolvía `null`, la espera de claves reintentaba sobre
+ * el mismo objeto y el alta terminaba siempre en "sin claves". El campo `keys`
+ * solo existe en los objetos de prueba de este repositorio, así que los tests
+ * pasaban mientras el navegador real fallaba.
+ *
+ * Se prueban las tres formas conocidas, en orden de fiabilidad, y se devuelve
+ * `null` solo cuando ninguna da nada.
+ */
+function readKey(
+  subscription: SubscriptionShape,
+  name: 'p256dh' | 'auth',
+): ArrayBuffer | string | null {
+  try {
+    const value = subscription.getKey?.(name);
+    // Si alguna implementación devolviera una promesa, se ignora aquí y se
+    // sigue con las fuentes síncronas: `toBase64Url` no sabe leer un `Promise`
+    // y produciría una cadena vacía en vez de un error claro.
+    if (value && typeof (value as { then?: unknown }).then !== 'function') {
+      return value as ArrayBuffer;
+    }
+  } catch {
+    // `getKey` puede lanzar con una suscripción a medias; se sigue probando.
+  }
+
+  const keys = subscription.keys;
+  if (keys) {
+    if ('get' in keys) {
+      const value = keys.get(name);
+      if (value) return value;
+    } else {
+      const value = keys[name];
+      if (value) return value;
+    }
+  }
+
+  try {
+    const value = subscription.toJSON?.()?.keys?.[name];
+    if (value) return value;
+  } catch {
+    // `toJSON` no está obligado a existir ni a funcionar.
+  }
+
+  return null;
 }
 
 /**
@@ -196,10 +254,9 @@ export interface SubscriptionShape {
  */
 export function incompleteReason(subscription: SubscriptionShape): IncompleteReason | null {
   if (!subscription.endpoint) return 'sin-endpoint';
-  const keys = subscription.keys;
-  if (!keys) return 'sin-claves';
-  const p256dh = 'get' in keys ? keys.get('p256dh') : keys.p256dh;
-  const auth = 'get' in keys ? keys.get('auth') : keys.auth;
+  const p256dh = readKey(subscription, 'p256dh');
+  const auth = readKey(subscription, 'auth');
+  if (!p256dh && !auth) return 'sin-claves';
   if (!p256dh) return 'sin-p256dh';
   if (!auth) return 'sin-auth';
   return null;
@@ -310,10 +367,8 @@ export async function esperarClaves(
 /** Normaliza lo que devuelve `PushSubscription` a lo que espera la tabla. */
 export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubscriptionRecord | null {
   const endpoint = subscription.endpoint ?? null;
-  const keys = subscription.keys;
-  if (!keys) return null;
-  const p256dhRaw = subscription.getKey?.('p256dh') ?? ('get' in keys ? keys.get('p256dh') : keys.p256dh ?? null);
-  const authRaw = subscription.getKey?.('auth') ?? ('get' in keys ? keys.get('auth') : keys.auth ?? null);
+  const p256dhRaw = readKey(subscription, 'p256dh');
+  const authRaw = readKey(subscription, 'auth');
   if (!endpoint || !p256dhRaw || !authRaw) return null;
 
   let userAgent: string | null = null;
@@ -323,11 +378,12 @@ export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubsc
     userAgent = null;
   }
 
-  const toBase64Url = (buf: ArrayBuffer | string): string => {
-    const bytes = typeof buf === 'string'
-      ? new TextEncoder().encode(buf)
-      : new Uint8Array(buf);
-    return btoa(String.fromCharCode(...bytes))
+  const toBase64Url = (value: ArrayBuffer | string): string => {
+    if (typeof value === 'string') {
+      // `toJSON().keys` ya viene en base64url: re-codificarlo lo arruinaría.
+      return value.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+    return btoa(String.fromCharCode(...new Uint8Array(value)))
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=/g, '');
@@ -755,9 +811,7 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
     // suscripción mala: medido en un Android real, seis intentos seguidos
     // fallaron todos con "sin claves" y en todos el navegador las tenía a los
     // pocos segundos.
-    console.log('Llamando a esperarClaves...');
     const conClaves = await esperarClaves(registration, user);
-    console.log('esperarClaves result:', !!conClaves);
     if (conClaves) {
       subscription = conClaves.subscription;
       record = conClaves.record;
@@ -765,7 +819,6 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   }
   if (!record) {
     const reason = incompleteReason(subscription) ?? 'sin-claves';
-    console.log('incompleteReason:', reason);
     // Se anota en `push_log` para poder leer qué devuelve el navegador sin
     // depender de que nadie informe: "suscripción incompleta" a secas no
     // distingue entre claves ausentes y una suscripción que nunca se registró.
