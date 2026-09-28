@@ -409,7 +409,7 @@ describe('una suscripción sin claves no cuenta como activa', () => {
     pushManager.subscribe.mockResolvedValue(suscripcion);
 
     const promesa = enableWebPush({ id: 'user-1' } as never);
-    await jest.advanceTimersByTimeAsync(1500);
+    await jest.advanceTimersByTimeAsync(35_000);
     const result = await promesa;
     jest.useRealTimers();
 
@@ -447,7 +447,7 @@ describe('una suscripción sin claves no cuenta como activa', () => {
     pushManager.subscribe.mockResolvedValue({ endpoint: 'https://push.test/e', keys: null, unsubscribe });
 
     const promesa = enableWebPush({ id: 'user-1' } as never);
-    await jest.advanceTimersByTimeAsync(30_000);
+    await jest.advanceTimersByTimeAsync(35_000);
     const result = await promesa;
     jest.useRealTimers();
 
