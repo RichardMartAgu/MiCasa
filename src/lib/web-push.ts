@@ -267,6 +267,7 @@ export async function esperarClaves(
     200,
     Math.floor((CLAVES_TIMEOUT_MS - (maxIntentos - 1) * CLAVES_PASO_MS) / maxIntentos),
   );
+  console.log('esperarClaves: maxIntentos', maxIntentos, 'porLectura', porLectura);
   for (let intento = 0; intento < maxIntentos; intento++) {
     if (intento > 0) {
       await new Promise((resolve) => setTimeout(resolve, CLAVES_PASO_MS));
@@ -297,11 +298,13 @@ export async function esperarClaves(
       }
       return undefined;
     });
+    console.log('esperarClaves intento', intento, 'actual:', actual ? 'subscription' : actual);
     // `undefined` es que la lectura se colgó; `null` es que el navegador ya no
     // tiene suscripción, y eso no se reintenta: no hay nada que esperar.
     if (actual === null) return null;
     if (actual === undefined) continue;
     const record = toSubscriptionRecord(actual);
+    console.log('esperarClaves intento', intento, 'toSubscriptionRecord:', !!record);
     if (record) return { subscription: actual, record };
   }
   return null;
@@ -738,13 +741,17 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   let subscription: PushSubscription;
   if (usable && existing) {
     subscription = existing;
+    console.log('Reusando suscripción existente');
   } else {
+    console.log('Creando nueva suscripción con VAPID:', VAPID_PUBLIC_KEY.slice(0, 20) + '...');
     try {
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
       });
+      console.log('subscribe() OK, subscription:', subscription?.endpoint?.slice(0, 50));
     } catch (error) {
+      console.log('subscribe() error:', error);
       const reason = classifySubscribeFailure(
         error,
         typeof Notification === 'undefined' ? undefined : Notification.permission,
@@ -763,12 +770,15 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   }
 
   let record = toSubscriptionRecord(subscription);
+  console.log('toSubscriptionRecord result:', !!record);
   if (!record) {
     // Las claves llegan después, no nunca. Se espera antes de declarar la
     // suscripción mala: medido en un Android real, seis intentos seguidos
     // fallaron todos con "sin claves" y en todos el navegador las tenía a los
     // pocos segundos.
+    console.log('Llamando a esperarClaves...');
     const conClaves = await esperarClaves(registration, user);
+    console.log('esperarClaves result:', !!conClaves);
     if (conClaves) {
       subscription = conClaves.subscription;
       record = conClaves.record;
@@ -776,6 +786,7 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   }
   if (!record) {
     const reason = incompleteReason(subscription) ?? 'sin-claves';
+    console.log('incompleteReason:', reason);
     // Se anota en `push_log` para poder leer qué devuelve el navegador sin
     // depender de que nadie informe: "suscripción incompleta" a secas no
     // distingue entre claves ausentes y una suscripción que nunca se registró.
