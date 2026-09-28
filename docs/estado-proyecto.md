@@ -19,6 +19,53 @@ filtrado se da por quemado aunque el repositorio sea privado.**
 
 ---
 
+## Sesión actual — 2026-09-28 (la preferencia de cumpleaños de Ajustes no se leía en web)
+
+Reportado por el usuario: en Ajustes, elegir a quién avisar en los cumpleaños se perdía al
+cerrar y volver a abrir. Volvía a "sin aviso" por mucho que estuviera elegido.
+
+La causa era un lado sin pareja: **en web solo había escritura**. `handleBirthdayChoice`
+escribe con `syncPushPreferences` (upsert en `push_preferences`), y la fila se guardaba
+bien, pero `grep -rn push_preferences src/` solo devolvía esa escritura y el tipo. Nadie
+la leía nunca. El selector se inicializaba con `getBirthdayChoice()`, que en web devuelve
+`'none'` sin mirar nada (`notifications.ts:206`, deliberado: ahí la preferencia local no
+aplica), así que el arranque era siempre "sin aviso". En nativo no pasaba nada porque ahí
+va por AsyncStorage.
+
+El arreglo no es una migración: la tabla, su `check` y el RLS ya estaban bien, y la Edge
+Function ya leía esa misma columna para decidir a quién avisa. Faltaba el `select` en el
+cliente. `getStoredBirthdayChoice` lo hace, valida contra `reminderChoices` con el mismo
+criterio que el `isValidChoice` del servidor, y tiene su propio tope.
+
+**El arreglo introduce una carrera, y eso fue lo que costó cerrar.** Una lectura de red
+puede seguir en vuelo cuando el usuario ya ha pulsado un chip, y entonces su respuesta
+marcaba el chip contrario de lo elegido. El sentido peligroso no es cosmético: la fila
+manda sobre lo que el servidor avisa, así que una pantalla que dice "sin aviso" con la
+fila en "ambos" sigue mandando push con nombre y fecha de cumpleaños de un contacto. Los
+chips no están gateados por `prefsLoading` (solo lo está el interruptor maestro), y
+`pushReadSeq` ya existía justo para esto pero no cubría la lectura de cumpleaños. Se
+resolvió con un contador propio, `birthdayReadSeq`, y **no** compartir el existente: los
+dos leen en el mismo efecto, así que un contador común haría que tocar un chip invalidara
+la lectura del maestro, que tarda hasta 10 s en registrar el worker.
+
+Security dio APROBADO y qa-test PASA en la segunda vuelta. La primera fue REVISAR en los
+dos, y con razón: la carrera era real y QA la reprodujo con un probe antes de estar
+corregida. Coincidieron en ella, y coincidieron también en que un test de los anteriores
+era tautológico: metía el rechazo en la lectura que el código viejo nunca llamaba, así
+que pasaba igual sin el `try`/`finally` que decía comprobar. Los 14 tests nuevos se
+validaron por mutación, quitando cada línea por separado.
+
+Pendiente que sale de aquí, **preexistente y no introducido por este bloque** (QA lo
+verificó contra `HEAD`): en web, el interruptor maestro se queda en `false` aunque el
+navegador tenga suscripción activa, porque `areNotificationsEnabled()` devuelve siempre
+`false` en web. Es la misma clase de fallo que este, sin leer y sin secuencia. Bloque
+propio si se quiere cerrar.
+
+Y sigue abierta la divergencia por diseño: si la lectura falla o agota su tope, la UI
+muestra "sin aviso" con la fila puesta. No es una carrera y no corrompe nada, porque la
+función no escribe y la fila sigue siendo la buena, pero la pantalla afirma algo que el
+servidor no hace. Reconocido y documentado, no defecto.
+
 ## Sesión actual — 2026-09-26 (exigir worker activo y Edge Function desplegada)
 
 
