@@ -175,7 +175,10 @@ export type IncompleteReason = 'sin-endpoint' | 'sin-p256dh' | 'sin-auth' | 'sin
 
 export interface SubscriptionShape {
   endpoint?: string | null;
-  keys?: { get: (name: 'p256dh' | 'auth') => ArrayBuffer | null } | null;
+  keys?:
+    | { get: (name: 'p256dh' | 'auth') => ArrayBuffer | null }
+    | { p256dh?: string | null; auth?: string | null }
+    | null;
   getKey?: (name: 'p256dh' | 'auth') => ArrayBuffer | null;
 }
 
@@ -190,10 +193,12 @@ export interface SubscriptionShape {
  */
 export function incompleteReason(subscription: SubscriptionShape): IncompleteReason | null {
   if (!subscription.endpoint) return 'sin-endpoint';
-  const keys = subscription.keys ?? null;
+  const keys = subscription.keys;
   if (!keys) return 'sin-claves';
-  if (!keys.get('p256dh')) return 'sin-p256dh';
-  if (!keys.get('auth')) return 'sin-auth';
+  const p256dh = 'get' in keys ? keys.get('p256dh') : keys.p256dh;
+  const auth = 'get' in keys ? keys.get('auth') : keys.auth;
+  if (!p256dh) return 'sin-p256dh';
+  if (!auth) return 'sin-auth';
   return null;
 }
 
@@ -302,9 +307,11 @@ export async function esperarClaves(
 /** Normaliza lo que devuelve `PushSubscription` a lo que espera la tabla. */
 export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubscriptionRecord | null {
   const endpoint = subscription.endpoint ?? null;
-  const p256dh = subscription.getKey?.('p256dh') ?? subscription.keys?.get?.('p256dh') ?? null;
-  const auth = subscription.getKey?.('auth') ?? subscription.keys?.get?.('auth') ?? null;
-  if (!endpoint || !p256dh || !auth) return null;
+  const keys = subscription.keys;
+  if (!keys) return null;
+  const p256dhRaw = subscription.getKey?.('p256dh') ?? ('get' in keys ? keys.get('p256dh') : keys.p256dh ?? null);
+  const authRaw = subscription.getKey?.('auth') ?? ('get' in keys ? keys.get('auth') : keys.auth ?? null);
+  if (!endpoint || !p256dhRaw || !authRaw) return null;
 
   let userAgent: string | null = null;
   try {
@@ -313,8 +320,11 @@ export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubsc
     userAgent = null;
   }
 
-  const toBase64Url = (buf: ArrayBuffer): string => {
-    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+  const toBase64Url = (buf: ArrayBuffer | string): string => {
+    const bytes = typeof buf === 'string'
+      ? new TextEncoder().encode(buf)
+      : new Uint8Array(buf);
+    return btoa(String.fromCharCode(...bytes))
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=/g, '');
@@ -322,8 +332,8 @@ export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubsc
 
   return {
     endpoint,
-    p256dh: toBase64Url(p256dh),
-    auth: toBase64Url(auth),
+    p256dh: toBase64Url(p256dhRaw),
+    auth: toBase64Url(authRaw),
     timezone: detectTimeZone(),
     user_agent: userAgent,
   };

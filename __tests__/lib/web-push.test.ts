@@ -110,21 +110,20 @@ describe('presupuestos de tiempo de la activación', () => {
   });
 
   it('la suscripción y la red tienen un techo estrecho, porque no dependen de nadie', () => {
-    // Subió de 30 a 35 s para pagar la espera de las claves. Con 30 no había
-    // margen: el registro del worker puede gastar 20 y para FCM, la red y la
-    // espera quedaban ~7 s, con lo que el corte saltaba y la persona veía "no ha
-    // terminado a tiempo" en lugar del motivo real.
-    expect(ACTIVATION_TIMEOUT_MS).toBe(35_000);
+    // Subió a 60 s para pagar la espera de las claves en Redmi/Xiaomi lentos.
+    // Con 35 s no había margen: el registro del worker puede gastar 20 s y para
+    // FCM, la red y la espera de 30 s quedaban ~10 s.
+    expect(ACTIVATION_TIMEOUT_MS).toBe(60_000);
   });
 
   it('el tope global de Ajustes es la suma de los dos con margen', () => {
-    expect(WEB_PUSH_TIMEOUT_MS).toBe(105_000);
+    expect(WEB_PUSH_TIMEOUT_MS).toBe(130_000);
     expect(WEB_PUSH_TIMEOUT_MS).toBeGreaterThan(PERMISSION_TIMEOUT_MS + ACTIVATION_TIMEOUT_MS);
   });
 
   it('el registro, la activación y la espera de las claves caben en el presupuesto', () => {
     // El reparto de tiempos es lo que evita que el corte global se coma una fase
-    // sin avisar. Con la espera nueva, el test anterior no la miraba: por eso
+    // sin avisar. Con la espera de 30 s, el test anterior no la miraba: por eso
     // faltaba esta fase en el reparto.
     expect(SW_READY_TIMEOUT_MS * 2).toBeLessThanOrEqual(ACTIVATION_TIMEOUT_MS);
     const conClaves = SW_READY_TIMEOUT_MS * 2 + CLAVES_TIMEOUT_MS + 5_000;
