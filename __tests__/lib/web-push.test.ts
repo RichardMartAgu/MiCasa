@@ -386,6 +386,7 @@ describe('una suscripción sin claves no cuenta como activa', () => {
   });
 
   it('espera a que las claves aparezcan antes de declarar la suscripción mala', async () => {
+    jest.useFakeTimers();
     // Chrome genera `p256dh` y `auth` de forma asíncrona, después de crear la
     // suscripción. Leerla en el acto la encuentra sin claves aunque las vaya a
     // tener: medido en un Android real, seis intentos seguidos fallaron así.
@@ -410,6 +411,7 @@ describe('una suscripción sin claves no cuenta como activa', () => {
     const promesa = enableWebPush({ id: 'user-1' } as never);
     await jest.advanceTimersByTimeAsync(1500);
     const result = await promesa;
+    jest.useRealTimers();
 
     expect(result.status).toBe('enabled');
     // Y se guarda **la** que trae las claves, no la que se creó a medias. Sin esto,
@@ -427,6 +429,7 @@ describe('una suscripción sin claves no cuenta como activa', () => {
   });
 
   it('la espera termina aunque la lectura se quede colgada', async () => {
+    jest.useFakeTimers();
     // El invariante del módulo: nada se cuelga sin techo. Se comprueba con las dos
     // protecciones a la vez, porque cada una tapa un agujero distinto: el tope por
     // lectura evita que un `getSubscription()` que no resuelve deje la espera
@@ -446,6 +449,7 @@ describe('una suscripción sin claves no cuenta como activa', () => {
     const promesa = enableWebPush({ id: 'user-1' } as never);
     await jest.advanceTimersByTimeAsync(30_000);
     const result = await promesa;
+    jest.useRealTimers();
 
     // Termina, que es lo importante. Y con un veredicto concreto en vez de
     // colgarse: la suscripción volvió sin claves y no se pudo volver a leer, así
@@ -460,6 +464,7 @@ describe('una suscripción sin claves no cuenta como activa', () => {
   });
 
   it('una consulta de registro colgada no deja el alta esperando', async () => {
+    jest.useFakeTimers();
     // La usan la lectura, el alta y la baja. Sin tope, un `getRegistration()` que
     // no resuelve deja el alta entera esperando el corte exterior, con el trabajo
     // siguiendo por debajo: exactamente lo que la cabecera del módulo promete que
@@ -474,6 +479,7 @@ describe('una suscripción sin claves no cuenta como activa', () => {
     const promesa = enableWebPush({ id: 'user-1' } as never);
     await jest.advanceTimersByTimeAsync(SW_READY_TIMEOUT_MS + 1000);
     const result = await promesa;
+    jest.useRealTimers();
 
     // Termina con un motivo, no colgada.
     expect(result.status).not.toBe('enabled');

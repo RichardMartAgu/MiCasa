@@ -16,7 +16,7 @@
  */
 
 /** El diálogo de permisos espera a una persona: holgado a propósito. */
-export const PERMISSION_TIMEOUT_MS = 60_000;
+export const PERMISSION_TIMEOUT_MS = 65_000;
 
 /** Una fase del registro o la activación del service worker. */
 export const SW_READY_TIMEOUT_MS = 10_000;
