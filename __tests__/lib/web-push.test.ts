@@ -71,8 +71,8 @@ describe('toSubscriptionRecord', () => {
 
     expect(record).not.toBeNull();
     expect(record?.endpoint).toBe('https://fcm.googleapis.com/fcm/send/abc');
-    expect(record?.p256dh).toBe('a2V5LXAyNTZkaA==');
-    expect(record?.auth).toBe('a2V5LWF1dGg=');
+    expect(record?.p256dh).toBe('a2V5LXAyNTZkaA');
+    expect(record?.auth).toBe('a2V5LWF1dGg');
     expect(record?.timezone).toBe(detectTimeZone());
   });
 
