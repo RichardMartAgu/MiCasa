@@ -685,21 +685,32 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
     'lectura de la suscripción',
   ).catch(() => null);
 
-  // Comprobar versión de clave VAPID ANTES de decidir si la suscripción es usable.
-  // Si cambió la versión, forzar re-suscripción aunque la suscripción antigua tenga claves
-  // (esas claves serían para el VAPID antiguo y no servirían).
+  // Comprobar si la suscripción existente usa la clave VAPID actual.
+  // PushSubscription.options.applicationServerKey contiene la clave con la que se creó.
+  // Si no coincide, forzar re-suscripción (las claves p256dh/auth serían para el VAPID antiguo).
   let forceResubscribe = false;
   if (existing) {
     try {
+      const existingKey = existing.options?.applicationServerKey;
+      if (existingKey) {
+        const existingKeyBytes = new Uint8Array(existingKey);
+        const currentKeyBytes = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+        // Comparar byte a byte
+        if (existingKeyBytes.length !== currentKeyBytes.length ||
+            !existingKeyBytes.every((b, i) => b === currentKeyBytes[i])) {
+          console.log('Clave VAPID de la suscripción no coincide con la actual, forzando re-suscripción');
+          forceResubscribe = true;
+        }
+      }
+      // También guardar versión en localStorage para futuras visitas
       const storedVersion = localStorage.getItem('micasa:vapid-key-version');
       if (storedVersion && storedVersion !== VAPID_KEY_VERSION) {
-        console.log('Clave VAPID cambiada (versión guardada:', storedVersion, 'actual:', VAPID_KEY_VERSION, '), forzando re-suscripción');
+        console.log('Versión VAPID en localStorage cambió, forzando re-suscripción');
         forceResubscribe = true;
       }
-      // Guardar versión actual para futuras comparaciones
       localStorage.setItem('micasa:vapid-key-version', VAPID_KEY_VERSION);
     } catch {
-      // localStorage no disponible (modo privado, etc.): no bloquear
+      // localStorage no disponible o error leyendo options: no bloquear
     }
   }
 
