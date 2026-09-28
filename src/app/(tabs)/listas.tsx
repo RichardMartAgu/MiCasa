@@ -32,6 +32,7 @@ import {
   toggleShoppingItem,
   toggleShoppingList,
 } from '@/lib/api';
+import { confirmDialog } from '@/lib/confirm';
 import type { ShoppingItem, ShoppingList } from '@/lib/types';
 import { validateTitle } from '@/lib/validation';
 
@@ -91,11 +92,13 @@ export default function ListasScreen() {
   }
 
   async function handleAddItem(listId: string) {
+    if (!currentCasa) return;
     const check = validateTitle(newItemName);
     if (!check.valid) return;
     const qty = newItemQty.trim() ? Number(newItemQty) : null;
     await addShoppingItem({
       list_id: listId,
+      casa_id: currentCasa.id,
       name: newItemName,
       quantity: qty && Number.isFinite(qty) && qty > 0 ? qty : null,
     });
@@ -103,19 +106,16 @@ export default function ListasScreen() {
     setNewItemQty('');
   }
 
-  function handleDeleteList(id: string) {
-    Alert.alert('Eliminar lista', '¿Seguro que quieres eliminar esta lista y sus artículos?', [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Eliminar',
-        style: 'destructive',
-        onPress: async () => {
-          const err = await removeShoppingList(id);
-          if (err) Alert.alert('Error', err.message);
-          if (expandedId === id) setExpandedId(null);
-        },
-      },
-    ]);
+  async function handleDeleteList(id: string) {
+    const ok = await confirmDialog(
+      'Eliminar lista',
+      '¿Seguro que quieres eliminar esta lista y sus artículos?',
+      { confirmText: 'Eliminar', destructive: true },
+    );
+    if (!ok) return;
+    const err = await removeShoppingList(id);
+    if (err) Alert.alert('Error', err.message);
+    if (expandedId === id) setExpandedId(null);
   }
 
   return (
@@ -324,6 +324,8 @@ const styles = StyleSheet.create({
   addItemRow: { flexDirection: 'row', gap: Spacing.two, alignItems: 'center', marginTop: Spacing.two },
   itemInput: {
     flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
     borderWidth: 1,
     borderColor: Palette.border,
     borderRadius: Radius.md,
@@ -333,7 +335,7 @@ const styles = StyleSheet.create({
     color: Palette.text,
     backgroundColor: Palette.surface,
   },
-  qtyInput: { flex: 0.4 },
+  qtyInput: { flex: 0.4, flexShrink: 1, minWidth: 0 },
   addItemButton: {
     width: 44,
     height: 44,

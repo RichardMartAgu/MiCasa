@@ -15,7 +15,7 @@ DIST_DATE=$(stat -c %Y dist/_expo/static/js/web/entry-*.js 2>/dev/null | sort -r
 
 if [ -z "$DIST_DATE" ] || [ "$HEAD_DATE" -gt "$DIST_DATE" ]; then
   echo "→ Versión nueva detectada. Reconstruyendo dist..."
-  npx expo export --platform web
+  npm run build:web
 else
   echo "→ dist al día. Sin reconstrucción."
 fi

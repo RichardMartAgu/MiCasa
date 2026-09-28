@@ -14,9 +14,10 @@ MiCasa te permite llevar la **contabilidad de compras** por secciones (Bebé, Re
 - **Login con Google** (OAuth) vía `expo-auth-session` + `expo-web-browser`.
 - **Casas multi-usuario**: crea una casa, comparte su código de invitación y toda tu pareja/familia gestiona los mismos datos en tiempo real. El propietario puede promover a administrador o expulsar miembros.
 - **Gastos con secciones**: categorías con color, icono y presupuesto mensual, barras de progreso y aviso cuando se supera el presupuesto.
-- **Citas**: tipo (médico, escuela, mascota…), persona, lugar, fecha y hora.
+- **Citas**: tipo (médico, escuela, mascota…), persona, lugar, fecha y hora, con aviso configurable (día antes y/o mismo día a las 9:00, o sin aviso).
 - **Listas de la compra**: artículos con cantidad, marcado de completado y listas terminadas.
 - **Cumpleaños**: contactos con fecha de nacimiento y widget de «próximos 30 días».
+- **Recordatorios locales**: avisos de citas y cumpleaños en el dispositivo con `expo-notifications` (toggle en Ajustes, sin backend).
 - **Tiempo real**: los cambios de cualquier miembro se reflejan al instante (Supabase Realtime).
 - **Seguridad**: Row Level Security en toda la base de datos.
 
@@ -54,6 +55,21 @@ npm start        # escanea el QR con la app Expo Go
 npm run web      # o pruébala en el navegador
 npm run android  # emulador Android
 ```
+
+### 4. Instalar la web como app
+
+La versión web es una PWA: se puede instalar y queda con su propio icono, sin barra del navegador. **En Ajustes hay una tarjeta que lo hace**: si tu navegador lo permite sale un botón "Instalar ahora", y debajo están los pasos por si prefieres hacerlo a mano o el botón no aparece. En Firefox no hay botón, porque no ofrece instalarla, y la tarjeta lo dice con los pasos y un acceso directo a favoritos.
+
+A mano, que es lo que hace falta en iPhone:
+
+| Navegador | Pasos |
+| --- | --- |
+| iPhone / Safari | **Compartir** → **Añadir a pantalla de inicio** |
+| Android / Chrome | Menú **⋮** → **Instalar app** |
+| Escritorio / Chrome, Edge | Menú del navegador → **Instalar MiCasa** |
+| Firefox | No ofrece instalarla. Guarda un acceso directo |
+
+Los avisos de citas y cumpleaños en **iPhone solo llegan con la app instalada**: en una pestaña normal el navegador dice que puede pero no envía. La tarjeta de Recordatorios te lo explica cuando es tu caso.
 
 ## 🎬 Demo local y despliegue
 
@@ -107,7 +123,7 @@ src/
 - `casa_members` — relación usuario ↔ casa (rol owner/member).
 - `categories` — secciones de gasto (nombre, color, icono, presupuesto).
 - `expenses` — gastos con importe, sección y fecha.
-- `appointments` — citas con tipo, persona, lugar y hora.
+- `appointments` — citas con tipo, persona, lugar, hora y aviso (`reminder_at` + `reminder_choice`).
 - `shopping_lists` / `shopping_items` — listas de la compra.
 - `contacts` — contactos con fecha de nacimiento.
 
@@ -115,7 +131,6 @@ Todas las tablas tienen **Row Level Security**: solo los miembros de una casa pu
 
 ## 🗺️ Siguientes pasos sugeridos
 
-- Notificaciones push de recordatorios (citas y cumpleaños) con `expo-notifications`.
 - Subida de justificantes/fotos de gastos a Supabase Storage.
 - Presupuestos compartidos y alertas por sección.
 - Vista de gastos por mes con gráficos.

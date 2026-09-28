@@ -1,8 +1,9 @@
 import { supabase } from './supabase';
 import { friendlyError } from './errors';
+import { isAppointmentIcon, type AppointmentIcon } from './appointment-icons';
 import type {
   Appointment,
-  AppointmentKind,
+  AppointmentKindRow,
   Category,
   Contact,
   Expense,
@@ -98,6 +99,17 @@ export async function removeExpense(id: string): Promise<ApiError | null> {
 
 // ---- Citas ------------------------------------------------------------------
 
+export type AppointmentInput = {
+  title: string;
+  description?: string | null;
+  person?: string | null;
+  location?: string | null;
+  kind: string;
+  starts_at: string;
+  reminder_at?: string | null;
+  reminder_choice?: string;
+};
+
 export async function fetchAppointments(casaId: string): Promise<Appointment[]> {
   const { data, error } = await supabase
     .from('appointments')
@@ -108,39 +120,71 @@ export async function fetchAppointments(casaId: string): Promise<Appointment[]> 
   return (data ?? []) as Appointment[];
 }
 
-export async function addAppointment(input: {
-  casa_id: string;
-  user_id: string;
-  title: string;
-  description?: string | null;
-  person?: string | null;
-  location?: string | null;
-  kind: AppointmentKind;
-  starts_at: string;
-  reminder_at?: string | null;
-}): Promise<ApiError | null> {
-  const { error } = await supabase.from('appointments').insert(input);
-  return toError(error);
+export async function addAppointment(
+  input: { casa_id: string; user_id: string } & AppointmentInput,
+): Promise<{ error: ApiError | null; data?: Appointment }> {
+  const { data, error } = await supabase
+    .from('appointments')
+    .insert({ ...input, reminder_choice: input.reminder_choice ?? 'none' })
+    .select()
+    .single();
+  return { error: toError(error), data: (data as Appointment | null) ?? undefined };
 }
 
 export async function updateAppointment(
   id: string,
-  input: {
-    title: string;
-    description?: string | null;
-    person?: string | null;
-    location?: string | null;
-    kind: AppointmentKind;
-    starts_at: string;
-    reminder_at?: string | null;
-  },
+  input: AppointmentInput,
 ): Promise<ApiError | null> {
-  const { error } = await supabase.from('appointments').update(input).eq('id', id);
+  const { error } = await supabase
+    .from('appointments')
+    .update({ ...input, reminder_choice: input.reminder_choice ?? 'none' })
+    .eq('id', id);
   return toError(error);
 }
 
 export async function removeAppointment(id: string): Promise<ApiError | null> {
   const { error } = await supabase.from('appointments').delete().eq('id', id);
+  return toError(error);
+}
+
+export async function fetchAppointmentKinds(casaId: string): Promise<AppointmentKindRow[]> {
+  const { data, error } = await supabase
+    .from('appointment_kinds')
+    .select('*')
+    .eq('casa_id', casaId)
+    .order('sort_order', { ascending: true });
+  if (error) throw new Error(friendlyError(error.message));
+  return (data ?? []) as AppointmentKindRow[];
+}
+
+export async function addAppointmentKind(input: {
+  casa_id: string;
+  name: string;
+  icon?: AppointmentIcon;
+  sort_order?: number;
+}): Promise<ApiError | null> {
+  if (input.icon !== undefined && !isAppointmentIcon(input.icon)) {
+    return { message: 'Icono de tipo de cita no válido.' };
+  }
+
+  const { error } = await supabase.from('appointment_kinds').insert(input);
+  return toError(error);
+}
+
+export async function updateAppointmentKind(
+  id: string,
+  input: { name?: string; icon?: AppointmentIcon; sort_order?: number },
+): Promise<ApiError | null> {
+  if (input.icon !== undefined && !isAppointmentIcon(input.icon)) {
+    return { message: 'Icono de tipo de cita no válido.' };
+  }
+
+  const { error } = await supabase.from('appointment_kinds').update(input).eq('id', id);
+  return toError(error);
+}
+
+export async function removeAppointmentKind(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('appointment_kinds').delete().eq('id', id);
   return toError(error);
 }
 
@@ -189,6 +233,7 @@ export async function fetchShoppingItems(listId: string): Promise<ShoppingItem[]
 
 export async function addShoppingItem(input: {
   list_id: string;
+  casa_id: string;
   name: string;
   quantity?: number | null;
   unit?: string | null;
@@ -250,6 +295,16 @@ export async function removeContact(id: string): Promise<ApiError | null> {
 }
 
 // ---- Miembros de la casa -----------------------------------------------------
+
+export async function updateCasa(id: string, input: { name: string }): Promise<ApiError | null> {
+  const { error } = await supabase.from('casas').update(input).eq('id', id);
+  return toError(error);
+}
+
+export async function removeCasa(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('casas').delete().eq('id', id);
+  return toError(error);
+}
 
 export async function removeCasaMember(
   casaId: string,

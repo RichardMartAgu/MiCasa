@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Alert,
@@ -13,6 +12,7 @@ import {
   View,
 } from 'react-native';
 
+import { AppDatePicker } from '@/components/ui/app-date-picker';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -34,8 +34,10 @@ import {
 } from '@/lib/api';
 import { birthdayLabel, upcomingBirthdays } from '@/lib/birthdays';
 import { syncBirthdays } from '@/lib/calendar-sync';
+import { confirmDialog } from '@/lib/confirm';
 import { safeDate, toISODate } from '@/lib/date';
 import { filterContacts } from '@/lib/filter';
+import { getBirthdayChoice, scheduleBirthdays } from '@/lib/notifications';
 import type { Contact } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
@@ -54,7 +56,6 @@ export default function CumpleanosScreen() {
   const [birthDate, setBirthDate] = useState(new Date());
   const [relationship, setRelationship] = useState('');
   const [phone, setPhone] = useState('');
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const [errors, setErrors] = useState<{
     name?: string;
     date?: string;
@@ -119,6 +120,15 @@ export default function CumpleanosScreen() {
     setModalVisible(true);
   }
 
+  async function rescheduleBirthdays() {
+    try {
+      const choice = await getBirthdayChoice();
+      await scheduleBirthdays(contacts, choice);
+    } catch {
+      // el sync por realtime reintentará
+    }
+  }
+
   async function handleSave() {
     const nameCheck = validateTitle(name);
     const dateCheck = validateDate(toISODate(birthDate));
@@ -160,20 +170,19 @@ export default function CumpleanosScreen() {
     setPhone('');
     setEditingContactId(null);
     setModalVisible(false);
+    void rescheduleBirthdays();
   }
 
-  function handleDelete(id: string) {
-    Alert.alert('Eliminar contacto', '¿Seguro que quieres eliminar este contacto?', [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Eliminar',
-        style: 'destructive',
-        onPress: async () => {
-          const error = await removeContact(id);
-          if (error) Alert.alert('Error', error.message);
-        },
-      },
-    ]);
+  async function handleDelete(id: string) {
+    const ok = await confirmDialog(
+      'Eliminar contacto',
+      '¿Seguro que quieres eliminar este contacto?',
+      { confirmText: 'Eliminar', destructive: true },
+    );
+    if (!ok) return;
+    const error = await removeContact(id);
+    if (error) Alert.alert('Error', error.message);
+    else void rescheduleBirthdays();
   }
 
   function handleSync() {
@@ -190,13 +199,18 @@ export default function CumpleanosScreen() {
           text: 'Sincronizar',
           onPress: async () => {
             setSyncing(true);
-            const result = await syncBirthdays(contacts);
-            setSyncing(false);
-            const message =
-              result.errors > 0
-                ? `${result.synced} sincronizados, ${result.errors} con error.`
-                : `${result.synced} cumpleaños sincronizados con el calendario.`;
-            Alert.alert('Sincronización completada', message);
+            try {
+              const result = await syncBirthdays(contacts);
+              const message =
+                result.errors > 0
+                  ? `${result.synced} sincronizados, ${result.errors} con error.`
+                  : `${result.synced} cumpleaños sincronizados con el calendario.`;
+              Alert.alert('Sincronización completada', message);
+            } catch {
+              Alert.alert('Error', 'No se pudo acceder al calendario. Revisa los permisos.');
+            } finally {
+              setSyncing(false);
+            }
           },
         },
       ],
@@ -354,29 +368,19 @@ export default function CumpleanosScreen() {
             </Text>
             <View style={styles.form}>
               <TextField label="Nombre" value={name} onChangeText={setName} error={errors.name} />
-              <Pressable
-                style={styles.dateButton}
-                accessibilityRole="button"
+              <AppDatePicker
+                value={birthDate}
+                mode="date"
+                icon="🎂"
+                formatValue={toISODate}
                 accessibilityLabel={`Cambiar fecha de nacimiento: ${toISODate(birthDate)}`}
-                onPress={() => setShowDatePicker(true)}>
-                <Text style={styles.dateButtonLabel}>🎂 {toISODate(birthDate)}</Text>
-              </Pressable>
+                onChange={setBirthDate}
+              />
               {errors.date ? (
                 <Text style={styles.error} accessibilityRole="alert">
                   {errors.date}
                 </Text>
               ) : null}
-              {showDatePicker && (
-                <DateTimePicker
-                  value={birthDate}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={(_, selected) => {
-                    setShowDatePicker(false);
-                    if (selected) setBirthDate(selected);
-                  }}
-                />
-              )}
               <TextField
                 label="Parentesco"
                 value={relationship}
@@ -480,15 +484,6 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 20, fontWeight: '800', color: Palette.text, marginBottom: Spacing.three },
   form: { gap: Spacing.three },
-  dateButton: {
-    borderWidth: 1,
-    borderColor: Palette.border,
-    borderRadius: Radius.md,
-    paddingVertical: Spacing.three,
-    alignItems: 'center',
-    backgroundColor: Palette.surface,
-  },
-  dateButtonLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
   error: { color: Palette.danger, fontSize: 13 },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
 });

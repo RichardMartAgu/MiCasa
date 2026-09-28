@@ -47,40 +47,76 @@ Seis agentes especializados viven en `.opencode/agents/` e intervienen en el flu
 6. Si `security` o `qa-test` formulan preguntas, el orquestador las transmite al usuario y espera decisión si afectan al bloque.
 7. Verificar antes de entregar: `npx tsc --noEmit`, `npx expo lint`, `npx jest` (+ checks de `web/` si aplica).
 
+# Git
+
+Antes de cualquier commit, push, merge, rebase o limpieza de ramas, carga la skill `.opencode/skills/micasa-git/SKILL.md`. Recoge el flujo obligatorio de este repo y los comandos que ya han causado pérdida de trabajo aquí.
+
+Dos avisos concretos:
+
+- `develop` exige revisión aprobatoria y el repositorio tiene `allow_auto_merge = false`. Un bot no puede aprobar su propio PR: hace falta que apruebe una persona, o autorización explícita del usuario para usar `--admin`.
+- `develop` es la rama de trabajo. `master` es la rama por defecto, y por eso **dependabot mergea en `master`**: un PR suyo no llega a lo que se despliega hasta que se lleva a `develop` a mano.
+
 # Regla dura (no negociable)
 
 Ningún bloque de código se da por terminado ni se commitea si el `security` devuelve **BLOQUEADO** o `qa-test` **FALLA**. Si la auditoría falla, primero se corrigen los hallazgos y después se vuelve a auditar hasta obtener **APROBADO**/**PASA**.
 
-## Regla dura: aislamiento de features
+## Regla dura: nada abierto al cambiar de bloque
 
-Toda feature nueva o refactorización significativa se trabaja en **worktree separado + rama propia** que sale de `develop`. Nunca se escribe directamente en `develop` ni en `main`.
+**Antes de crear un worktree o una rama nueva, `git worktree list` y `gh pr list --state open` deben salir limpios.** No se abre lo nuevo hasta que lo anterior está resuelto:
+
+- Ningún worktree abierto que no sea el directorio principal en `develop`.
+- Ningún PR sin mergear ni cerrar.
+- Ninguna rama local que no aporte nada pendiente.
+
+Cuando un bloque termine, se cierra en el mismo bloque: PR mergeado o cerrado, worktree eliminado con `git worktree remove`, rama borrada. Una tarea de más de un worktree es un worktree de más, no una excusa para acumularlos.
+
+Si un PR no se puede mergear, se cierra con el motivo. "Pendiente de revisar" no es un estado que sobreviva al cambio de bloque.
+
+## Regla dura: worktree obligatorio en toda rama
+
+**Toda rama que se cree lleva SIEMPRE su worktree separado.** El directorio principal (`/home/richard/MiCasa`) queda en la rama base `develop`, y cada rama nueva se trabaja desde su propio worktree (`/home/richard/MiCasa-<rama>/`).
+
+### Excepción: cambios pequeños van directos a `develop`
+
+Un cambio **pequeño** se escribe en el directorio principal sobre `develop` y se commitea ahí, sin rama, sin worktree y sin PR. El worktree sigue siendo obligatorio para todo lo demás.
+
+"Cosa pequeña" es:
+
+- Solo documentación (`*.md`), y sin reescribir secciones enteras.
+- Ningún cambio de código, configuración, dependencias, migraciones ni secrets.
+- Diff de un solo archivo, o de menos de ~20 líneas en total.
+- Sin tests ni typecheck que validar, porque no toca código ejecutable.
+- Sin auditorías: `security` y `qa-test` existen para revisar código, y aquí no hay nada que auditar.
+
+Si dudas de si entra, no entra: rama + worktree + PR. El coste de equivocarse es un PR de más; el de hacerlo al revés es código sin auditar en `develop`.
+
+**`main`/`master` sigue sin escribirse nunca.** La excepción es solo para `develop` y solo para esto.
 
 ### Flujo obligatorio
 
-1. Crear rama desde `develop`: `git checkout develop && git checkout -b feat/nombre-feature`
-2. Crear worktree: `git worktree add ../MiCasa-nombre-feature feat/nombre-feature`
-3. Trabajar dentro del worktree (`/home/richard/MiCasa-nombre-feature/`)
-4. Cuando el bloque pase security (**APROBADO**) + qa-test (**PASA**):
+1. `git checkout develop`
+2. Crear rama: `git checkout -b <tipo>/<nombre-rama>` (ej: `feat/x`, `hotfix/y`, `docs/z`)
+3. Crear worktree siempre: `git worktree add ../MiCasa-<nombre-rama> <tipo>/<nombre-rama>`
+4. Trabajar dentro del worktree (`/home/richard/MiCasa-<nombre-rama>/`), nunca en `/home/richard/MiCasa` salvo el cambio pequeño de la excepción de arriba.
+5. Cuando el bloque pase security (**APROBADO**) + qa-test (**PASA**):
    - Hacer commit en el worktree
-   - Empujar rama: `git push -u origin feat/nombre-feature`
-5. Una vez TODOS los bloques de la feature completados y auditados:
+   - Empujar rama: `git push -u origin <tipo>/<nombre-rama>`
+6. Una vez TODOS los bloques completados y auditados:
    - Crear PR contra `develop`
    - Merge solo tras approval del usuario
-6. Limpiar worktree: `git worktree remove ../MiCasa-nombre-feature`
+7. Limpiar worktree: `git worktree remove ../MiCasa-<nombre-rama>`
 
 ### Por qué
 
+- Directorio principal libre: el usuario puede trabajar en `develop` o crear otros worktrees sin estar bloqueado
 - Evita romper `develop` con código en progreso
 - Permite trabajar en múltiples features en paralelo
 - Cada feature tiene su historial limpio de commits
 - Rollback simple si algo sale mal
 
-### Excepciones
-
-- Hotfixes críticos de seguridad → rama `hotfix/` desde `main`, sin worktree
-- Cambios documentales (README, docs) → directo en rama correspondiente
-
 # Despliegue
+
+Despliegue a Vercel es **manual**: sin integración git (`vercel git connect` NO conectado). Cada deploy se lanza con `npm run deploy:vercel`. No asumir auto-deploy tras push.
 
 Antes de desplegar (local `npm run demo` o Vercel `npm run deploy:vercel`):
 

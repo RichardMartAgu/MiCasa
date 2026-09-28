@@ -7,8 +7,14 @@ import type { UpcomingBirthday } from '@/lib/birthdays';
 
 jest.mock('@react-native-community/datetimepicker', () => {
   const { View } = require('react-native');
-  return function MockPicker() {
-    return <View testID="date-picker" />;
+  return {
+    __esModule: true,
+    default: function MockPicker() {
+      return <View testID="date-picker" />;
+    },
+    DateTimePickerAndroid: {
+      open: jest.fn(),
+    },
   };
 });
 
@@ -59,6 +65,13 @@ jest.mock('@/lib/birthdays', () => ({
 const mockSyncBirthdays = jest.fn();
 jest.mock('@/lib/calendar-sync', () => ({
   syncBirthdays: (...args: unknown[]) => mockSyncBirthdays(...args),
+}));
+
+const mockGetBirthdayChoice = jest.fn();
+const mockScheduleBirthdays = jest.fn();
+jest.mock('@/lib/notifications', () => ({
+  getBirthdayChoice: (...args: unknown[]) => mockGetBirthdayChoice(...args),
+  scheduleBirthdays: (...args: unknown[]) => mockScheduleBirthdays(...args),
 }));
 
 const mockToISODate = jest.fn();
@@ -121,6 +134,8 @@ beforeEach(() => {
   mockBirthdayLabel.mockReturnValue('en 5 días');
   mockUpcomingBirthdays.mockReturnValue([]);
   mockToISODate.mockReturnValue('2020-05-10');
+  mockGetBirthdayChoice.mockResolvedValue('both');
+  mockScheduleBirthdays.mockResolvedValue(undefined);
   mockValidateTitle.mockReturnValue({ valid: true });
   mockValidateDate.mockReturnValue({ valid: true });
   mockValidateOptionalText.mockReturnValue({ valid: true });
@@ -184,6 +199,29 @@ describe('CumpleanosScreen', () => {
     alertSpy.mockRestore();
   });
 
+  it('muestra error si syncBirthdays falla (Android sin permiso)', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockSyncBirthdays.mockRejectedValue(new Error('Permissions error'));
+    const { getByText } = setup([soonContact]);
+
+    fireEvent.press(getByText('Calendario'));
+
+    const confirmButton = alertSpy.mock.calls[0][2]?.find(
+      (btn) => btn.text === 'Sincronizar',
+    );
+    await act(async () => {
+      await confirmButton?.onPress?.();
+    });
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Error',
+        'No se pudo acceder al calendario. Revisa los permisos.',
+      );
+    });
+    alertSpy.mockRestore();
+  });
+
   it('muestra cumpleaños próximos', () => {
     mockUpcomingBirthdays.mockReturnValue(upcoming);
     const { getByText } = setup([soonContact]);
@@ -237,6 +275,9 @@ describe('CumpleanosScreen', () => {
           birth_date: '2020-05-10',
         }),
       );
+    });
+    await waitFor(() => {
+      expect(mockScheduleBirthdays).toHaveBeenCalledWith([], 'both');
     });
   });
 

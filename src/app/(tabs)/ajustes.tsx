@@ -1,6 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Alert,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -8,10 +19,72 @@ import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
-import { removeCasaMember, setCasaMemberRole } from '@/lib/api';
+import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
+import { useAppInstall } from '@/hooks/use-app-install';
+import {
+  fetchAppointments,
+  fetchContacts,
+  removeCasaMember,
+  setCasaMemberRole,
+} from '@/lib/api';
+import { confirmDialog } from '@/lib/confirm';
 import { formatInviteCode, initials } from '@/lib/format';
-import type { CasaMember } from '@/lib/types';
+import {
+  areNotificationsEnabled,
+  askEnableNotifications,
+  canRequestPermissionAgain,
+  getBirthdayChoice,
+  requestPermissions,
+  scheduleBirthdays,
+  setBirthdayChoice,
+  setNotificationsEnabled,
+  syncAll,
+} from '@/lib/notifications';
+import {
+  reminderChoiceLabels,
+  reminderChoices,
+  type ReminderChoice,
+} from '@/lib/notification-schedule';
+import { showNotice } from '@/lib/notice';
+import type { Appointment, Casa, CasaMember, Contact } from '@/lib/types';
+import {
+  disableWebPush,
+  enableWebPush,
+  getActiveSubscription,
+  getStoredBirthdayChoice,
+  isPushSupported,
+  notificationPermission,
+  sendTestPush,
+  syncPushPreferences,
+  WEB_PUSH_TIMEOUT_MS,
+} from '@/lib/web-push';
+import { withTimeout } from '@/lib/with-timeout';
 import { validateCasaName, validateInviteCode } from '@/lib/validation';
+
+/**
+ * Un aviso debe poder leerse sin contexto: en web sale por `window.alert`, que
+ * solo admite un texto y no lleva título. Cerrar otras pestañas es la salida
+ * real cuando lo que se ha quedado esperando es la activación de un service
+ * worker nuevo.
+ */
+const MSG_PUSH_TIMEOUT =
+  'Los avisos no se han activado a tiempo. Cierra otras pestañas de MiCasa y vuelve a intentarlo.';
+
+/**
+ * Último recurso si la vista no trae pasos. Hoy `installView` siempre los da en
+ * los estados en los que el botón puede fallar, así que es alcanzable solo si esa
+ * función cambia: sin texto, quien pulse el botón y lo vea fallar se queda sin
+ * ninguna instrucción.
+ */
+const SIN_PASOS_DE_INSTALACION = 'Abre el menú del navegador y elige la opción de instalar.';
+
+/**
+ * Tope del aviso de prueba. Es una petición a la Edge Function en frío, que
+ * además tiene que contacta con el push service, así que se le da margen de
+ * sobra: el objetivo es que un cuelgue no deje el botón muerto, no que el botón
+ * falle pronto.
+ */
+const TEST_PUSH_TIMEOUT_MS = 30_000;
 
 export default function AjustesScreen() {
   const { user, signOut } = useAuth();
@@ -23,6 +96,8 @@ export default function AjustesScreen() {
     setCurrentCasa,
     createCasa,
     joinCasa,
+    renameCasa,
+    deleteCasa,
     refreshMembers,
   } = useCasa();
 
@@ -38,19 +113,427 @@ export default function AjustesScreen() {
 
   const [createModal, setCreateModal] = useState(false);
   const [joinModal, setJoinModal] = useState(false);
+  const [editingCasa, setEditingCasa] = useState<Casa | null>(null);
   const [casaName, setCasaName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleCreate() {
+  const [notificationsEnabled, setNotificationsEnabledState] = useState(false);
+  const [birthdayChoice, setBirthdayChoiceState] = useState<ReminderChoice>('none');
+  // Solo cubre la primera lectura. Las siguientes no lo vuelven a armar, y no hace
+  // falta: el interruptor maestro no pierde nada por releerse con la pantalla ya
+  // pintada, porque su valor no depende de esa lectura, y un parpadeo de "deshabilitado"
+  // en cada `TOKEN_REFRESHED` sería peor. El selector de cumpleaños sí depende, y por eso
+  // se protege con la secuencia de más abajo en vez de con este flag.
+  const [prefsLoading, setPrefsLoading] = useState(true);
+  // En web los avisos los manda el servidor, así que el estado real es si este
+  // navegador tiene una suscripción activa, no la preferencia local.
+  const isWeb = Platform.OS === 'web';
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushBlocked, setPushBlocked] = useState(false);
+  const [webPushBusy, setWebPushBusy] = useState(false);
+  // Secuencia de las lecturas del estado real del navegador: solo la última
+  // respuesta escribe en el interruptor, para que una lectura lenta no pise la
+  // acción que el usuario acaba de hacer.
+  //
+  // El número se incrementa **al empezar** la acción y no solo al terminar: una
+  // lectura en vuelo del momento anterior puede resolver mientras la operación
+  // sigue corriendo, y si el contador no se movió hasta el `finally`, esa
+  // respuesta obsoleta entraba igual y el interruptor marcaba lo contrario de lo
+  // que el usuario acaba de pedir. Con el incremento al inicio, cualquier lectura
+  // anterior queda invalidada en el instante en que el usuario toca el
+  // interruptor.
+  const pushReadSeq = useRef(0);
+  // Secuencia de las lecturas de la preferencia de cumpleaños, con contador
+  // propio y no el de arriba. Compartirlo haría que tocar el selector de
+  // cumpleaños invalidara la lectura del interruptor maestro, y al revés: los dos
+  // leen y escriben en el mismo efecto, así que un contador común convierte cada
+  // cambio del uno en un descarte del otro, y el maestro se quedaría sin leer
+  // (`getActiveSubscription` tarda hasta 10 s en registrar el worker). Con dos
+  // contadores, cada estado solo lo escribe su propia secuencia.
+  //
+  // Mismo criterio que `pushReadSeq` y por el mismo motivo: la lectura de
+  // `push_preferences` tiene su propio tope (`PREFS_READ_TIMEOUT_MS`), así que
+  // puede seguir en vuelo cuando el usuario ya ha pulsado un chip. Sin esto, su
+  // respuesta llega después y marca el chip contrario de lo elegido, que es el
+  // sentido peligroso: la fila de la base manda sobre lo que el servidor avisa
+  // aunque la pantalla diga otra cosa.
+  const birthdayReadSeq = useRef(0);
+  const [testPushBusy, setTestPushBusy] = useState(false);
+  // La instalación de la web como app. En nativo no se enseña nada, y en web
+  // solo aparece si hay algo que hacer: o se instala con un toque, o hay pasos
+  // que dependen del navegador que tiene la persona.
+  const appInstall = useAppInstall();
+
+  const { data: appointments } = useRealtimeCollection<Appointment>(
+    () => (currentCasa ? fetchAppointments(currentCasa.id) : Promise.resolve([])),
+    'appointments',
+    currentCasa?.id ?? null,
+  );
+  const { data: contacts } = useRealtimeCollection<Contact>(
+    () => (currentCasa ? fetchContacts(currentCasa.id) : Promise.resolve([])),
+    'contacts',
+    currentCasa?.id ?? null,
+  );
+
+  useEffect(() => {
+    let active = true;
+    // El número se toma al entrar en el efecto y no al escribir, por lo mismo que
+    // en el interruptor maestro: si una pasada anterior sigue en vuelo cuando
+    // empieza esta, hay que dejarla obsoleta ya. Leyéndolo solo al escribir, esa
+    // pasada leería el número ya movido y su respuesta entraría igual.
+    const seq = ++birthdayReadSeq.current;
+    (async () => {
+      try {
+        // En web la preferencia se replica en la base, que es la misma que lee
+        // el servidor para avisar con la app cerrada; en nativo sigue en
+        // AsyncStorage. Antes solo se pedía la de AsyncStorage y en web
+        // devolvía 'none' siempre, así que el selector arrancaba sin nada
+        // aunque el valor estuviera guardado.
+        const [enabled, choice] = await Promise.all([
+          areNotificationsEnabled(),
+          isWeb ? getStoredBirthdayChoice(user) : getBirthdayChoice(),
+        ]);
+        if (!active) return;
+        setNotificationsEnabledState(enabled);
+        // Solo la preferencia lleva la secuencia. `enabled` es el interruptor
+        // maestro, con su propia secuencia para las lecturas del navegador
+        // (`pushReadSeq`), y un toque de cumpleaños no lo cambia: meterlo aquí
+        // haría que cada elección descartara la lectura del maestro sin motivo.
+        if (seq === birthdayReadSeq.current) setBirthdayChoiceState(choice);
+      } catch {
+        // Una lectura que falla no puede dejar nada a medias: el `finally`
+        // rehabilita los controles igual. Se traga el motivo porque aquí no hay
+        // dónde enseñarlo, y el estado por defecto de ambos selectores ya es el
+        // que corresponde a "no hay nada guardado".
+      } finally {
+        // En el `finally` y no al final del camino bueno: un rechazo dentro del
+        // IIFE dejaba `prefsLoading` en `true` y con el interruptor bloqueado
+        // hasta recargar la página, sin que nada explicara por qué.
+        if (active) setPrefsLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+    // `user` en las dependencias y no solo al montar: en web la sesión se
+    // restaura desde el almacenamiento y puede llegar después del primer render,
+    // y una lectura hecha sin usuario devuelve 'none' y, sin releerse, el
+    // selector se quedaría en "sin aviso" durante toda la sesión.
+  }, [isWeb, user]);
+
+  useEffect(() => {
+    if (!isWeb) return;
+    let active = true;
+    // La lectura de montaje entra en la misma secuencia que las del interruptor:
+    // registrar el worker tarda 10 s, y si su respuesta llegara después de un
+    // cambio del usuario marcaría lo contrario de lo que se acaba de hacer.
+    const seq = ++pushReadSeq.current;
+    (async () => {
+      const supported = isPushSupported();
+      if (!active) return;
+      setPushSupported(supported);
+      if (!supported) {
+        setNotificationsEnabledState(false);
+        return;
+      }
+      setPushBlocked(notificationPermission() === 'denied');
+      // Con `try/catch` porque `getActiveSubscription` habla con el service
+      // worker y ese puede rechazar (`InvalidStateError` en contextos no
+      // seguros). Sin él, un rechazo aquí era una promesa sin capturar en el
+      // navegador y el interruptor se quedaba sin verificar para siempre.
+      try {
+        const subscription = await getActiveSubscription();
+        if (active && seq === pushReadSeq.current) setNotificationsEnabledState(Boolean(subscription));
+      } catch {
+        if (active && seq === pushReadSeq.current) setNotificationsEnabledState(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [isWeb]);
+
+  async function handleToggleWebPush(next: boolean) {
+    if (!user) return;
+    setWebPushBusy(true);
+    // Antes de esperar nada. Cualquier lectura del navegador que siguiera en
+    // vuelo queda invalidada ya, no cuando esta operación termine dentro de
+    // treinta segundos: si resolviera mientras tanto, escribiría el estado viejo
+    // encima del nuevo.
+    ++pushReadSeq.current;
+    try {
+      // web-push ya pone su propio tope por fases; este es el último recurso
+      // para que ningún fallo por debajo pueda dejar el interruptor muerto.
+      const result = await withTimeout(
+        next ? enableWebPush(user) : disableWebPush(user),
+        WEB_PUSH_TIMEOUT_MS,
+        'la web no ha completado el cambio a tiempo',
+      );
+
+      if (result.status === 'enabled' || result.status === 'disabled') {
+        setNotificationsEnabledState(next);
+        setPushBlocked(false);
+        return;
+      }
+      if (result.status === 'denied') {
+        setPushBlocked(true);
+        showNotice(
+          'Permiso denegado',
+          'El navegador no permite avisos en este sitio. Actívalo desde los ajustes del navegador (el icono del candado junto a la dirección) y vuelve a intentarlo.',
+        );
+        return;
+      }
+      if (result.status === 'unsupported') {
+        // Solo llega si el navegador no tiene las tres APIs de push, y en ese
+        // caso el interruptor está desactivado y no se puede pulsar, así que es
+        // una rama de seguridad. El aviso de "añádela a la pantalla de inicio" no
+        // va aquí: en iPhone el navegador SÍ dice que puede, y el problema es
+        // que no envía en una pestaña. Eso lo explica la descripción del
+        // interruptor, que mira la plataforma y el modo de visualización.
+        showNotice('No disponible', 'Este navegador no admite avisos push.');
+        return;
+      }
+      if (result.status === 'timeout') {
+        showNotice('No ha terminado', MSG_PUSH_TIMEOUT);
+        return;
+      }
+      // El verbo va según la dirección del cambio: decir "no se pudo activar" al
+      // apagar deja al usuario creyendo que no ha pasado nada mientras le
+      // siguen llegando avisos.
+      showNotice('Error', `No se pudo ${next ? 'activar' : 'desactivar'} los avisos: ${result.reason}`);
+    } catch {
+      showNotice('No ha terminado', MSG_PUSH_TIMEOUT);
+    } finally {
+      // En `finally` y no al final de cada rama: una operación que se cuelga sin
+      // rechazar deja el flag en `true` y el Switch inutilizable hasta que se
+      // recargue la página, que es justo lo que pasaba en Android.
+      setWebPushBusy(false);
+
+      // Y el interruptor se relee del navegador en vez de quedarse con la
+      // intención: un alta cortada por tiempo puede llegar tarde y, sin esto, el
+      // Switch marcaría lo contrario de lo que hay.
+      //
+      // La relectura va con número de secuencia porque la consulta puede tardar
+      // (registrar el worker son 10 s) y para entonces el usuario ya ha vuelto a
+      // tocar el interruptor: si su respuesta llegara última, marcaría lo
+      // contrario de lo que acaba de hacer. Solo aplica la última lectura.
+      if (isWeb) {
+        const seq = ++pushReadSeq.current;
+        void getActiveSubscription()
+          .then((subscription) => {
+            if (seq === pushReadSeq.current) setNotificationsEnabledState(Boolean(subscription));
+          })
+          .catch(() => undefined);
+      }
+    }
+  }
+
+  /**
+   * Instala la web como app, si el navegador lo permite con un toque.
+   *
+   * El botón solo aparece cuando el navegador ha lanzado el evento, así que
+   * aquí casi siempre va a funcionar. Pero si la persona lo rechaza, o si el
+   * evento ya se gastó, se le dice cómo se hace a mano en lugar de dejar el
+   * botón ahí para que lo pulse otra vez y no pase nada.
+   */
+  async function handleInstallApp() {
+    const decision = await appInstall.install();
+    // "App instalada" NO se dice aquí. Antes esta línea era `if (installed)`, y
+    // `install()` devuelve un texto: todos los textos son verdad, así que
+    // cualquier resultado —incluido "todavía no", que es lo que pasa cuando no
+    // hay evento— pintaba "App instalada" sin que hubiera icono. Lo único que
+    // puede decir que está instalada es `appinstalled`, que actualiza
+    // `standalone` solo y se ve en la tarjeta por reactividad.
+    if (decision === 'si') {
+      showNotice(
+        'Se está instalando',
+        'El icono aparecerá en tu pantalla de inicio. Si no aparece en un rato, vuelve a instalar desde el menú del navegador.',
+      );
+      return;
+    }
+    if (decision === 'cerrada') {
+      // El navegador enseñó su diálogo y se cerró sin aceptar. Distinguirlo de un
+      // "ahora no" importa: aquí no hay nada pendiente, solo hay que volver a
+      // intentarlo.
+      showNotice(
+        'Instalación cancelada',
+        'Has cerrado el diálogo del navegador sin instalar. Pulsa otra vez y acepta cuando Chrome te lo pregunte.',
+      );
+      return;
+    }
+    if (decision === 'no-permitido') {
+      showNotice(
+        'No se puede pedir desde aquí',
+        'Este navegador no deja pedir la instalación con un botón. Suele estar en su menú, y aquí tienes los pasos.',
+      );
+      return;
+    }
+    // El primer paso ya está escrito como una instrucción entera ("Abre el menú
+    // Compartir, el cuadrado con la flecha hacia arriba."), así que se enseña tal
+    // cual en vez de recortarlo. Si el estado era `instalable` los pasos no se
+    // estaban pintando, pero siguen siendo la salida cuando el botón falla.
+    // Con `?.` porque la única regla de esta pantalla es que no se rompe: esta
+    // tarjeta es opcional y no puede ser el motivo de que Ajustes no abra.
+    const primerPaso = appInstall.view.manualSteps?.[0];
+    showNotice('Se instala desde el navegador', primerPaso ?? SIN_PASOS_DE_INSTALACION);
+  }
+
+  /**
+   * Pide un aviso de prueba a la Edge Function. Es la forma rápida de comprobar
+   * que la suscripción está viva y que el service worker pinta la notificación,
+   * sin esperar a un recordatorio real.
+   */
+  async function handleTestPush() {
+    setTestPushBusy(true);
+    try {
+      // Con `finally` y con tope por la misma razón que el interruptor: un
+      // `fetch` que no responde (portal cautivo, red móvil parada, función en
+      // frío) dejaba `testPushBusy` en `true` y el botón inutilizable hasta
+      // recargar, que era justo el fallo que este bloque viene a cerrar.
+      const result = await withTimeout(sendTestPush(), TEST_PUSH_TIMEOUT_MS, MSG_PUSH_TIMEOUT);
+
+      if (result.ok) {
+        // Con cero entregadas no se puede decir "Aviso enviado": la función
+        // responde 200 con lo que consiguió, y una suscripción inservible hace que
+        // deja el contador a cero sin que haya pasado nada. Medido: el botón anunciaba un
+        // envío que no se había enviado a nadie.
+        if (result.delivered === 0) {
+          showNotice(
+            'No se ha enviado a nadie',
+            'Este navegador no tiene ninguna suscripción que sirva. Si acabas de activar los avisos, vuelve a hacerlo: puede que la suscripción anterior se quedara a medias.',
+          );
+          return;
+        }
+        showNotice('Aviso enviado', `Enviado a ${result.delivered} navegador(es).`);
+        return;
+      }
+      if (result.error === 'demasiado rapido') {
+        const minutes = Math.max(1, Math.ceil((result.retryInSeconds ?? 60) / 60));
+        showNotice('Espera un momento', `Puedes pedir otro aviso en ${minutes} minuto(s).`);
+        return;
+      }
+      showNotice('No se pudo enviar', result.error);
+    } catch {
+      showNotice('No se pudo enviar', MSG_PUSH_TIMEOUT);
+    } finally {
+      setTestPushBusy(false);
+    }
+  }
+
+  /**
+   * Al cerrar sesión se da de baja la suscripción de este navegador. Si no, los
+   * avisos de la cuenta anterior seguirían llegando a un equipo compartido, y el
+   * endpoint (que es una credencial) quedaría vivo para siempre.
+   */
+  async function handleSignOut() {
+    if (isWeb && user) {
+      try {
+        const result = await disableWebPush(user);
+        // El registro sobrevive tanto a un fallo como a un cuelgue con tope, y en
+        // los dos casos este navegador seguiría recibiendo los avisos de la
+        // cuenta que se acaba de cerrar en un equipo compartido. Se avisa en
+        // consola porque la sesión ya se está cerrando.
+        if (result.status === 'failed' || result.status === 'timeout') {
+          console.warn('No se pudo dar de baja la suscripción push', result.reason);
+        }
+      } catch {
+        // Si falla la limpieza, se cierra sesión igualmente: no se bloquea el
+        // cierre por un problema de avisos.
+      }
+    }
+    await signOut();
+  }
+
+  async function handleToggleNotifications(next: boolean) {
+    if (isWeb) {
+      await handleToggleWebPush(next);
+      return;
+    }
+    try {
+      if (next) {
+        const granted = await requestPermissions();
+        if (!granted) {
+          const canAsk = await canRequestPermissionAgain();
+          // Este es el único `Alert.alert` que se queda: necesita botones, y
+          // `window.alert` no los tiene. Solo se ejecuta en nativo.
+          Alert.alert(
+            'Permiso denegado',
+            'Activa las notificaciones desde los ajustes del sistema para recibir avisos.',
+            canAsk
+              ? [{ text: 'OK' }]
+              : [
+                  { text: 'Cancelar', style: 'cancel' },
+                  {
+                    text: 'Abrir ajustes',
+                    onPress: () => void Linking.openSettings().catch(() => undefined),
+                  },
+                ],
+          );
+          return;
+        }
+        await setNotificationsEnabled(true);
+        setNotificationsEnabledState(true);
+        await syncAll(appointments, contacts, birthdayChoice);
+      } else {
+        await setNotificationsEnabled(false);
+        setNotificationsEnabledState(false);
+      }
+    } catch {
+      showNotice('Error', 'No se pudo cambiar el estado de las notificaciones.');
+    }
+  }
+
+  async function handleBirthdayChoice(choice: ReminderChoice) {
+    // Antes de esperar nada, y por lo mismo que el interruptor maestro: una
+    // lectura de `push_preferences` que siguiera en vuelo quedaría invalidada ya,
+    // no cuando termine esta escritura. Si resolviera mientras tanto, escribiría
+    // encima del chip recién marcado y la pantalla acabaría diciendo "sin aviso"
+    // con la fila de la base en "ambos", que es al servidor le sigue avisando.
+    ++birthdayReadSeq.current;
+    try {
+      if (choice !== 'none' && !notificationsEnabled && !isWeb) {
+        const result = await askEnableNotifications(
+          'Activa las notificaciones para recibir avisos de cumpleaños.',
+        );
+        if (result !== 'enabled') return;
+        setNotificationsEnabledState(true);
+      }
+      setBirthdayChoiceState(choice);
+      await setBirthdayChoice(choice);
+      if (isWeb) {
+        // En web quien decide cuándo avisar es el servidor, no el dispositivo.
+        // Solo la preferencia de cumpleaños. `enabled` es el interruptor maestro
+        // y solo lo escriben enableWebPush/disableWebPush: si el selector lo
+        // tocara, elegir "sin aviso" apagaría también las citas, y volver a
+        // tocarlo reencendería un interruptor que el usuario había apagado.
+        await syncPushPreferences(user, { birthdayChoice: choice });
+      } else {
+        await scheduleBirthdays(contacts, choice);
+      }
+    } catch {
+      // el sync por realtime reintentará
+    }
+  }
+
+  function openEditCasa(casa: Casa) {
+    setEditingCasa(casa);
+    setCasaName(casa.name);
+    setError(null);
+    setCreateModal(true);
+  }
+
+  async function handleSaveCasa() {
     const check = validateCasaName(casaName);
     if (!check.valid) {
       setError(check.message);
       return;
     }
     setLoading(true);
-    const err = await createCasa(casaName);
+    const err = editingCasa
+      ? await renameCasa(editingCasa.id, casaName)
+      : await createCasa(casaName);
     setLoading(false);
     if (err) {
       setError(err.message);
@@ -58,7 +541,26 @@ export default function AjustesScreen() {
     }
     setCasaName('');
     setError(null);
+    setEditingCasa(null);
     setCreateModal(false);
+  }
+
+  async function handleDeleteCasa(casa: Casa) {
+    const ok = await confirmDialog(
+      'Eliminar casa',
+      `Se borrarán «${casa.name}» y todos sus datos. Esta acción no se puede deshacer.`,
+      { confirmText: 'Eliminar', destructive: true },
+    );
+    if (!ok) return;
+    const err = await deleteCasa(casa.id);
+    if (err) Alert.alert('Error', err.message);
+  }
+
+  function openAddCasa() {
+    setEditingCasa(null);
+    setCasaName('');
+    setError(null);
+    setCreateModal(true);
   }
 
   async function handleJoin() {
@@ -100,21 +602,17 @@ export default function AjustesScreen() {
     );
   }
 
-  function handleRemoveMember(member: CasaMember) {
+  async function handleRemoveMember(member: CasaMember) {
     if (!currentCasa) return;
     const name = profiles[member.user_id]?.display_name ?? 'Este miembro';
-    Alert.alert('Eliminar miembro', `¿Quitar a ${name} de la casa?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Eliminar',
-        style: 'destructive',
-        onPress: async () => {
-          const err = await removeCasaMember(currentCasa.id, member.user_id);
-          if (err) Alert.alert('Error', err.message);
-          else await refreshMembers();
-        },
-      },
-    ]);
+    const ok = await confirmDialog('Eliminar miembro', `¿Quitar a ${name} de la casa?`, {
+      confirmText: 'Eliminar',
+      destructive: true,
+    });
+    if (!ok) return;
+    const err = await removeCasaMember(currentCasa.id, member.user_id);
+    if (err) Alert.alert('Error', err.message);
+    else await refreshMembers();
   }
 
   return (
@@ -134,7 +632,7 @@ export default function AjustesScreen() {
             <Text style={styles.cardMeta}>{user?.email}</Text>
           </View>
         </View>
-        <Button title="Cerrar sesión" variant="danger" onPress={() => signOut()} />
+        <Button title="Cerrar sesión" variant="danger" onPress={() => void handleSignOut()} />
       </Card>
 
       <Card>
@@ -148,6 +646,118 @@ export default function AjustesScreen() {
         </View>
         <Text style={styles.cardMeta}>Comparte el código para que tu pareja o familia entre.</Text>
       </Card>
+
+      <Card>
+        <Text style={styles.sectionTitle}>Recordatorios</Text>
+        <View style={styles.settingRow}>
+          <View style={styles.settingText}>
+            <Text style={styles.settingLabel}>Notificaciones</Text>
+            <Text style={styles.cardMeta}>
+              {isWeb
+                ? !pushSupported
+                  ? 'Este navegador no admite avisos push'
+                  : pushBlocked
+                    ? 'Permiso denegado: actívalo desde los ajustes del navegador'
+                    : 'Avisos de citas y cumpleaños, aunque cierres la app'
+                : 'Avisos de citas y cumpleaños'}
+            </Text>
+            {/* En iPhone el navegador dice que puede enviar pero no envia en una
+                pestaña normal. El aviso va DESPUÉS de la descripción y no en vez
+                de ella: quien no sabe qué hace el interruptor lo pulses o no, y
+                sin esa frase no entiende por qué se le pide instalar. */}
+            {isWeb && appInstall.pushNotice ? (
+              <Text style={styles.cardMeta}>{appInstall.pushNotice.body}</Text>
+            ) : null}
+          </View>
+          <Switch
+            value={notificationsEnabled}
+            onValueChange={handleToggleNotifications}
+            disabled={prefsLoading || (isWeb && (!pushSupported || webPushBusy))}
+            trackColor={{ false: Palette.border, true: Palette.primary }}
+            thumbColor={Palette.onPrimary}
+            accessibilityLabel="Activar notificaciones"
+          />
+        </View>
+        {isWeb && pushSupported ? (
+          <View style={styles.settingRow}>
+            <View style={styles.settingText}>
+              <Text style={styles.settingLabel}>Aviso de prueba</Text>
+              <Text style={styles.cardMeta}>
+                Comprueba que los avisos llegan con el móvil bloqueado
+              </Text>
+            </View>
+            <Button
+              title={testPushBusy ? 'Enviando…' : 'Enviar'}
+              variant="secondary"
+              disabled={testPushBusy || webPushBusy}
+              onPress={() => void handleTestPush()}
+            />
+          </View>
+        ) : null}
+        <Text style={styles.settingLabel}>Cumpleaños: avisar</Text>
+        <View style={styles.chipRow}>
+          {reminderChoices.map((value) => (
+            <Pressable
+              key={value}
+              style={[styles.chip, birthdayChoice === value && styles.chipSelected]}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: birthdayChoice === value }}
+              onPress={() => handleBirthdayChoice(value)}>
+              <Text style={[styles.chipText, birthdayChoice === value && styles.chipTextSelected]}>
+                {reminderChoiceLabels[value]}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </Card>
+
+      {appInstall.view.visible ? (
+        <Card>
+          <Text style={styles.sectionTitle}>{appInstall.view.title}</Text>
+          <Text style={styles.cardMeta}>{appInstall.view.body}</Text>
+          {/* El botón va delante de los pasos, no en su lugar. Con los dos a la
+              vista la tarjeta no cambia de texto cuando el navegador firma el
+              evento, que es lo que pasaba antes: aparecía el botón y los pasos
+              desaparecían debajo del dedo de la persona. */}
+          {appInstall.view.action ? (
+            <Button
+              title={appInstall.view.action}
+              onPress={() => void handleInstallApp()}
+            />
+          ) : null}
+          {/* Solo cuando la pantalla está a pantalla completa, y en ese caso no hay
+              forma de saber si el icono es la app o un acceso directo. Esto es lo
+              único que abre la salida. */}
+          {appInstall.view.atajoNoEsApp ? (
+            <Text style={styles.stepFallbackTitle}>{appInstall.view.atajoNoEsApp}</Text>
+          ) : null}
+          {appInstall.view.steps.length > 0 ? (
+            <View style={styles.stepList}>
+              {appInstall.view.action ? (
+                <Text style={styles.stepFallbackTitle}>
+                  Si prefieres hacerlo a mano, o el botón no aparece:
+                </Text>
+              ) : null}
+              {appInstall.view.steps.map((paso, index) => (
+                <View key={paso} style={styles.stepRow}>
+                  <View style={[styles.stepNumber, index === 0 && styles.stepNumberFirst]}>
+                    <Text
+                      style={[
+                        styles.stepNumberText,
+                        index === 0 && styles.stepNumberTextFirst,
+                      ]}>
+                      {index + 1}
+                    </Text>
+                  </View>
+                  <Text style={[styles.stepText, index === 0 && styles.stepTextFirst]}>
+                    {paso}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </Card>
+      ) : null}
 
       <Card>
         <Text style={styles.sectionTitle}>Miembros ({members.length})</Text>
@@ -213,10 +823,28 @@ export default function AjustesScreen() {
             {casa.id === currentCasa?.id ? (
               <Ionicons name="checkmark-circle" size={20} color={Palette.success} />
             ) : null}
+            {isOwner ? (
+              <View style={styles.casaRowActions}>
+                <Pressable
+                  onPress={() => openEditCasa(casa)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Editar casa ${casa.name}`}>
+                  <Ionicons name="pencil-outline" size={20} color={Palette.textSecondary} />
+                </Pressable>
+                <Pressable
+                  onPress={() => handleDeleteCasa(casa)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Eliminar casa ${casa.name}`}>
+                  <Ionicons name="trash-outline" size={20} color={Palette.danger} />
+                </Pressable>
+              </View>
+            ) : null}
           </Pressable>
         ))}
         <View style={styles.casaActions}>
-          <Button title="Nueva casa" onPress={() => setCreateModal(true)} />
+          <Button title="Nueva casa" onPress={openAddCasa} />
           <Button title="Unirme por código" variant="secondary" onPress={() => setJoinModal(true)} />
         </View>
       </Card>
@@ -229,7 +857,9 @@ export default function AjustesScreen() {
         onRequestClose={() => setCreateModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
-            <Text style={styles.modalTitle}>Crear nueva casa</Text>
+            <Text style={styles.modalTitle}>
+              {editingCasa ? 'Editar casa' : 'Crear nueva casa'}
+            </Text>
             <TextField
               label="Nombre de la casa"
               value={casaName}
@@ -239,7 +869,11 @@ export default function AjustesScreen() {
             />
             <View style={styles.modalActions}>
               <Button title="Cancelar" variant="secondary" onPress={() => setCreateModal(false)} />
-              <Button title="Crear" onPress={handleCreate} loading={loading} />
+              <Button
+                title={editingCasa ? 'Guardar cambios' : 'Crear'}
+                onPress={handleSaveCasa}
+                loading={loading}
+              />
             </View>
           </View>
         </View>
@@ -319,7 +953,50 @@ const styles = StyleSheet.create({
   },
   casaRowName: { flex: 1, fontSize: 15, color: Palette.textStrong },
   casaRowActive: { fontWeight: '700', color: Palette.primary },
+  casaRowActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   casaActions: { gap: Spacing.two, marginTop: Spacing.two },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.three,
+    marginBottom: Spacing.three,
+  },
+  settingText: { flex: 1, gap: 2 },
+  settingLabel: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  // Los pasos de instalación van numerados, y el primero destacado: es el que
+  // dice dónde tocar, y es lo único que lee quien solo quiere el dato rápido.
+  stepList: { gap: Spacing.two, marginTop: Spacing.two },
+  stepFallbackTitle: { fontSize: 13, color: Palette.textSecondary, fontWeight: '600' },
+  stepRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
+  stepNumber: {
+    width: 24,
+    height: 24,
+    borderRadius: Radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Palette.surfaceAlt,
+  },
+  stepNumberFirst: { backgroundColor: Palette.primarySoft },
+  stepNumberText: { fontSize: 12, fontWeight: '700', color: Palette.textSecondary },
+  stepNumberTextFirst: { color: Palette.accent },
+  stepText: { flex: 1, fontSize: 14, color: Palette.textSecondary, lineHeight: 20 },
+  stepTextFirst: { color: Palette.textStrong, fontWeight: '600' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
+  chip: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    minHeight: 44,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Palette.border,
+    backgroundColor: Palette.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chipSelected: { backgroundColor: Palette.primary, borderColor: Palette.primary },
+  chipText: { fontSize: 13, fontWeight: '600', color: Palette.textSecondary },
+  chipTextSelected: { color: Palette.onPrimary },
   modalOverlay: { flex: 1, backgroundColor: Palette.overlay, justifyContent: 'flex-end' },
   modal: {
     backgroundColor: Palette.surface,

@@ -40,13 +40,14 @@ jest.mock('@/hooks/use-realtime-collection', () => ({
 
 const mockAddExpense = jest.fn();
 const mockAddCategory = jest.fn();
+const mockRemoveExpense = jest.fn();
 jest.mock('@/lib/api', () => ({
   addCategory: (...args: unknown[]) => mockAddCategory(...args),
   addExpense: (...args: unknown[]) => mockAddExpense(...args),
   fetchCategories: jest.fn(),
   fetchExpenses: jest.fn(),
   removeCategory: jest.fn().mockResolvedValue(null),
-  removeExpense: jest.fn().mockResolvedValue(null),
+  removeExpense: (...args: unknown[]) => mockRemoveExpense(...args),
   updateCategory: jest.fn().mockResolvedValue(null),
   updateExpense: jest.fn().mockResolvedValue(null),
 }));
@@ -93,6 +94,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockAddExpense.mockResolvedValue(null);
   mockAddCategory.mockResolvedValue(null);
+  mockRemoveExpense.mockResolvedValue(null);
 });
 
 describe('GastosScreen', () => {
@@ -186,6 +188,29 @@ describe('GastosScreen', () => {
         expect.objectContaining({ casa_id: 'c1', name: 'Bebé', budget: 150 }),
       );
     });
+  });
+
+  it('elimina gasto tras confirmar', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const { getByLabelText } = setup([expense], [category]);
+
+    fireEvent.press(getByLabelText('Eliminar gasto Supermercado'));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Eliminar gasto',
+      expect.any(String),
+      expect.any(Array),
+    );
+    const buttons = alertSpy.mock.calls[0][2] as
+      | { text: string; onPress?: () => void }[]
+      | undefined;
+    const deleteButton = buttons?.find((b) => b.text === 'Eliminar');
+    await deleteButton?.onPress?.();
+
+    await waitFor(() => {
+      expect(mockRemoveExpense).toHaveBeenCalledWith('e1');
+    });
+    alertSpy.mockRestore();
   });
 
   it('muestra aviso de crear casa cuando no hay casa', () => {

@@ -1,0 +1,48 @@
+{
+  "id": "/",
+  "name": "MiCasa",
+  "short_name": "MiCasa",
+  "description": "Gestiona tu hogar: casas, inventario, citas, cumpleaños, gastos y listas.",
+  "lang": "es",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "orientation": "portrait",
+  "theme_color": "#0B1220",
+  "background_color": "#0B1220",
+  "categories": ["productivity", "lifestyle"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Citas",
+      "short_name": "Citas",
+      "url": "/citas"
+    },
+    {
+      "name": "Gastos",
+      "short_name": "Gastos",
+      "url": "/gastos"
+    }
+  ]
+}

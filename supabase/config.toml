@@ -1,0 +1,13 @@
+# Configuración local de Supabase (CLI). Lo mínimo imprescindible: el proyecto
+# usa SQL y Edge Functions, no auth ni storage gestionados por la CLI.
+#
+# OJO: send-email NO aparece aquí a propósito. En producción está desplegada con
+# verify_jwt = true y su único control es esa puerta de la plataforma: no valida
+# credenciales por su cuenta. Declararla aquí con verify_jwt = false la
+# convertiría en un relay de correo abierto para cualquiera con la URL.
+project_id = "micasa"
+
+[functions.send-web-push]
+# El dispatcher lo llama pg_cron con el secreto compartido de Supabase Vault, no
+# con el JWT de un usuario. El secreto se comprueba dentro de la función.
+verify_jwt = false

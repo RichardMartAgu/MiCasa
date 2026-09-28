@@ -43,54 +43,60 @@ export async function getOrCreateBirthdayCalendar(): Promise<Calendar.ExpoCalend
 }
 
 export async function syncBirthdays(contacts: Contact[]): Promise<SyncResult> {
-  const granted = await requestCalendarPermissions();
-  if (!granted) return { synced: 0, errors: 0 };
+  try {
+    const granted = await requestCalendarPermissions();
+    if (!granted) return { synced: 0, errors: 0 };
 
-  const calendar = await getOrCreateBirthdayCalendar();
-  if (!calendar) return { synced: 0, errors: 0 };
+    const calendar = await getOrCreateBirthdayCalendar();
+    if (!calendar) return { synced: 0, errors: 0 };
 
-  let synced = 0;
-  let errors = 0;
+    let synced = 0;
+    let errors = 0;
 
-  for (const contact of contacts) {
-    const birthDate = safeDate(contact.birth_date);
-    if (birthDate === null) continue;
+    for (const contact of contacts) {
+      const birthDate = safeDate(contact.birth_date);
+      if (birthDate === null) continue;
 
-    try {
-      const title = `🎂 ${contact.name}`;
-      const startDate = new Date(birthDate.getFullYear(), birthDate.getMonth(), birthDate.getDate(), 9, 0);
-      const endDate = new Date(birthDate.getFullYear(), birthDate.getMonth(), birthDate.getDate(), 10, 0);
-      const notes = contact.relationship ? `Parentesco: ${contact.relationship}` : '';
+      try {
+        const title = `🎂 ${contact.name}`;
+        const startDate = new Date(birthDate.getFullYear(), birthDate.getMonth(), birthDate.getDate(), 9, 0);
+        const endDate = new Date(birthDate.getFullYear(), birthDate.getMonth(), birthDate.getDate(), 10, 0);
+        const notes = contact.relationship ? `Parentesco: ${contact.relationship}` : '';
 
-      const existing = await findBirthdayEvent(title, calendar.id);
-      if (existing) {
-        await existing.update({
-          title,
-          startDate,
-          endDate,
-          allDay: true,
-          notes,
-          alarms: [{ relativeOffset: 0 }],
-          recurrenceRule: yearlyRule(),
-        });
-      } else {
-        await calendar.createEvent({
-          title,
-          startDate,
-          endDate,
-          allDay: true,
-          notes,
-          alarms: [{ relativeOffset: 0 }],
-          recurrenceRule: yearlyRule(),
-        });
+        const existing = await findBirthdayEvent(title, calendar.id);
+        if (existing) {
+          await existing.update({
+            title,
+            startDate,
+            endDate,
+            allDay: true,
+            notes,
+            alarms: [{ relativeOffset: 0 }],
+            recurrenceRule: yearlyRule(),
+          });
+        } else {
+          await calendar.createEvent({
+            title,
+            startDate,
+            endDate,
+            allDay: true,
+            notes,
+            alarms: [{ relativeOffset: 0 }],
+            recurrenceRule: yearlyRule(),
+          });
+        }
+        synced++;
+      } catch (e) {
+        console.warn('syncBirthdays: fallo al crear evento de cumpleaños', e);
+        errors++;
       }
-      synced++;
-    } catch {
-      errors++;
     }
-  }
 
-  return { synced, errors };
+    return { synced, errors };
+  } catch (e) {
+    console.warn('syncBirthdays: fallo al acceder al calendario', e);
+    return { synced: 0, errors: 0 };
+  }
 }
 
 async function findBirthdayEvent(

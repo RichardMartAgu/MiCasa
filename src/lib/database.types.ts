@@ -19,6 +19,7 @@ export type Database = {
           location: string | null
           person: string | null
           reminder_at: string | null
+          reminder_choice: string
           starts_at: string
           title: string
           user_id: string | null
@@ -32,6 +33,7 @@ export type Database = {
           location?: string | null
           person?: string | null
           reminder_at?: string | null
+          reminder_choice?: string
           starts_at: string
           title: string
           user_id?: string | null
@@ -45,9 +47,37 @@ export type Database = {
           location?: string | null
           person?: string | null
           reminder_at?: string | null
+          reminder_choice?: string
           starts_at?: string
           title?: string
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      appointment_kinds: {
+        Row: {
+          casa_id: string
+          created_at: string
+          icon: string
+          id: string
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          casa_id: string
+          created_at?: string
+          icon?: string
+          id?: string
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          casa_id?: string
+          created_at?: string
+          icon?: string
+          id?: string
+          name?: string
+          sort_order?: number
         }
         Relationships: []
       }
@@ -213,8 +243,96 @@ export type Database = {
         }
         Relationships: []
       }
+      push_log: {
+        Row: {
+          dedupe_key: string
+          id: number
+          sent_at: string
+          user_id: string
+        }
+        Insert: {
+          dedupe_key: string
+          id?: never
+          sent_at?: string
+          user_id: string
+        }
+        Update: {
+          dedupe_key?: string
+          id?: never
+          sent_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      push_preferences: {
+        Row: {
+          birthday_choice: string
+          enabled: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          birthday_choice?: string
+          enabled?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          birthday_choice?: string
+          enabled?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      push_subscriptions: {
+        Row: {
+          active: boolean
+          auth: string
+          created_at: string
+          endpoint: string
+          failure_count: number
+          id: string
+          last_success_at: string | null
+          p256dh: string
+          timezone: string
+          updated_at: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          active?: boolean
+          auth: string
+          created_at?: string
+          endpoint: string
+          failure_count?: number
+          id?: string
+          last_success_at?: string | null
+          p256dh: string
+          timezone?: string
+          updated_at?: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          active?: boolean
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          failure_count?: number
+          id?: string
+          last_success_at?: string | null
+          p256dh?: string
+          timezone?: string
+          updated_at?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       shopping_items: {
         Row: {
+          casa_id: string
           created_at: string
           done: boolean
           id: string
@@ -224,6 +342,7 @@ export type Database = {
           unit: string | null
         }
         Insert: {
+          casa_id: string
           created_at?: string
           done?: boolean
           id?: string
@@ -233,6 +352,7 @@ export type Database = {
           unit?: string | null
         }
         Update: {
+          casa_id?: string
           created_at?: string
           done?: boolean
           id?: string
