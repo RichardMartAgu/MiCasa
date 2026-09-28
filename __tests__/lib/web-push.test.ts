@@ -9,8 +9,6 @@ import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 import { SUBSCRIBE_FAILURE_MESSAGES } from '@/lib/push-failures';
-import { reminderChoices } from '@/lib/notification-schedule';
-import { PREFS_READ_TIMEOUT_MS } from '@/lib/web-push-timeouts';
 import {
   ACTIVATION_TIMEOUT_MS,
   CLAVES_PASO_MS,
@@ -23,10 +21,8 @@ import {
   disableWebPush,
   enableWebPush,
   getActiveSubscription,
-  getStoredBirthdayChoice,
   PERMISSION_TIMEOUT_MS,
   sendTestPush,
-  syncPushPreferences,
   toSubscriptionRecord,
   urlBase64ToUint8Array,
   VAPID_PUBLIC_KEY,
@@ -1159,133 +1155,6 @@ describe('disableWebPush: la baja tiene que borrar de verdad', () => {
 
     expect(result).toEqual({ status: 'unsupported' });
     expect(db.upsert).not.toHaveBeenCalled();
-  });
-});
-
-describe('getStoredBirthdayChoice: leer lo que se guardó', () => {
-  // La fila de `push_preferences` se escribía bien y no la leía nadie: el
-  // selector de Ajustes arrancaba siempre en "sin aviso" en web. Estos tests
-  // cubren los seis finales que puede tener esa lectura, incluido el que la deja
-  // inservible sin que nadie lo note.
-  const user = { id: 'user-1' } as unknown as Parameters<typeof getStoredBirthdayChoice>[0];
-
-  beforeEach(() => {
-    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-    jest.useRealTimers();
-  });
-
-  /** Lo justo de Supabase para leer la preferencia: `select` → `eq` → `maybeSingle`. */
-  function stubPrefs(
-    result:
-      | { data: { birthday_choice: string } | null; error: { message: string } | null }
-      // Una petición que no responde nunca, que es lo que corta el tope.
-      | 'colgado',
-  ) {
-    const maybeSingle = jest.fn(() =>
-      result === 'colgado'
-        ? new Promise<never>(() => undefined)
-        : Promise.resolve(result),
-    );
-    const eq = jest.fn(() => ({ maybeSingle }));
-    const select = jest.fn(() => ({ eq }));
-    const from = jest.fn((table: string) =>
-      table === 'push_preferences' ? { select } : { upsert: jest.fn() },
-    );
-    (supabase.from as jest.Mock).mockImplementation(from);
-    return { from, select, eq, maybeSingle };
-  }
-
-  it('devuelve lo que hay en la fila, filtrando por usuario', async () => {
-    const db = stubPrefs({ data: { birthday_choice: 'day-before' }, error: null });
-
-    await expect(getStoredBirthdayChoice(user)).resolves.toBe('day-before');
-    // El filtro va aunque la RLS ya lo imponga: documenta que solo se lee la fila
-    // propia y no depende de que esa política siga siendo la de `auth.uid()`.
-    expect(db.select).toHaveBeenCalledWith('birthday_choice');
-    expect(db.eq).toHaveBeenCalledWith('user_id', 'user-1');
-  });
-
-  it('acepta los cuatro valores de la lista compartida, no una copia', async () => {
-    // Si alguien añade un valor a `reminderChoices` y esta lectura valida contra
-    // una lista propia, el selector no podría mostrarlo: se quedaría en "sin
-    // aviso" con el valor escrito y guardado. El bucle ata las dos listas.
-    for (const value of reminderChoices) {
-      stubPrefs({ data: { birthday_choice: value }, error: null });
-      await expect(getStoredBirthdayChoice(user)).resolves.toBe(value);
-    }
-  });
-
-  it('sin fila devuelve sin aviso', async () => {
-    stubPrefs({ data: null, error: null });
-
-    await expect(getStoredBirthdayChoice(user)).resolves.toBe('none');
-  });
-
-  it('un valor que no es de la lista cae a sin aviso', async () => {
-    // La columna es `text` con un `check` en la base, pero el cliente no puede
-    // fiarse de que la fila la escribiera esta versión del código. Un valor
-    // inesperado tiene que llegar al selector como algo elegible, no como texto
-    // suelto que no casa con ningún chip.
-    for (const basura of ['', 'cada-dos-dias', 'Both', 'null']) {
-      stubPrefs({ data: { birthday_choice: basura }, error: null });
-      await expect(getStoredBirthdayChoice(user)).resolves.toBe('none');
-    }
-  });
-
-  it('sin sesión no pregunta nada a la base', async () => {
-    const db = stubPrefs({ data: { birthday_choice: 'both' }, error: null });
-
-    await expect(getStoredBirthdayChoice(null)).resolves.toBe('none');
-    expect(db.from).not.toHaveBeenCalled();
-  });
-
-  it('un error de la base no se propaga y tampoco se traga en silencio', async () => {
-    stubPrefs({ data: null, error: { message: 'fallo de red' } });
-
-    // No rechaza: Ajustes no tiene dónde mostrar un motivo, y un rechazo ahí
-    // dejaba el interruptor deshabilitado hasta recargar la página.
-    await expect(getStoredBirthdayChoice(user)).resolves.toBe('none');
-    // El motivo sí se anota. Un "sin aviso" silencioso es justo lo que hace
-    // invisible que la lectura falle, que es como nació este bug.
-    expect(console.warn).toHaveBeenCalledWith(
-      'No se pudo leer la preferencia de cumpleaños guardada',
-      'fallo de red',
-    );
-  });
-
-  it('una lectura que no responde se corta con el tope', async () => {
-    // Sin este tope, Ajustes esperaba la respuesta antes de habilitar el
-    // interruptor y un TCP colgado lo dejaba bloqueado hasta recargar.
-    jest.useFakeTimers();
-    stubPrefs('colgado');
-
-    const promise = getStoredBirthdayChoice(user);
-    await jest.advanceTimersByTimeAsync(PREFS_READ_TIMEOUT_MS);
-
-    await expect(promise).resolves.toBe('none');
-    expect(console.warn).toHaveBeenCalledWith(
-      'No se pudo leer la preferencia de cumpleaños guardada',
-      expect.stringContaining('no ha terminado a tiempo'),
-    );
-  });
-
-  it('lee la misma columna que escribe syncPushPreferences', async () => {
-    // El bug era un par desparejo: una escritura sin lectura. Este test ata las
-    // dos mitades, que es lo que las dejó separarse sin que nada se enterara.
-    const upsert = jest.fn(async () => ({ error: null }));
-    (supabase.from as jest.Mock).mockImplementation((table: string) =>
-      table === 'push_preferences' ? { upsert } : {},
-    );
-    await syncPushPreferences(user, { birthdayChoice: 'same-day' });
-
-    expect(upsert).toHaveBeenCalledWith(
-      { user_id: 'user-1', birthday_choice: 'same-day' },
-      { onConflict: 'user_id' },
-    );
   });
 });
 

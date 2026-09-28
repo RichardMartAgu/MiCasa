@@ -44,17 +44,5 @@ export const CLAVES_TIMEOUT_MS = 30_000;
 /** Pausa entre relecturas durante esa espera. */
 export const CLAVES_PASO_MS = 3_000;
 
-/**
- * Lectura de la preferencia de cumpleaños que vive en `push_preferences`.
- *
- * Es una fila y una columna, así que por peso de operación no le haría falta
- * ningún tope; lo tiene por lo que cuesta en pantalla. Ajustes espera esta
- * lectura antes de habilitar el interruptor, así que una petición que no recibe
- * respuesta lo dejaría bloqueado hasta recargar la página: exactamente el fallo
- * que este módulo promete no dejar. Cinco segundos dan de sobra para un viaje de
- * ida y vuelta en red móvil; a partir de ahí lo que hay que arreglar es la red.
- */
-export const PREFS_READ_TIMEOUT_MS = 5_000;
-
 /** Tope global de la pantalla de Ajustes: la suma de los dos con margen. */
 export const WEB_PUSH_TIMEOUT_MS = PERMISSION_TIMEOUT_MS + ACTIVATION_TIMEOUT_MS + 10_000;

@@ -26,7 +26,7 @@ import { Platform } from 'react-native';
 
 import type { User } from '@supabase/supabase-js';
 
-import { reminderChoices, type ReminderChoice } from './notification-schedule';
+import type { ReminderChoice } from './notification-schedule';
 import { supabase } from './supabase';
 import { isTimeout, withTimeout, TimeoutError } from './with-timeout';
 import {
@@ -39,7 +39,6 @@ import {
   CLAVES_PASO_MS,
   CLAVES_TIMEOUT_MS,
   PERMISSION_TIMEOUT_MS,
-  PREFS_READ_TIMEOUT_MS,
   SW_READY_TIMEOUT_MS,
   WEB_PUSH_TIMEOUT_MS,
 } from '@/lib/web-push-timeouts';
@@ -913,56 +912,6 @@ export async function syncPushPreferences(
     .upsert(payload, { onConflict: 'user_id' });
 
   if (error) throw new Error(error.message);
-}
-
-/**
- * La preferencia de cumpleaños tal y como está guardada, que es el otro lado de
- * `syncPushPreferences` y la fila que lee la Edge Function para decidir a quién
- * avisa con la app cerrada.
- *
- * En nativo no hace falta: ahí la preferencia vive en AsyncStorage y la lee
- * `getBirthdayChoice`. El hueco era que en web solo había escritura, y por eso la
- * fila se guardaba bien y nadie la leía nunca: el selector de Ajustes arrancaba
- * siempre en "sin aviso" por mucho que estuviera guardado.
- */
-export async function getStoredBirthdayChoice(user: User | null): Promise<ReminderChoice> {
-  if (!user) return 'none';
-
-  let value: unknown = null;
-  try {
-    // `Promise.resolve` y no el builder suelto: el tope de `withTimeout` espera
-    // una promesa, y el constructor de la consulta de supabase es un "thenable".
-    const { data, error } = await withTimeout(
-      Promise.resolve(
-        supabase
-          .from('push_preferences')
-          .select('birthday_choice')
-          .eq('user_id', user.id)
-          .maybeSingle(),
-      ),
-      PREFS_READ_TIMEOUT_MS,
-      'la lectura de la preferencia de cumpleaños no ha terminado a tiempo',
-    );
-    if (error) throw new Error(error.message);
-    value = data?.birthday_choice ?? null;
-  } catch (error) {
-    // Un fallo aquí cae a 'none' en vez de propagarse, por tres motivos que van
-    // juntos: quien llama no tiene dónde mostrar un motivo (el selector solo sabe
-    // pintar chips), un rechazo sin capturar ahí dejaba el interruptor de Ajustes
-    // deshabilitado hasta recargar, y sobre todo esta lectura no decide nada:
-    // no escribe, así que la fila de la base sigue siendo la buena y el servidor
-    // sigue avisando como la persona lo dejó. Mostrar el valor guardado cuando
-    // se puede y el conservador cuando no es preferible a dejar la pantalla
-    // inservible. El motivo se anota en consola, que es donde se puede mirar.
-    console.warn('No se pudo leer la preferencia de cumpleaños guardada', errorText(error));
-    return 'none';
-  }
-
-  // Mismo criterio de validez que `isValidChoice` de la Edge Function, y con la
-  // lista compartida en vez de repetida: los cuatro valores de `reminderChoices`
-  // y nada más. La columna es `text` con un `check` en la base, pero el cliente
-  // no puede dar por hecho que la fila la escribió esta versión del código.
-  return reminderChoices.includes(value as ReminderChoice) ? (value as ReminderChoice) : 'none';
 }
 
 function errorText(error: unknown): string {
