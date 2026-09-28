@@ -11,11 +11,16 @@ un comando de `gh`, que quedó en el historial de la conversación. **Un token
 filtrado se da por quemado aunque el repositorio sea privado.**
 
 - Está pendiente desde entonces y en ningún momento se rotó.
+- **Vive en `~/.bashrc`, en claro** (`GITHUB_PAT`, línea ~156), junto al
+  `VERCEL_TOKEN` (~159). Se encontró el 2026-09-28 buscando dónde estaba el token de
+  Vercel: el `grep` que lo sacó lo imprimió en el log de esa sesión, así que ha vuelto a
+  filtrarse por el mismo motivo. En la máquina, además, lo lee cualquier usuario.
 - **No lo puede hacer el agente**: rotarlo exige crear un token nuevo en GitHub y
   revocar el viejo desde la cuenta del usuario. Anything que diga "hecho" sin que el
   token nuevo exista en GitHub es mentira.
 - Al rotarlo, comprobar que nada más del entorno usa el viejo: Vercel, CI
-  (`.github/workflows`), y el propio `gh auth`.
+  (`.github/workflows`), y el propio `gh auth`. Y sacarlo de `~/.bashrc`: en ese fichero
+  las claves en claro sobreviven a todo, y a `chmod 600` no las protege nadie más.
 
 ---
 
