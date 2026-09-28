@@ -32,7 +32,14 @@ Skill de git **específica de este repositorio**. Las skills globales (`git-comm
    git branch -d <rama>
    ```
 
-`develop` y `master` no se escriben directamente. Ni hotfixes ni cambios de documentación.
+`master` no se escribe nunca. `develop` tampoco, **salvo el cambio pequeño**: un commit
+directo en el directorio principal cuando es solo documentación (`*.md`), sin reescribir
+secciones enteras, de un archivo o menos de ~20 líneas, y sin tocar código, configuración,
+dependencias, migraciones ni secrets. Ni rama, ni worktree, ni PR, ni auditorías: no hay
+código que auditar.
+
+Si dudas de si algo entra en la excepción, no entra. El coste de equivocarse es un PR de
+más; el de hacerlo al revés es código sin auditar en `develop`.
 
 ## Comandos que aquí han roto trabajo
 
