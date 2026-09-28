@@ -685,30 +685,28 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
     'lectura de la suscripción',
   ).catch(() => null);
 
-  // Si la suscripción existe, comprobar versión de clave VAPID guardada en localStorage.
-  // Si cambió, dar de baja la antigua y forzar re-suscripción.
-  let usable = existing ? toSubscriptionRecord(existing) : null;
+  // Comprobar versión de clave VAPID ANTES de decidir si la suscripción es usable.
+  // Si cambió la versión, forzar re-suscripción aunque la suscripción antigua tenga claves
+  // (esas claves serían para el VAPID antiguo y no servirían).
+  let forceResubscribe = false;
   if (existing) {
     try {
       const storedVersion = localStorage.getItem('micasa:vapid-key-version');
       if (storedVersion && storedVersion !== VAPID_KEY_VERSION) {
         console.log('Clave VAPID cambiada (versión guardada:', storedVersion, 'actual:', VAPID_KEY_VERSION, '), forzando re-suscripción');
-        await darDeBaja(existing);
-        usable = null;
+        forceResubscribe = true;
       }
       // Guardar versión actual para futuras comparaciones
       localStorage.setItem('micasa:vapid-key-version', VAPID_KEY_VERSION);
     } catch {
       // localStorage no disponible (modo privado, etc.): no bloquear
     }
-    if (!usable) {
-      // Con `try/catch` y no solo `.catch()`: si el navegador no permite darla de
-      // baja, se sigue adelante con la nueva, que es lo que desbloquea al usuario.
-      // Con tope: `unsubscribe()` puede hablar con el push service. Este es el
-      // camino de recuperación del alta, así que colgarse aquí devolvía al usuario
-      // al mismo callejón sin salida que este bloque vino a cerrar.
-      await darDeBaja(existing);
-    }
+  }
+
+  // Una suscripción sin `p256dh` o sin `auth` no sirve para enviar nada.
+  const usable = existing && !forceResubscribe ? toSubscriptionRecord(existing) : null;
+  if (existing && (!usable || forceResubscribe)) {
+    await darDeBaja(existing);
   }
 
   // El `subscribe()` es donde el navegador dice que no, y lo dice en inglés y sin
