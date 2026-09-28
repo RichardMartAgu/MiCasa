@@ -121,7 +121,7 @@ const LECTURA_TIMEOUT_MS = 1500;
  * se compararon mal dos cadenas y casi se reporto un bug que no existia.
  */
 export const VAPID_PUBLIC_KEY =
-  'BHJV5jOQoaXKdrI90Z7O-7tYh29DANfUB7jSMS8w3M_szTkpfCXaQx7uzoW5IixMuaCHmKJeVvW4Cz_oHaUpmrg';
+  'FqoIhAVOiKG2Zvu30eE9FVl8zE-haiVFoAIyjKiW7XvNIr3hkPQoFns159oRmJH71iONOS29u-MTQjOp3NkYn3_lj4IkQmo-6EB3iJnvqOkchb2GHlybTFI5Wp0c4zysSqvDqa1eylPG--Bi4ejjALRJwWlRWDg';
 
 /** Rutas internas a las que puede llevar un aviso. Espejo de sw-src.js. */
 export const ALLOWED_PUSH_ROUTES = ['/citas', '/cumpleanos'] as const;
