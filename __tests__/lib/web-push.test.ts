@@ -59,30 +59,38 @@ describe('detectTimeZone', () => {
 
 describe('toSubscriptionRecord', () => {
   it('normaliza una suscripción completa', () => {
+    const mockGet = jest.fn((name: 'p256dh' | 'auth') => {
+      if (name === 'p256dh') return new TextEncoder().encode('key-p256dh').buffer;
+      if (name === 'auth') return new TextEncoder().encode('key-auth').buffer;
+      return null;
+    });
     const record = toSubscriptionRecord({
       endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
-      keys: { p256dh: 'key-p256dh', auth: 'key-auth' },
+      keys: { get: mockGet },
     });
 
     expect(record).not.toBeNull();
     expect(record?.endpoint).toBe('https://fcm.googleapis.com/fcm/send/abc');
-    expect(record?.p256dh).toBe('key-p256dh');
-    expect(record?.auth).toBe('key-auth');
+    expect(record?.p256dh).toBe('a2V5LXAyNTZkaA==');
+    expect(record?.auth).toBe('a2V5LWF1dGg=');
     expect(record?.timezone).toBe(detectTimeZone());
   });
 
   it('devuelve null si falta el endpoint', () => {
+    const mockGet = jest.fn(() => new TextEncoder().encode('a').buffer);
     expect(
-      toSubscriptionRecord({ endpoint: null, keys: { p256dh: 'a', auth: 'b' } }),
+      toSubscriptionRecord({ endpoint: null, keys: { get: mockGet } }),
     ).toBeNull();
   });
 
   it('devuelve null si falta alguna de las claves', () => {
+    const mockGetMissing = jest.fn((name: 'p256dh' | 'auth') => (name === 'p256dh' ? new TextEncoder().encode('a').buffer : null));
     expect(
-      toSubscriptionRecord({ endpoint: 'https://x', keys: { p256dh: 'a', auth: null } }),
+      toSubscriptionRecord({ endpoint: 'https://x', keys: { get: mockGetMissing } }),
     ).toBeNull();
+    const mockGetMissingAuth = jest.fn((name: 'p256dh' | 'auth') => (name === 'auth' ? new TextEncoder().encode('b').buffer : null));
     expect(
-      toSubscriptionRecord({ endpoint: 'https://x', keys: { p256dh: null, auth: 'b' } }),
+      toSubscriptionRecord({ endpoint: 'https://x', keys: { get: mockGetMissingAuth } }),
     ).toBeNull();
   });
 
@@ -800,10 +808,13 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     // cifrado y la de autenticación, y esas dos tienen causas distintas. Dos
     // arreglos seguidos salieron de suponer mal cuál era.
     expect(incompleteReason({ endpoint: 'https://e', keys: null })).toBe('sin-claves');
-    expect(incompleteReason({ endpoint: 'https://e', keys: { p256dh: 'p', auth: null } })).toBe('sin-auth');
-    expect(incompleteReason({ endpoint: 'https://e', keys: { p256dh: null, auth: 'a' } })).toBe('sin-p256dh');
-    expect(incompleteReason({ endpoint: null, keys: { p256dh: 'p', auth: 'a' } })).toBe('sin-endpoint');
-    expect(incompleteReason({ endpoint: 'https://e', keys: { p256dh: 'p', auth: 'a' } })).toBeNull();
+    const mockGetAuthMissing = jest.fn((name: 'p256dh' | 'auth') => (name === 'p256dh' ? new TextEncoder().encode('p').buffer : null));
+    expect(incompleteReason({ endpoint: 'https://e', keys: { get: mockGetAuthMissing } })).toBe('sin-auth');
+    const mockGetP256dhMissing = jest.fn((name: 'p256dh' | 'auth') => (name === 'auth' ? new TextEncoder().encode('a').buffer : null));
+    expect(incompleteReason({ endpoint: 'https://e', keys: { get: mockGetP256dhMissing } })).toBe('sin-p256dh');
+    expect(incompleteReason({ endpoint: null, keys: { get: () => new TextEncoder().encode('p').buffer } })).toBe('sin-endpoint');
+    const mockGetAll = jest.fn((name: 'p256dh' | 'auth') => new TextEncoder().encode(name === 'p256dh' ? 'p' : 'a').buffer);
+    expect(incompleteReason({ endpoint: 'https://e', keys: { get: mockGetAll } })).toBeNull();
   });
 
   it('cada motivo tiene un mensaje distinto y accionable', () => {

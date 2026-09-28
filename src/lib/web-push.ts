@@ -175,7 +175,8 @@ export type IncompleteReason = 'sin-endpoint' | 'sin-p256dh' | 'sin-auth' | 'sin
 
 export interface SubscriptionShape {
   endpoint?: string | null;
-  keys?: { p256dh?: string | null; auth?: string | null } | null;
+  keys?: { get: (name: 'p256dh' | 'auth') => ArrayBuffer | null } | null;
+  getKey?: (name: 'p256dh' | 'auth') => ArrayBuffer | null;
 }
 
 /**
@@ -191,8 +192,8 @@ export function incompleteReason(subscription: SubscriptionShape): IncompleteRea
   if (!subscription.endpoint) return 'sin-endpoint';
   const keys = subscription.keys ?? null;
   if (!keys) return 'sin-claves';
-  if (!keys.p256dh) return 'sin-p256dh';
-  if (!keys.auth) return 'sin-auth';
+  if (!keys.get('p256dh')) return 'sin-p256dh';
+  if (!keys.get('auth')) return 'sin-auth';
   return null;
 }
 
