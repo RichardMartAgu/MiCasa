@@ -1,4 +1,24 @@
 
+## Pendientes
+
+Viven aquí y no en el chat, que es donde se pierden. Lo que sigue se confirmó después
+de cerrar los bloques; nada de esto es hipótesis.
+
+### 1. Rotar `GITHUB_PAT` — **lo primero, y es del usuario**
+
+El token se filtró en un log durante una sesión anterior: apareció en la salida de
+un comando de `gh`, que quedó en el historial de la conversación. **Un token
+filtrado se da por quemado aunque el repositorio sea privado.**
+
+- Está pendiente desde entonces y en ningún momento se rotó.
+- **No lo puede hacer el agente**: rotarlo exige crear un token nuevo en GitHub y
+  revocar el viejo desde la cuenta del usuario. Anything que diga "hecho" sin que el
+  token nuevo exista en GitHub es mentira.
+- Al rotarlo, comprobar que nada más del entorno usa el viejo: Vercel, CI
+  (`.github/workflows`), y el propio `gh auth`.
+
+---
+
 ## Sesión actual — 2026-09-26 (exigir worker activo y Edge Function desplegada)
 
 
