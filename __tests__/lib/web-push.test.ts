@@ -105,7 +105,7 @@ describe('presupuestos de tiempo de la activación', () => {
   // uno demasiado largo deja el interruptor muerto. Estos números son el
   // acuerdo, así que se fijan aquí para que un cambio accidental se note.
   it('el diálogo de permisos tiene un techo holgado, porque espera a una persona', () => {
-    expect(PERMISSION_TIMEOUT_MS).toBe(60_000);
+    expect(PERMISSION_TIMEOUT_MS).toBe(65_000);
     expect(PERMISSION_TIMEOUT_MS).toBeGreaterThan(ACTIVATION_TIMEOUT_MS);
   });
 
@@ -117,7 +117,7 @@ describe('presupuestos de tiempo de la activación', () => {
   });
 
   it('el tope global de Ajustes es la suma de los dos con margen', () => {
-    expect(WEB_PUSH_TIMEOUT_MS).toBe(130_000);
+    expect(WEB_PUSH_TIMEOUT_MS).toBe(135_000);
     expect(WEB_PUSH_TIMEOUT_MS).toBeGreaterThan(PERMISSION_TIMEOUT_MS + ACTIVATION_TIMEOUT_MS);
   });
 
