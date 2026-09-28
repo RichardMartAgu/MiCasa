@@ -194,7 +194,7 @@ describe('el estado real del navegador manda sobre la interfaz', () => {
     // endpoint, y por eso daba igual que la suscripción estuviera incompleta: los
     // tests daban "hay suscripción" con un objeto que no sirve para enviar nada.
     const getSubscription = jest.fn(async () =>
-      subscribed ? { endpoint: 'https://push.test/e', keys: { p256dh: 'p', auth: 'a' } } : null,
+      subscribed ? { endpoint: 'https://push.test/e', keys: { get: (name: 'p256dh' | 'auth') => name === 'p256dh' ? new TextEncoder().encode('p').buffer : new TextEncoder().encode('a').buffer } } : null,
     );
     // Sin worker activo, `installing` tiene que pasar a `activated` a través de
     // `statechange`, que es por donde `waitForActivation` escucha. Con
@@ -377,7 +377,7 @@ describe('una suscripción sin claves no cuenta como activa', () => {
     // simplemente deixando de devolver nada nunca.
     pushManager.getSubscription.mockResolvedValue({
       endpoint: 'https://fcm.googleapis.com/fcm/send/buena',
-      keys: { p256dh: 'p', auth: 'a' },
+      keys: { get: (name: 'p256dh' | 'auth') => name === 'p256dh' ? new TextEncoder().encode('p').buffer : new TextEncoder().encode('a').buffer },
     });
 
     await expect(getActiveSubscription()).resolves.toMatchObject({
@@ -465,7 +465,7 @@ describe('una suscripción sin claves no cuenta como activa', () => {
     // siguiendo por debajo: exactamente lo que la cabecera del módulo promete que
     // no pasa.
     stubDb();
-    pushManager.subscribe.mockResolvedValue({ endpoint: 'https://push.test/e', keys: { p256dh: 'p', auth: 'a' } });
+    pushManager.subscribe.mockResolvedValue({ endpoint: 'https://push.test/e', keys: { get: (name: 'p256dh' | 'auth') => name === 'p256dh' ? new TextEncoder().encode('p').buffer : new TextEncoder().encode('a').buffer } });
     (global.navigator as unknown as { serviceWorker: { getRegistration: jest.Mock } }).serviceWorker.getRegistration =
       jest.fn(() => new Promise(() => {
         /* nunca resuelve */
@@ -605,7 +605,7 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
   ) {
     const subscription = {
       endpoint: 'https://push.test/e',
-      keys: { p256dh: 'p', auth: 'a' },
+      keys: { get: (name: 'p256dh' | 'auth') => name === 'p256dh' ? new TextEncoder().encode('p').buffer : new TextEncoder().encode('a').buffer },
       unsubscribe: jest.fn(async () => true),
     };
     const pushManager = {
@@ -736,7 +736,7 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     // Reutilizarla sin comprobar es justo lo que lo producía.
     const db = stubSupabase();
     const { pushManager } = stubPush({
-      existing: { endpoint: 'https://push.test/vieja', keys: { p256dh: null, auth: null } },
+      existing: { endpoint: 'https://push.test/vieja', keys: { get: () => null } },
     });
 
     const result = await enableWebPush(user);
@@ -754,7 +754,7 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     // que funciona (eso dejaría al navegador sin nada durante un momento).
     const db = stubSupabase();
     const { pushManager } = stubPush({
-      existing: { endpoint: 'https://push.test/buena', keys: { p256dh: 'p', auth: 'a' }, unsubscribe: jest.fn() },
+      existing: { endpoint: 'https://push.test/buena', keys: { get: (name: 'p256dh' | 'auth') => name === 'p256dh' ? new TextEncoder().encode('p').buffer : new TextEncoder().encode('a').buffer }, unsubscribe: jest.fn() },
     });
 
     const result = await enableWebPush(user);
@@ -831,7 +831,7 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     // de cifrado no tienen nada que ver con el diagnóstico.
     const db = stubSupabase();
     stubPush({
-      subscribe: async () => ({ endpoint: 'https://e', keys: { p256dh: 'p', auth: null } }),
+      subscribe: async () => ({ endpoint: 'https://e', keys: { get: (name: 'p256dh' | 'auth') => name === 'p256dh' ? new TextEncoder().encode('p').buffer : null } }),
     });
 
     const result = await enableWebPush(user);
@@ -942,7 +942,7 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     // a un navegador que ya tiene una válida: solo se pide si no hay.
     const db = stubSupabase();
     const push = stubPush({
-      existing: { endpoint: 'https://push.test/buena', keys: { p256dh: 'p', auth: 'a' }, unsubscribe: jest.fn() },
+      existing: { endpoint: 'https://push.test/buena', keys: { get: (name: 'p256dh' | 'auth') => name === 'p256dh' ? new TextEncoder().encode('p').buffer : new TextEncoder().encode('a').buffer }, unsubscribe: jest.fn() },
     });
 
     const result = await enableWebPush(user);
@@ -1034,7 +1034,7 @@ describe('disableWebPush: la baja tiene que borrar de verdad', () => {
   function stubBrowser(existing?: unknown) {
     const subscription = {
       endpoint: 'https://push.test/e',
-      keys: { p256dh: 'p', auth: 'a' },
+      keys: { get: (name: 'p256dh' | 'auth') => name === 'p256dh' ? new TextEncoder().encode('p').buffer : new TextEncoder().encode('a').buffer },
       unsubscribe: jest.fn(async () => true),
     };
     const registration = {
