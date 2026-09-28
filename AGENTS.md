@@ -74,14 +74,30 @@ Si un PR no se puede mergear, se cierra con el motivo. "Pendiente de revisar" no
 
 ## Regla dura: worktree obligatorio en toda rama
 
-**Toda rama que se cree lleva SIEMPRE su worktree separado.** Nunca se escribe directamente en `develop` ni en `main`. El directorio principal (`/home/richard/MiCasa`) queda siempre en la rama base `develop` para que el usuario pueda seguir trabajando ahí, y cada rama nueva se trabaja desde su propio worktree (`/home/richard/MiCasa-<rama>/`). Sin excepciones: ni hotfixes ni cambios documentales se hacen en el directorio principal.
+**Toda rama que se cree lleva SIEMPRE su worktree separado.** El directorio principal (`/home/richard/MiCasa`) queda en la rama base `develop`, y cada rama nueva se trabaja desde su propio worktree (`/home/richard/MiCasa-<rama>/`).
+
+### Excepción: cambios pequeños van directos a `develop`
+
+Un cambio **pequeño** se escribe en el directorio principal sobre `develop` y se commitea ahí, sin rama, sin worktree y sin PR. El worktree sigue siendo obligatorio para todo lo demás.
+
+"Cosa pequeña" es:
+
+- Solo documentación (`*.md`), y sin reescribir secciones enteras.
+- Ningún cambio de código, configuración, dependencias, migraciones ni secrets.
+- Diff de un solo archivo, o de menos de ~20 líneas en total.
+- Sin tests ni typecheck que validar, porque no toca código ejecutable.
+- Sin auditorías: `security` y `qa-test` existen para revisar código, y aquí no hay nada que auditar.
+
+Si dudas de si entra, no entra: rama + worktree + PR. El coste de equivocarse es un PR de más; el de hacerlo al revés es código sin auditar en `develop`.
+
+**`main`/`master` sigue sin escribirse nunca.** La excepción es solo para `develop` y solo para esto.
 
 ### Flujo obligatorio
 
 1. `git checkout develop`
 2. Crear rama: `git checkout -b <tipo>/<nombre-rama>` (ej: `feat/x`, `hotfix/y`, `docs/z`)
 3. Crear worktree siempre: `git worktree add ../MiCasa-<nombre-rama> <tipo>/<nombre-rama>`
-4. Trabajar dentro del worktree (`/home/richard/MiCasa-<nombre-rama>/`), nunca en `/home/richard/MiCasa`
+4. Trabajar dentro del worktree (`/home/richard/MiCasa-<nombre-rama>/`), nunca en `/home/richard/MiCasa` salvo el cambio pequeño de la excepción de arriba.
 5. Cuando el bloque pase security (**APROBADO**) + qa-test (**PASA**):
    - Hacer commit en el worktree
    - Empujar rama: `git push -u origin <tipo>/<nombre-rama>`
