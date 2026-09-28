@@ -146,12 +146,17 @@ export default function AjustesScreen() {
   // interruptor.
   const pushReadSeq = useRef(0);
   // Secuencia de las lecturas de la preferencia de cumpleaños, con contador
-  // propio y no el de arriba. Compartirlo haría que tocar el selector de
-  // cumpleaños invalidara la lectura del interruptor maestro, y al revés: los dos
-  // leen y escriben en el mismo efecto, así que un contador común convierte cada
-  // cambio del uno en un descarte del otro, y el maestro se quedaría sin leer
+  // propio y no el de arriba. En nativo, donde los dos estados se leen en el
+  // mismo efecto, compartirlo haría que tocar el selector de cumpleaños invalidara
+  // la lectura del interruptor maestro: un contador común convierte cada cambio
+  // del uno en un descarte del otro, y el maestro se quedaría sin leer
   // (`getActiveSubscription` tarda hasta 10 s en registrar el worker). Con dos
   // contadores, cada estado solo lo escribe su propia secuencia.
+  //
+  // En web esto ya no aplica al interruptor: el efecto de preferencias no lo
+  // escribe (ver más abajo), solo lo hace el de `getActiveSubscription`. Sigue
+  // siendo el contador correcto para el selector, y separarlo del de arriba es lo
+  // que permite que una elección no invalide la lectura de la suscripción.
   //
   // Mismo criterio que `pushReadSeq` y por el mismo motivo: la lectura de
   // `push_preferences` tiene su propio tope (`PREFS_READ_TIMEOUT_MS`), así que
@@ -196,11 +201,28 @@ export default function AjustesScreen() {
           isWeb ? getStoredBirthdayChoice(user) : getBirthdayChoice(),
         ]);
         if (!active) return;
-        setNotificationsEnabledState(enabled);
-        // Solo la preferencia lleva la secuencia. `enabled` es el interruptor
-        // maestro, con su propia secuencia para las lecturas del navegador
-        // (`pushReadSeq`), y un toque de cumpleaños no lo cambia: meterlo aquí
-        // haría que cada elección descartara la lectura del maestro sin motivo.
+        // En web el estado maestro no se escribe aquí, y no por la secuencia sino
+        // porque no hay nada que escribir: `areNotificationsEnabled()` devuelve
+        // `false` fijo en esta plataforma (no consulta nada, ver `notifications.ts`),
+        // así que su valor no es una lectura del estado real sino una constante.
+        // Pintarla aquí apagaba el interruptor con este navegador suscrito: como
+        // esta lectura va a la base y la de `getActiveSubscription` se resuelve en
+        // milisegundos cuando el worker ya está registrado, la buena escribía
+        // primero y el `false` de este `Promise.all` llegaba después encima. Al
+        // llevar la escritura con `pushReadSeq` se arreglaba el síntoma de esta
+        // pasada, pero no el de fondo: el efecto vuelve a correr cada vez que llega
+        // un `user` nuevo (un `TOKEN_REFRESHED` entrega otro objeto con el mismo
+        // `id`), toma un número más alto y su `false` vuelve a ganar por orden. Sin
+        // escritor no hay carrera posible, y en web el interruptor queda en manos
+        // de una sola lectura: la de la suscripción.
+        //
+        // En nativo sí se escribe, porque allí `areNotificationsEnabled()` sí lee
+        // AsyncStorage y su valor es el estado real que el `Switch` debe pintar.
+        if (!isWeb) setNotificationsEnabledState(enabled);
+        // Solo la preferencia lleva secuencia, y solo importa en nativo: ahí el
+        // maestro se escribe justo arriba, en el mismo efecto, así que guardarlo
+        // con `pushReadSeq` haría que cada elección de cumpleaños descartara la
+        // lectura de `areNotificationsEnabled()` sin motivo.
         if (seq === birthdayReadSeq.current) setBirthdayChoiceState(choice);
       } catch {
         // Una lectura que falla no puede dejar nada a medias: el `finally`

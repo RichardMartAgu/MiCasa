@@ -277,6 +277,12 @@ beforeEach(() => {
   mockScheduleBirthdays.mockResolvedValue(undefined);
   mockSetBirthdayChoice.mockResolvedValue(undefined);
   mockSetNotificationsEnabled.mockResolvedValue(undefined);
+  // Sin suscripción activa. Este mock no lo fijaba nadie: los tests que lo
+  // necesitan lo pisan con `mockReset` + `mockResolvedValue`, y `clearAllMocks` no
+  // borra implementaciones, así que esa suscripción se colaba en el test siguiente
+  // y lo dejaba esperando un interruptor apagado que ya no llegaba.
+  mockGetActiveSubscription.mockReset();
+  mockGetActiveSubscription.mockResolvedValue(null);
   mockSyncAll.mockResolvedValue(undefined);
   mockValidateCasaName.mockReturnValue({ valid: true });
   mockValidateInviteCode.mockReturnValue({ valid: true });
@@ -1155,6 +1161,67 @@ describe('AjustesScreen', () => {
         Platform.OS = originalOs;
       }
     });
+
+    it('una suscripción activa no la apaga la lectura de la preferencia de cumpleaños', async () => {
+      // La carrera que dejó el interruptor en `off` con los avisos funcionando.
+      //
+      // Las dos lecturas del montaje salen a la vez. La de la suscripción se
+      // resuelve en milisegundos si el service worker ya está registrado, y la de
+      // la preferencia va a la base (tope de 5 s). El `Promise.all` de la segunda
+      // hace que su respuesta llegue DESPUÉS, y al llegar pintaba su `enabled`: en
+      // web ese valor es un `false` fijo, porque `areNotificationsEnabled()` no
+      // consulta nada en esta plataforma. El resultado era un interruptor apagado
+      // sobre una suscripción viva: el push seguía llegando, porque el servidor lee
+      // la fila directamente, pero la pantalla afirmaba que no.
+      //
+      // Con la escritura guardada con `pushReadSeq` esto se arreglaba en esta
+      // pasada y volvía en cuanto llegaba un `user` nuevo, que es lo que pasa en
+      // cada `TOKEN_REFRESHED`. Aquí se fija por orden, no por código: la
+      // preferencia se lee, llega tarde, y el interruptor no se mueve.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      // Lo que devuelve en web de verdad: sin mirar nada, `false`.
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockGetActiveSubscription.mockReset();
+      // Con `keys`: `getActiveSubscription` descarta la suscripción que no los
+      // trae, así que un objeto sin ellos se devolvería como `null` y el test
+      // estaría encendiendo el interruptor con algo que la función real nunca
+      // devolvería.
+      mockGetActiveSubscription.mockResolvedValue({
+        endpoint: 'https://push.test/e',
+        keys: { p256dh: 'k1', auth: 'k2' },
+      } as never);
+      // `clearAllMocks` no borra la cola de `Once`, así que aquí se empieza de
+      // cero para que se ejecuten exactamente estas dos.
+      mockGetStoredBirthdayChoice.mockReset();
+
+      let resolveBirthdayRead: ((value: unknown) => void) | undefined;
+      const birthdayRead = new Promise((resolve) => {
+        resolveBirthdayRead = resolve;
+      });
+      mockGetStoredBirthdayChoice.mockImplementationOnce(() => birthdayRead as never);
+
+      try {
+        const { getByLabelText } = setup();
+
+        // El worker ya está registrado: la lectura buena gana por mucho y enciende
+        // el interruptor antes de que la de cumpleaños haya respondido.
+        await waitFor(() => {
+          expect(getByLabelText('Activar notificaciones').props.value).toBe(true);
+        });
+
+        // Y solo ahora responde la lectura de la base.
+        resolveBirthdayRead?.('both');
+        await act(async () => {});
+
+        // La fila dice "ambos" y el interruptor sigue encendido.
+        expect(getByLabelText('Activar notificaciones').props.value).toBe(true);
+        expect(mockGetStoredBirthdayChoice).toHaveBeenCalledWith(user);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
   });
 
   describe('web: la preferencia de cumpleaños se lee de la base', () => {
@@ -1229,6 +1296,49 @@ describe('AjustesScreen', () => {
           expect(getByLabelText('Activar notificaciones').props.disabled).toBe(false);
         });
         expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('el interruptor maestro sobrevive a la sesión que llega tarde', async () => {
+      // Por dónde volvía el fallo que este bloque arregla. En web el interruptor
+      // lo escribe la lectura de la suscripción, y cada vez que el efecto de
+      // preferencias volvía a correr con un `user` nuevo se lo llevaba por delante
+      // con el `false` fijo de `areNotificationsEnabled()`. Un `TOKEN_REFRESHED`
+      // entrega otro objeto con el mismo `id`, así que no hace falta nada raro para
+      // reproducirlo: basta con el mismo componente receiving la sesión después.
+      // Guardar esa escritura con `pushReadSeq` lo tapaba en la primera pasada y lo
+      // dejaba pasar en esta, que es la que llega a producción.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockGetActiveSubscription.mockReset();
+      mockGetActiveSubscription.mockResolvedValue({
+        endpoint: 'https://push.test/e',
+        keys: { p256dh: 'k1', auth: 'k2' },
+      } as never);
+
+      try {
+        const screen = setup([casa1], casa1, [ownerMember], { u1: profileCarlos }, null);
+
+        // Sin sesión todavía, pero con la suscripción ya viva: la lectura del
+        // navegador no depende de la sesión, así que el interruptor se enciende
+        // igual y ya no depende de que llegue el `user`.
+        await waitFor(() => {
+          expect(screen.getByLabelText('Activar notificaciones').props.disabled).toBe(false);
+        });
+        expect(screen.getByLabelText('Activar notificaciones').props.value).toBe(true);
+
+        // Llega la sesión: el efecto de preferencias corre por segunda vez con un
+        // `user` nuevo, y el interruptor no se mueve.
+        mockUseAuth.mockReturnValue({ user, signOut });
+        screen.rerender(<AjustesScreen />);
+        await act(async () => {});
+
+        expect(mockGetStoredBirthdayChoice).toHaveBeenNthCalledWith(2, user);
+        expect(screen.getByLabelText('Activar notificaciones').props.value).toBe(true);
       } finally {
         Platform.OS = originalOs;
       }
