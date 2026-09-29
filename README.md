@@ -157,13 +157,30 @@ npm install --cache /tmp/npm-cache-fresco
 Si no, vuelve a pasar y el build de producción sale sin verificar. Por eso
 `check:lock` va también en el `buildCommand` de Vercel, no solo en CI: el deploy es
 manual y sale de un checkout local, que es justo donde el lock puede estar a medias.
+En CI corre antes de `npm ci` a propósito, para que salga en segundos; en Vercel
+corre después de instalar, porque Vercel instala antes del `buildCommand`, así que
+allí no evita la instalación, solo impide el despliegue.
 
 **Sobre el `overrides` de `tmp`:** `tmp@0.0.33` llega por `workbox-cli` →
 `inquirer` → `external-editor`, toda cadena de desarrollo, y arrastraba dos
 advisories *high*. El `overrides` lo sube a `^0.2.5`, que es la primera versión
-corregida. No se ejecuta en producción ni en el navegador; se sube porque
-`npm audit` lo marca *high* en el árbol completo y prefiero que el gate de CI pueda
-estar en `critical` sin que ese advisory lo tenga bloqueando.
+corregida. No se ejecuta en producción ni en el navegador: `workbox injectManifest`
+no pasa por las preguntas interactivas de `inquirer`. Se sube porque `npm audit` lo
+marca *high* en el árbol completo, y con él fuera el gate de `critical` puede estar
+ahí sin que ese advisory lo tenga bloqueando.
+
+Como el override saca a `tmp` del rango que declara su consumidor
+(`external-editor` pide `^0.0.33`), hay un `check:overrides` que confirma que la
+versión forzada sigue exponiendo la API que él llama. Va en un script aparte del
+del lock, y después de `npm ci`, porque necesita `node_modules` y el del lock no
+puede tenerlo: se ejecuta en un runner donde aún no se ha instalado nada. Los tests
+del repo no cubren esa cadena, porque es la CLI interactiva de workbox.
+
+```bash
+npm run check:lock      # integridad del lock, sin dependencias
+npm run check:overrides # el override de tmp, necesita npm ci previo
+npm run verify:deps     # los dos + los dos gates de npm audit
+```
 
 ## 📁 Estructura
 

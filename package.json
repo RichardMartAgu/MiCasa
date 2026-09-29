@@ -77,7 +77,8 @@
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
     "build:sw": "esbuild sw-src.js --bundle --format=iife --target=es2020 --outfile=sw-bundle.js",
-    "verify:deps": "npm run check:lock && npm audit --omit=dev --audit-level=high && npm audit --audit-level=critical"
+    "verify:deps": "npm run check:lock && npm run check:overrides && npm audit --omit=dev --audit-level=high && npm audit --audit-level=critical",
+    "check:overrides": "node scripts/check-overrides.mjs"
   },
   "jest": {
     "preset": "jest-expo",

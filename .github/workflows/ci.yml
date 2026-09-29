@@ -47,6 +47,15 @@ jobs:
 
       - run: npm ci
 
+      # El `overrides` de `tmp` saca a `tmp` del rango que declara su consumidor,
+      # y eso hay que comprobarlo con las dependencias ya instaladas. Va después de
+      # `npm ci` por eso, y en un script aparte del check de lock: aquel se ejecuta
+      # antes de instalar, en un runner sin `node_modules`, así que no puede
+      # importar nada. Cuando estuvo junto, dejó el CI de todos los pushes en
+      # rojo por un `Cannot find module 'tmp'`.
+      - name: Overrides de dependencias
+        run: node scripts/check-overrides.mjs
+
       - name: Lint
         run: npm run lint
 
