@@ -38,7 +38,7 @@ App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 19 `
 | [`docs/oauth-google-pendiente.md`](docs/oauth-google-pendiente.md) | Estado y pasos de OAuth Google. | Código listo; faltan credenciales y dashboard. |
 | [`docs/pwa-installable.md`](docs/pwa-installable.md) | PWA instalable: manifest, service worker, iconos, decisiones de security. | Desplegado; quedan items en su «Qué falta». |
 | [`docs/usuarios-prueba.md`](docs/usuarios-prueba.md) | Cuentas de prueba en producción y sus límites de seguridad. | Vigente; credenciales en `.env.local`. |
-| [`docs/web-push.md`](docs/web-push.md) | Web Push (recordatorios en web): Edge Function, SW, cron, CORS, VAPID. | Mergeado (#54) y desplegado; CORS de previews en PR #83 (v11 en prod). Falta prueba en navegador. |
+| [`docs/web-push.md`](docs/web-push.md) | Web Push (recordatorios en web): Edge Function, SW, cron, CORS, VAPID. | Mergeado (#54) y desplegado; CORS de previews mergeado (#83), v11 en prod. Falta prueba en navegador. |
 
 ## Mapa de secciones (grep aquí antes de abrir el fichero)
 

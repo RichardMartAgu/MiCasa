@@ -42,6 +42,15 @@ En su lugar se puso una barrera: reglas de permisos en `~/.config/opencode/openc
 que niegan a las herramientas de lectura y a `bash` el acceso a `~/.bashrc`, para que el
 token no vuelva a salir impreso en un log.
 
+## Sesión actual — 2026-09-29 (el botón «Enviar» fallaba en previews de Vercel)
+
+Síntoma: en cualquier `micasa-demo-<código>-richardmartagus-projects.vercel.app` el botón Enviar fallaba; en producción iba bien. Causa: la allowlist de CORS no podía llevar las previews listadas a mano (host nuevo en cada despliegue) y el preflight salía `403` antes del `POST`.
+
+- Fix: fila con patrón anclado `https://micasa-demo-*-richardmartagus-projects.vercel.app` en `cors.ts` (`*` → `[^.]*`, un solo segmento de host, escapado y con `^`/`$`), con test por cada rechazo. PR #83: security APROBADO, qa PASA, mergeado con `--admin` autorizado por el usuario en `57c3209`.
+- Edge Function **v11** desplegada y verificada en prod: preview `204`, producción `204`, orígenes ajenos `403`, cron sin `Origin` `401`. El CLI de Supabase no tiene token; la vía de deploy real está en la nota privada `~/.config/opencode/notas/micasa-deploy.md`, con puntero en `AGENTS.md` (el repo es público, el contenido no sale de ahí).
+- Registro completo del diagnóstico en `docs/web-push.md` → «Si el botón Enviar falla otra vez». `INDEX.md` con mapa de secciones para no abrir `.md` a ciegas. Vercel re-desplegado y verificado (200).
+- Sin verificar: el botón en un navegador real sobre una preview.
+
 ## Sesión actual — 2026-09-28 (el interruptor maestro se apagaba con la suscripción viva)
 
 Es la cola de la anterior, y salió de desplegar su fix (#75): con la preferencia de
