@@ -228,8 +228,15 @@ export function truncate(input: string, max = 110): string {
   return clean.length <= max ? clean : `${clean.slice(0, max - 1).trimEnd()}…`;
 }
 
+/**
+ * Una fila de `push_preferences`. `birthday_choice` se modela como `string` y no
+ * como `ReminderChoice` a propósito: lo que viene de la base no está garantizado,
+ * y la función que lo lee tiene que poder mirar un valor ilegible sin que el
+ * compilador lo llame imposible. Valida con `isValidChoice`.
+ */
 export interface PushPreference {
   enabled: boolean;
+  birthday_choice?: string | null;
 }
 
 /**
@@ -244,6 +251,25 @@ export interface PushPreference {
 export function isPushEnabled(pref: PushPreference | null | undefined): boolean {
   if (!pref) return true;
   return pref.enabled !== false;
+}
+
+/**
+ * Cuándo avisa de cumpleaños, a partir de la fila de preferencias.
+ *
+ * Sin fila, o con un valor que no es de la lista, devuelve "none": quien no sabe
+ * no avisa. Antes devolvía "both", y eso dejaba al servidor y a la pantalla
+ * diciendo cosas distintas en el mismo caso: con la fila ausente, Ajustes pintaba
+ * "sin aviso" y el servidor mandaba los dos avisos. El repliegue que arriesga
+ * menos es el que no manda nada, y una fila ausente solo se da si nadie ha
+ * pasado por Ajustes con el push activo o si se borró a mano.
+ *
+ * La asimetría con `isPushEnabled` es deliberada: el interruptor maestro asume
+ * activado sin fila porque llegar al dispatcher ya implica una suscripción viva,
+ * o sea un consentimiento previo. Para el *qué* de los cumpleaños no hay ninguna
+ * señal de ese tipo, así que se asume lo mínimo.
+ */
+export function birthdayChoiceFor(pref: PushPreference | null | undefined): ReminderChoice {
+  return isValidChoice(pref?.birthday_choice) ? pref.birthday_choice : "none";
 }
 
 export interface Window {

@@ -63,8 +63,16 @@ const mockSetNotificationsEnabled = jest.fn();
 const mockSyncAll = jest.fn();
 const mockIsPushSupported = jest.fn(() => false);
 const mockGetActiveSubscription = jest.fn(async () => null);
+// `string | null` y no solo `string` porque la lectura devuelve `null` cuando no
+// puede saber qué hay guardado, que es un estado que la pantalla trata de forma
+// distinta a "sin aviso". Tiparlo solo como `string` impedía escribir el caso que
+// más importa, el de la lectura que no sabe.
+const mockGetStoredBirthdayChoice = jest.fn<Promise<string | null>, [unknown]>(async () => null);
 const mockNotificationPermission = jest.fn(() => 'default' as const);
-const mockSyncPushPreferences = jest.fn(async () => undefined);
+// Con la firma de los dos argumentos que recibe, y no sin ellos: si el mock
+// aceptara cero, reenviar los argumentos desde la fábrica se quejaría al
+// compilar y la firma real se perdería.
+const mockSyncPushPreferences = jest.fn<Promise<void>, [unknown, unknown]>(async () => undefined);
 const mockEnableWebPush = jest.fn();
 const mockDisableWebPush = jest.fn();
 const mockSendTestPush: jest.Mock<Promise<{ ok: boolean; error?: string; retryInSeconds?: number; delivered?: number }>> =
@@ -93,8 +101,9 @@ jest.mock('@/lib/web-push', () => {
   return {
   isPushSupported: () => mockIsPushSupported(),
   getActiveSubscription: () => mockGetActiveSubscription(),
+  getStoredBirthdayChoice: (user: unknown) => mockGetStoredBirthdayChoice(user),
   notificationPermission: () => mockNotificationPermission(),
-  syncPushPreferences: (_user: unknown, _params: unknown) => mockSyncPushPreferences(),
+  syncPushPreferences: (user: unknown, params: unknown) => mockSyncPushPreferences(user, params),
   enableWebPush: (user: unknown) => mockEnableWebPush(user),
   disableWebPush: (user: unknown) => mockDisableWebPush(user),
   sendTestPush: () => mockSendTestPush(),
@@ -219,7 +228,10 @@ function setup(
   currentCasa = casa1,
   members: CasaMember[] = [ownerMember, member2],
   profiles: Record<string, Profile | null> = { u1: profileCarlos, u2: profileAna },
-  currentUser = user,
+  // Acepta `null` porque en web la sesión se restaura después del primer render y
+  // hay tests que necesitan reproduceslo: si no, nunca se podría probar que la
+  // preferencia se relee al llegar.
+  currentUser: typeof user | null = user,
 ) {
   mockUseAuth.mockReturnValue({ user: currentUser, signOut });
   mockUseCasa.mockReturnValue({
@@ -261,10 +273,20 @@ beforeEach(() => {
   mockAskEnableNotifications.mockResolvedValue('enabled');
   mockCanRequestPermissionAgain.mockResolvedValue(true);
   mockGetBirthdayChoice.mockResolvedValue('both');
+  // En web la preferencia se lee de la base, así que el valor por defecto de la
+  // lectura de web tiene que ser el mismo que el de la nativa: si no, los tests
+  // de web pintarían un selector distinto sin querer.
+  mockGetStoredBirthdayChoice.mockResolvedValue('both');
   mockRequestPermissions.mockResolvedValue(true);
   mockScheduleBirthdays.mockResolvedValue(undefined);
   mockSetBirthdayChoice.mockResolvedValue(undefined);
   mockSetNotificationsEnabled.mockResolvedValue(undefined);
+  // Sin suscripción activa. Este mock no lo fijaba nadie: los tests que lo
+  // necesitan lo pisan con `mockReset` + `mockResolvedValue`, y `clearAllMocks` no
+  // borra implementaciones, así que esa suscripción se colaba en el test siguiente
+  // y lo dejaba esperando un interruptor apagado que ya no llegaba.
+  mockGetActiveSubscription.mockReset();
+  mockGetActiveSubscription.mockResolvedValue(null);
   mockSyncAll.mockResolvedValue(undefined);
   mockValidateCasaName.mockReturnValue({ valid: true });
   mockValidateInviteCode.mockReturnValue({ valid: true });
@@ -1139,6 +1161,582 @@ describe('AjustesScreen', () => {
           expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
         });
         expect(mockGetActiveSubscription).toHaveBeenCalledTimes(2);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('una suscripción activa no la apaga la lectura de la preferencia de cumpleaños', async () => {
+      // La carrera que dejó el interruptor en `off` con los avisos funcionando.
+      //
+      // Las dos lecturas del montaje salen a la vez. La de la suscripción se
+      // resuelve en milisegundos si el service worker ya está registrado, y la de
+      // la preferencia va a la base (tope de 5 s). El `Promise.all` de la segunda
+      // hace que su respuesta llegue DESPUÉS, y al llegar pintaba su `enabled`: en
+      // web ese valor es un `false` fijo, porque `areNotificationsEnabled()` no
+      // consulta nada en esta plataforma. El resultado era un interruptor apagado
+      // sobre una suscripción viva: el push seguía llegando, porque el servidor lee
+      // la fila directamente, pero la pantalla afirmaba que no.
+      //
+      // Con la escritura guardada con `pushReadSeq` esto se arreglaba en esta
+      // pasada y volvía en cuanto llegaba un `user` nuevo, que es lo que pasa en
+      // cada `TOKEN_REFRESHED`. Aquí se fija por orden, no por código: la
+      // preferencia se lee, llega tarde, y el interruptor no se mueve.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      // Lo que devuelve en web de verdad: sin mirar nada, `false`.
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockGetActiveSubscription.mockReset();
+      // Con `keys`: `getActiveSubscription` descarta la suscripción que no los
+      // trae, así que un objeto sin ellos se devolvería como `null` y el test
+      // estaría encendiendo el interruptor con algo que la función real nunca
+      // devolvería.
+      mockGetActiveSubscription.mockResolvedValue({
+        endpoint: 'https://push.test/e',
+        keys: { p256dh: 'k1', auth: 'k2' },
+      } as never);
+      // `clearAllMocks` no borra la cola de `Once`, así que aquí se empieza de
+      // cero para que se ejecuten exactamente estas dos.
+      mockGetStoredBirthdayChoice.mockReset();
+
+      let resolveBirthdayRead: ((value: unknown) => void) | undefined;
+      const birthdayRead = new Promise((resolve) => {
+        resolveBirthdayRead = resolve;
+      });
+      mockGetStoredBirthdayChoice.mockImplementationOnce(() => birthdayRead as never);
+
+      try {
+        const { getByLabelText } = setup();
+
+        // El worker ya está registrado: la lectura buena gana por mucho y enciende
+        // el interruptor antes de que la de cumpleaños haya respondido.
+        await waitFor(() => {
+          expect(getByLabelText('Activar notificaciones').props.value).toBe(true);
+        });
+
+        // Y solo ahora responde la lectura de la base.
+        resolveBirthdayRead?.('both');
+        await act(async () => {});
+
+        // La fila dice "ambos" y el interruptor sigue encendido.
+        expect(getByLabelText('Activar notificaciones').props.value).toBe(true);
+        expect(mockGetStoredBirthdayChoice).toHaveBeenCalledWith(user);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+  });
+
+  describe('web: la preferencia de cumpleaños se lee de la base', () => {
+    // El fallo que este bloque arregla: en web la preferencia se replica en
+    // `push_preferences` (es la que lee el servidor para avisar con la app
+    // cerrada) y la lectura venía de `getBirthdayChoice`, que en web devuelve
+    // 'none' siempre. Se guardaba bien y al reabrir Ajustes volvía a "sin
+    // aviso", sin error y sin rastro.
+    it('el selector arranca con lo que hay guardado en la base', async () => {
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      // Lo que devolvía la lectura de plataforma: 'none' fijo, que es lo que
+      // hacía que el selector no reflejara nada.
+      mockGetBirthdayChoice.mockResolvedValue('none');
+      mockGetStoredBirthdayChoice.mockResolvedValue('day-before');
+
+      try {
+        const { getByRole } = setup();
+
+        await waitFor(() => {
+          expect(
+            getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked,
+          ).toBe(true);
+        });
+        expect(getByRole('radio', { name: 'Sin aviso' }).props.accessibilityState.checked).toBe(
+          false,
+        );
+        // Y se le pregunta con la sesión, no sin ella: una lectura hecha sin
+        // usuario devuelve 'none' y el selector se queda mintiendo.
+        expect(mockGetStoredBirthdayChoice).toHaveBeenCalledWith(user);
+        // En web no se toca AsyncStorage, que es la lectura de nativo.
+        expect(mockGetBirthdayChoice).not.toHaveBeenCalled();
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('en nativo se sigue leyendo de AsyncStorage', async () => {
+      mockGetBirthdayChoice.mockResolvedValue('same-day');
+
+      const { getByRole } = setup();
+
+      await waitFor(() => {
+        expect(getByRole('radio', { name: 'Mismo día' }).props.accessibilityState.checked).toBe(
+          true,
+        );
+      });
+      expect(mockGetStoredBirthdayChoice).not.toHaveBeenCalled();
+    });
+
+    it('una lectura que no sabe no marca ningún chip y no escribe al pulsarlo', async () => {
+      // El fallo dangerous: con un repliegue a 'none', el chip "Sin aviso" salía
+      // marcado como si fuera el valor real, y pulsarlo para "confirmarlo"
+      // escribía 'none' encima de una fila que podía seguir en 'both'. El
+      // servidor dejaba de avisar y la pantalla no había dicho nada.
+      //
+      // Por eso el repliegue es `null` y no `'none'`: sin nada marcado no hay
+      // chip marcado que alguien pulsaría creyendo que solo confirma.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockGetStoredBirthdayChoice.mockResolvedValue(null);
+
+      try {
+        const { getByRole, getByText } = setup();
+
+        await waitFor(() => {
+          expect(getByText(/No se ha podido leer el aviso/)).toBeTruthy();
+        });
+        // Ningún chip marcado, y el que habríafst responsible de escribir 'none'
+        // aparece como el que está.
+        for (const name of ['Sin aviso', 'Día antes', 'Mismo día', 'Día antes + mismo día']) {
+          expect(getByRole('radio', { name }).props.accessibilityState.checked).toBe(false);
+        }
+
+        await act(async () => {
+          fireEvent.press(getByRole('radio', { name: 'Sin aviso' }));
+        });
+
+        // Ahora sí escribe, porque el usuario lo ha elegido explícitamente.
+        expect(mockSyncPushPreferences).toHaveBeenCalledWith(user, { birthdayChoice: 'none' });
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('pulsar el chip que ya está marcado no escribe nada', async () => {
+      // La segunda mitad del mismo fallo. Con la fila en 'both' y el chip
+      // 'Ambos' marcado, confirmarlo no debería generar un `upsert`: sin este
+      // caso, un toque inocente reescribe la fila y la desincroniza.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockGetStoredBirthdayChoice.mockResolvedValue('both');
+
+      try {
+        const { getByRole } = setup();
+
+        await waitFor(() => {
+          expect(
+          getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState.checked,
+        ).toBe(true);
+        });
+        expect(mockSyncPushPreferences).not.toHaveBeenCalled();
+
+        await act(async () => {
+          fireEvent.press(getByRole('radio', { name: 'Día antes + mismo día' }));
+        });
+
+        expect(mockSyncPushPreferences).not.toHaveBeenCalled();
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('una lectura de web que falla deja los controles utilizables', async () => {
+      // Un rechazo dentro del IIFE de montaje dejaba `prefsLoading` en `true` para
+      // siempre, con el interruptor bloqueado y sin nada que lo explique.
+      //
+      // El rechazo va en la lectura de la base, que es la que puede fallar en
+      // esta plataforma. `areNotificationsEnabled` ya no se llama aquí: devuelve
+      // `false` fijo sin consultar nada, así que no puede rechazar nunca, y un
+      // test que la haga rejecting daba confianza sobre un camino imposible.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockGetStoredBirthdayChoice.mockRejectedValueOnce(new Error('sin red'));
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        const { getByLabelText } = setup();
+
+        await waitFor(() => {
+          expect(getByLabelText('Activar notificaciones').props.disabled).toBe(false);
+        });
+        expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+        // Y el motivo queda anotado, no se traga en silencio.
+        expect(warn).toHaveBeenCalledWith(
+          'No se pudo leer la preferencia de cumpleaños',
+          'sin red',
+        );
+      } finally {
+        warn.mockRestore();
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('en nativo, una lectura que falla deja los controles utilizables', async () => {
+      // El guard real de esta pantalla en nativo es AsyncStorage, no la base. Con
+      // dos lecturas en paralelo y un contador que las espera a las dos, este es
+      // el caso que decide si el interruptor se rehabilita: si una sola cuelga o
+      // rechaza, el `prefsLoading` tiene que pasar a `false` igual.
+      mockAreNotificationsEnabled.mockRejectedValueOnce(new Error('sin red'));
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        const { getByLabelText } = setup();
+
+        await waitFor(() => {
+          expect(getByLabelText('Activar notificaciones').props.disabled).toBe(false);
+        });
+        expect(warn).toHaveBeenCalledWith(
+          'No se pudo leer el estado de las notificaciones',
+          'sin red',
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('en nativo, una lectura en vuelo del maestro no revive un interruptor apagado', async () => {
+      // La carrera que reintrodujo el efecto al llevar `user` en las dependencias:
+      // en nativo el maestro se escribía sin secuencia, así que una lectura de
+      // AsyncStorage todavía en vuelo podía encender el interruptor encima de lo
+      // que el usuario acababa de apagar. `masterReadSeq` lo cierra.
+      let resolveEnabled: ((value: boolean) => void) | undefined;
+      mockAreNotificationsEnabled.mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveEnabled = resolve;
+          }),
+      );
+
+      const { getByLabelText } = setup();
+
+      await act(async () => {
+        fireEvent(getByLabelText('Activar notificaciones'), 'valueChange', false);
+      });
+      expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+
+      // Ahora responde la lectura vieja, con el `true` de antes del toque.
+      await act(async () => {
+        resolveEnabled?.(true);
+      });
+
+      expect(getByLabelText('Activar notificaciones').props.value).toBe(false);
+    });
+
+    it('el interruptor maestro sobrevive a la sesión que llega tarde', async () => {
+      // Por dónde volvía el fallo que este bloque arregla. En web el interruptor
+      // lo escribe la lectura de la suscripción, y cada vez que el efecto de
+      // preferencias volvía a correr con un `user` nuevo se lo llevaba por delante
+      // con el `false` fijo de `areNotificationsEnabled()`. Un `TOKEN_REFRESHED`
+      // entrega otro objeto con el mismo `id`, así que no hace falta nada raro para
+      // reproducirlo: basta con el mismo componente receiving la sesión después.
+      // Guardar esa escritura con `pushReadSeq` lo tapaba en la primera pasada y lo
+      // dejaba pasar en esta, que es la que llega a producción.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockAreNotificationsEnabled.mockResolvedValue(false);
+      mockGetActiveSubscription.mockReset();
+      mockGetActiveSubscription.mockResolvedValue({
+        endpoint: 'https://push.test/e',
+        keys: { p256dh: 'k1', auth: 'k2' },
+      } as never);
+
+      try {
+        const screen = setup([casa1], casa1, [ownerMember], { u1: profileCarlos }, null);
+
+        // Sin sesión todavía, pero con la suscripción ya viva: la lectura del
+        // navegador no depende de la sesión, así que el interruptor se enciende
+        // igual y ya no depende de que llegue el `user`.
+        await waitFor(() => {
+          expect(screen.getByLabelText('Activar notificaciones').props.disabled).toBe(false);
+        });
+        expect(screen.getByLabelText('Activar notificaciones').props.value).toBe(true);
+
+        // Llega la sesión: el efecto de preferencias corre por segunda vez con un
+        // `user` nuevo, y el interruptor no se mueve.
+        mockUseAuth.mockReturnValue({ user, signOut });
+        screen.rerender(<AjustesScreen />);
+        await act(async () => {});
+
+        expect(mockGetStoredBirthdayChoice).toHaveBeenNthCalledWith(2, user);
+        expect(screen.getByLabelText('Activar notificaciones').props.value).toBe(true);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('la preferencia se vuelve a leer cuando la sesión llega después del primer render', async () => {
+      // En web la sesión se restaura desde el almacenamiento, así que el primer
+      // render puede venir sin usuario. Una lectura hecha así devuelve 'none' sin
+      // consultar, y si no se repitiera al llegar la sesión el selector se
+      // quedaría en "sin aviso" durante toda la vida de la pestaña.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      // `clearAllMocks` no borra la cola de `Once`, así que aquí se empieza de
+      // cero para que se ejecuten exactamente estas dos.
+      mockGetStoredBirthdayChoice.mockReset();
+      mockGetStoredBirthdayChoice
+        .mockResolvedValueOnce('none') // lo que ve el primer render, sin sesión
+        .mockResolvedValueOnce('day-before'); // lo que hay de verdad en la fila
+
+      try {
+        // Los cuatro valores anteriores no influyen en lo que se prueba aquí; el
+        // que importa es el quinto, la sesión ausente en el primer render.
+        const screen = setup([casa1], casa1, [ownerMember], { u1: profileCarlos }, null);
+        await act(async () => {});
+
+        expect(mockGetStoredBirthdayChoice).toHaveBeenNthCalledWith(1, null);
+        expect(
+          screen.getByRole('radio', { name: 'Sin aviso' }).props.accessibilityState.checked,
+        ).toBe(true);
+
+        // Llega la sesión y el mismo componente se vuelve a pintar. Si el efecto
+        // no la tuviera en sus dependencias, esta segunda pasada no existiría y
+        // el selector se quedaría en "sin aviso" para siempre.
+        mockUseAuth.mockReturnValue({ user, signOut });
+        screen.rerender(<AjustesScreen />);
+
+        await waitFor(() => {
+          expect(
+            screen.getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked,
+          ).toBe(true);
+        });
+        expect(mockGetStoredBirthdayChoice).toHaveBeenNthCalledWith(2, user);
+        expect(
+          screen.getByRole('radio', { name: 'Sin aviso' }).props.accessibilityState.checked,
+        ).toBe(false);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('una escritura que falla devuelve el chip a lo que había', async () => {
+      // La fila de la base es la buena. Si el `upsert` no llega, el chip no puede
+      // quedar marcando lo que el usuario acaba de pulsar: quedaría la pantalla
+      // afirmando una preferencia que el servidor no tiene, hasta el próximo
+      // montaje. Y no se revierte a `'none'` sino a lo que había, porque `null` es
+      // "no se sabe" y volver a un valor inventado repite el fallo del bloque.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockGetStoredBirthdayChoice.mockResolvedValue('both');
+      mockSyncPushPreferences.mockRejectedValueOnce(new Error('sin red'));
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        const { getByRole } = setup();
+
+        await waitFor(() => {
+          expect(
+            getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState.checked,
+          ).toBe(true);
+        });
+
+        await act(async () => {
+          fireEvent.press(getByRole('radio', { name: 'Mismo día' }));
+        });
+
+        // Vuelve a lo que decía la fila, y el motivo queda anotado.
+        expect(getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState.checked).toBe(
+          true,
+        );
+        expect(getByRole('radio', { name: 'Mismo día' }).props.accessibilityState.checked).toBe(
+          false,
+        );
+        expect(warn).toHaveBeenCalledWith(
+          'No se pudo guardar el aviso de cumpleaños elegido',
+          'sin red',
+        );
+      } finally {
+        warn.mockRestore();
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('el interruptor se rehabilita aunque una lectura quede obsoleta en vuelo', async () => {
+      // La fuga del contador. El efecto se reejecuta cada vez que llega un `user`
+      // nuevo (un `TOKEN_REFRESHED` entrega otro objeto con el mismo `id`), así que
+      // una pasada puede quedarse obsoleta con su lectura todavía en vuelo. Con el
+      // contador compartido en el componente, su `release` salía temprano por la
+      // guarda `active` y el cupo no se devolvía: el contador subía sin
+      // techo, `setPrefsLoading(false)` dejaba de ejecutarse y el interruptor
+      // quedaba bloqueado hasta recargar, sin mensaje y sin recuperación.
+      //
+      // Ningún otro test monta esta combinación: siempre dejan resolver la primera
+      // lectura antes del `rerender`.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockGetStoredBirthdayChoice.mockReset();
+
+      let resolveStale: ((value: string | null) => void) | undefined;
+      let resolveFresh: ((value: string | null) => void) | undefined;
+      mockGetStoredBirthdayChoice.mockReset();
+      mockGetStoredBirthdayChoice
+        .mockImplementationOnce(
+          () =>
+            new Promise<string | null>((resolve) => {
+              resolveStale = resolve;
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<string | null>((resolve) => {
+              resolveFresh = resolve;
+            }),
+        );
+
+      try {
+        // Primer render sin sesión, y su lectura se queda en vuelo.
+        const screen = setup([casa1], casa1, [ownerMember], { u1: profileCarlos }, null);
+        await act(async () => {});
+        expect(screen.getByLabelText('Activar notificaciones').props.disabled).toBe(true);
+
+        // Llega la sesión antes de que responda la anterior: la pasada vieja queda
+        // obsoleta con su lectura viva.
+        mockUseAuth.mockReturnValue({ user, signOut });
+        screen.rerender(<AjustesScreen />);
+        await act(async () => {});
+
+        // La pasada obsoleta es la primera en soltar su cupo, y no puede
+        // habilitar el interruptor: la lectura que sigue en vuelo es la que decide
+        // el valor que se pinta, y habilitarla antes dejaría el `Switch` con un
+        // estado que aún no se sabe.
+        await act(async () => {
+          resolveStale?.('both');
+        });
+        expect(screen.getByLabelText('Activar notificaciones').props.disabled).toBe(true);
+
+        // Ahora sí, con la vigente resuelta.
+        await act(async () => {
+          resolveFresh?.('day-before');
+        });
+        await waitFor(() => {
+          expect(screen.getByLabelText('Activar notificaciones').props.disabled).toBe(false);
+        });
+        expect(screen.getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked).toBe(
+          true,
+        );
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('una lectura en vuelo no pisa el chip que el usuario acaba de pulsar', async () => {
+      // La carrera que este arreglo cierra. La lectura de `push_preferences`
+      // tiene un tope de cinco segundos, así que puede seguir en vuelo cuando el
+      // usuario ya está pulsando; y el selector no mira `prefsLoading`, que solo
+      // deshabilita el interruptor maestro, así que está activo desde el primer
+      // render.
+      //
+      // El caso: la lectura arrancada antes de la pulsación responde después con
+      // lo que había en la fila. Si su respuesta entra, el chip recién marcado
+      // desaparece y la pantalla afirma "sin aviso" con la fila en "ambos": el
+      // servidor sigue mandando el aviso con el nombre y la fecha del contacto
+      // mientras la UI jura que no avisa de nada.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockGetStoredBirthdayChoice.mockReset();
+
+      let resolveStaleRead: ((value: unknown) => void) | undefined;
+      const staleRead = new Promise((resolve) => {
+        resolveStaleRead = resolve;
+      });
+      mockGetStoredBirthdayChoice.mockImplementationOnce(() => staleRead as never);
+
+      try {
+        const { getByRole } = setup();
+
+        // La lectura sigue en vuelo y el selector ya es utilizable. Con la lectura
+        // sin responder no se marca ningún chip: `null` es "no se sabe", no
+        // "sin aviso".
+        await act(async () => {});
+        for (const name of ['Sin aviso', 'Día antes', 'Mismo día', 'Día antes + mismo día']) {
+          expect(getByRole('radio', { name }).props.accessibilityState.checked).toBe(false);
+        }
+
+        // El usuario elige mientras tanto.
+        fireEvent.press(getByRole('radio', { name: 'Día antes' }));
+        await act(async () => {});
+        expect(getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked).toBe(true);
+        expect(mockSyncPushPreferences).toHaveBeenCalledWith(user, { birthdayChoice: 'day-before' });
+
+        // Y solo ahora responde la lectura vieja, con lo que encontró antes de
+        // que existiera esa elección.
+        resolveStaleRead?.('both');
+        await act(async () => {});
+
+        expect(getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked).toBe(true);
+        expect(
+          getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState.checked,
+        ).toBe(false);
+      } finally {
+        Platform.OS = originalOs;
+      }
+    });
+
+    it('una relectura que empieza después de un toque no se descarta', async () => {
+      // La otra mitad del patrón: el contador se mueve al *entrar* en el efecto
+      // y no solo al pulsar un chip. Si solo se moviera al pulsar, esta lectura
+      // llevaría un número viejo y su respuesta se tiraría, que es peor que la
+      // carrera anterior: la fila real no llegaría nunca a la pantalla.
+      //
+      // El caso: se elige "sin aviso" y la escritura falla, así que la fila se
+      // sigue quedando en "ambos". Llega la sesión —un `TOKEN_REFRESHED` devuelve
+      // un objeto nuevo con el mismo `id`— y la relectura sí tiene que poder
+      // escribir, porque es la buena.
+      const originalOs = Platform.OS;
+      Platform.OS = 'web';
+      mockIsPushSupported.mockReturnValue(true);
+      mockGetStoredBirthdayChoice.mockReset();
+      mockGetStoredBirthdayChoice
+        .mockResolvedValueOnce('both') // el montaje
+        .mockResolvedValueOnce('both'); // la relectura: la fila nunca cambió
+      mockSyncPushPreferences.mockRejectedValueOnce(new Error('sin red'));
+
+      try {
+        const screen = setup();
+
+        await waitFor(() => {
+          expect(
+            screen.getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState
+              .checked,
+          ).toBe(true);
+        });
+
+        fireEvent.press(screen.getByRole('radio', { name: 'Sin aviso' }));
+        await act(async () => {});
+        // La escritura falla, así que el chip vuelve a lo que decía la fila. Antes
+        // se pintaba de forma optimista y se dejaba así: la pantalla acababa
+        // afirmar "sin aviso" con la fila en "ambos", que es justo lo que el
+        // servidor sigue avisando.
+        expect(
+          screen.getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState
+            .checked,
+        ).toBe(true);
+        expect(
+          screen.getByRole('radio', { name: 'Sin aviso' }).props.accessibilityState.checked,
+        ).toBe(false);
+
+        // Mismo usuario, objeto nuevo: el efecto vuelve a correr.
+        const refreshedUser = { ...user };
+        mockUseAuth.mockReturnValue({ user: refreshedUser, signOut });
+        screen.rerender(<AjustesScreen />);
+
+        await waitFor(() => {
+          expect(
+            screen.getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState
+              .checked,
+          ).toBe(true);
+        });
+        expect(
+          screen.getByRole('radio', { name: 'Sin aviso' }).props.accessibilityState.checked,
+        ).toBe(false);
       } finally {
         Platform.OS = originalOs;
       }
