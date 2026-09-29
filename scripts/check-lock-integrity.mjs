@@ -42,6 +42,37 @@ console.log(`  con hash de integridad: ${withIntegrity.length}`);
 
 if (ratio >= 0.99) {
   console.log('  ✓ el lock verifica el contenido de lo que descarga');
+
+  // El lock tiene un `overrides` que sube `tmp` por encima del rango que pide su
+  // consumidor (`external-editor` declara `^0.0.33` y se le fuerza `^0.2.5`). Los
+  // tests del repo no ejecutan esa cadena: es `workbox-cli` en modo interactivo,
+  // que aquí no se usa. Lo que hay que vigilar no es si el código funciona, sino
+  // que la versión forzada siga exponiendo la API que el consumidor llama, así
+  // que se comprueba directamente y en un segundo.
+  //
+  // Si algún día este comprobante falla, el arreglo no es volver a `0.0.33`
+  // (vuelve el advisory *high*): es un `overrides` anidado, o actualizar
+  // `external-editor`/`workbox-cli` cuando sacan una versión que ya use `tmp`
+  // en 0.2.x y dejar el override como redundante.
+  try {
+    const { createRequire } = await import('node:module');
+    const require = createRequire(import.meta.url);
+    const tmp = require('tmp');
+    const name = tmp.tmpNameSync({});
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new Error('tmpNameSync no devolvió un nombre utilizable');
+    }
+    console.log('  ✓ tmp expone la API que consume external-editor');
+  } catch (error) {
+    console.error('');
+    console.error(`✗ El override de tmp no sirve para su consumidor: ${error.message}`);
+    console.error('');
+    console.error('  Hay un `overrides: { tmp }` en package.json que fuerza una');
+    console.error('  versión fuera del rango que declara external-editor. Esta');
+    console.error('  comprobación confirma que la API que él llama existe.');
+    process.exit(1);
+  }
+
   process.exit(0);
 }
 
