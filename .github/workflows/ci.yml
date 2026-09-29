@@ -17,6 +17,21 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Va antes de `npm ci` a propósito: el guard no necesita dependencias
+      # (solo node:fs, node:path y node:url), así que un desajuste de la CSP
+      # sale en segundos en vez de tras instalar y testear. Y si la variable de
+      # repositorio no existe, `${{ vars.* }}` la expande a cadena vacía sin
+      # avisar, y el guard se saltaría con un verde: por eso se comprueba antes.
+      - name: Comprobar CSP
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
+        run: |
+          if [ -z "$EXPO_PUBLIC_SUPABASE_URL" ]; then
+            echo "::error::Falta la variable de repositorio EXPO_PUBLIC_SUPABASE_URL (Actions > Variables, scope Repository)"
+            exit 1
+          fi
+          node scripts/check-csp.mjs
+
       - run: npm ci
 
       - name: Lint
@@ -27,11 +42,3 @@ jobs:
 
       - name: Test
         run: npm test
-
-      # El guard de la CSP compara lo que dice vercel.json con el origen real de
-      # Supabase. Sin esta variable se queda sin contra qué comparar y se salta
-      # con un OK que no significa nada, así que aquí se le pasa la de verdad.
-      - name: Comprobar CSP
-        env:
-          EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
-        run: npm run check:csp

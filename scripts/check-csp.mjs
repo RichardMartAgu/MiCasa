@@ -44,22 +44,19 @@ function check(name, condition, detail) {
 // El origen real llega por dos caminos distintos y hay que mirar los dos.
 //
 // En CI y en Vercel las variables están en `process.env`, no en un fichero: los
-// secretos no se escriben en disco durante el build. Si este script solo leyera
-// `.env` se saltaría entero justo donde dice proteger, con un exit 0 que parece
-// un OK. En local es al revés: `expo export` tampoco lee `.env` salvo que se
-// exporte al entorno, y el fichero suele estar.
-//
-// Así que se consulta `process.env` primero y, si no está, se cae a `.env`.
-// Solo si no aparece por ninguno de los dos lados se avisa y se sale con 0: sin
-// origen contra el que comparar no hay nada que verificar, y fallar ahí
-// bloquearía una instalación recién hecha.
+// secretos no se escriben en disco durante el build. En local, en cambio, Expo
+// carga el `.env` por su cuenta al compilar (lleva `@expo/env`, que hace dotenv
+// con `parseEnv`), así que el fichero es la fuente normal. Por eso se mira
+// `process.env` primero y se cae a `.env`: cada sitio lee de donde tiene.
 let raw = process.env.EXPO_PUBLIC_SUPABASE_URL;
 
 if (!raw) {
   const envPath = path.join(root, '.env');
   if (fs.existsSync(envPath)) {
     const env = fs.readFileSync(envPath, 'utf8');
-    const match = env.match(/^EXPO_PUBLIC_SUPABASE_URL\s*=\s*(.+)$/m);
+    // El `export` de delante se acepta porque es sintaxis válida de .env y hay
+    // gente que la usa. Sin él, un .env con export se saltaba en silencio.
+    const match = env.match(/^(?:export\s+)?EXPO_PUBLIC_SUPABASE_URL\s*=\s*(.+)$/m);
     if (match) raw = match[1];
   }
 }
@@ -71,8 +68,21 @@ if (!raw) {
 raw = (raw || '').replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
 
 if (!raw) {
-  console.log('  ! sin EXPO_PUBLIC_SUPABASE_URL (ni en process.env ni en .env): se omite');
-  process.exit(0);
+  // Fallar es lo correcto aquí, no avisar. Sin origen contra el que comparar la
+  // CSP no se ha verificado nada, y el exit 0 daba un OK que no significaba
+  // nada justo en los dos sitios donde el guard dice proteger.
+  //
+  // El único caso legítimo para no tenerla es el clon recién hecho, que todavía
+  // no ha copiado el .env. Pero ese clon tampoco construye bien: `supabase.ts`
+  // lanza en el `if`, luego el build termina con exit 0 y despliega un bundle
+  // con `createClient('', '')`, que revienta al abrir la app. O sea, avisar
+  // ahí no evita una app rota, solo la esconde detrás de un verde. Por eso el
+  // escape es explícito y opt-in.
+  if (process.env.CSP_CHECK_OPTIONAL === '1') {
+    console.log('  ! sin EXPO_PUBLIC_SUPABASE_URL: se omite (CSP_CHECK_OPTIONAL=1)');
+    process.exit(0);
+  }
+  fail('EXPO_PUBLIC_SUPABASE_URL no está ni en process.env ni en .env, así que la CSP no se puede verificar.\n\n  El build necesita las variables de Supabase (ver .env.example). Si estás en un clon nuevo y solo quieres\n  comprobar que la sintaxis de la CSP es válida, usa CSP_CHECK_OPTIONAL=1.');
 }
 
 let url;
@@ -122,6 +132,24 @@ check(
   'script-src-attr bloquea los handlers inline',
   /script-src-attr\s+'none'/.test(cspHeader.value),
   "script-src-attr no está en 'none', así que onclick= y similares quedan permitidos"
+);
+
+// La anon key no aparece en la CSP (no hace falta: viaja en cabeceras, no en un
+// origen), pero `supabase.ts` lanza sin ella igual que sin la URL, con el mismo
+// resultado: build verde y app rota al abrir. Se comprueba por el mismo motivo.
+const envText = (() => {
+  const envPath = path.join(root, '.env');
+  return fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+})();
+const anonPresent = Boolean(
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+    envText.match(/^(?:export\s+)?EXPO_PUBLIC_SUPABASE_ANON_KEY\s*=\s*(\S+)/m)
+);
+
+check(
+  'EXPO_PUBLIC_SUPABASE_ANON_KEY está presente',
+  anonPresent,
+  'sin la anon key el build termina bien pero la app falla al abrir: supabase.ts lanza con createClient("", "")'
 );
 
 console.log('  ✓ la CSP de vercel.json coincide con el proyecto de Supabase');
