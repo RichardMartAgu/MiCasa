@@ -1,10 +1,22 @@
 #!/bin/bash
-# Notificaciones a Telegram.
-# Uso: bash scripts/notify-telegram.sh "Mensaje"
+# Notificaciones a Telegram. DESACTIVADAS por defecto.
+#
+# Uso: NOTIFY_TELEGRAM=1 bash scripts/notify-telegram.sh "Mensaje"
+#
+# Sin ese `NOTIFY_TELEGRAM=1` el script no envía nada: los avisos llegaban a
+# Telegram Desktop y de ahí a notificaciones de Windows en cada bloque cerrado, que
+# era ruido. Para reactivarlo hay que pedirlo a mano, no por omisión.
+#
 # Lee TELEGRAM_BOT_TOKEN de ~/telegram-opencode-bot/.env y usa el último chat_id
 # conocido (cache local). Si no hay chat_id, instruye al usuario a enviar /start.
 
 set -e
+
+if [ "${NOTIFY_TELEGRAM:-0}" != "1" ]; then
+  echo "telegram: omitido (NOTIFY_TELEGRAM!=1)"
+  exit 0
+fi
+
 BOT_DIR="${TELEGRAM_BOT_DIR:-$HOME/telegram-opencode-bot}"
 MSG="${1:?Uso: notify-telegram.sh \"mensaje\"}"
 

@@ -128,12 +128,8 @@ Antes de desplegar (local `npm run demo` o Vercel `npm run deploy:vercel`):
 
 `devops` supervisa despliegues, migraciones y secrets.
 
-# Notificaciones por Telegram
+# Notificaciones
 
-Cuando haya actualizaciones de estado relevantes para el usuario (bloque terminado, auditoría, deploy, errores), notificar por Telegram usando `telegram-opencode-bot`:
+Las notificaciones automáticas están desactivadas. No llamar a `scripts/notify-telegram.sh` ni a ningún otro canal sin que el usuario lo pida en ese momento.
 
-```bash
-bash scripts/notify-telegram.sh "Mensaje"
-```
-
-El script lee `TELEGRAM_BOT_TOKEN` de `~/telegram-opencode-bot/.env` y usa el último `chat_id` conocido de la API de Telegram.
+El estado se comunica en la conversación, y Telegram solo de forma puntual y explícita.
