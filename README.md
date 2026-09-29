@@ -116,6 +116,24 @@ Si solo quieres validar la sintaxis sin tener las variables:
 CSP_CHECK_OPTIONAL=1 npm run check:csp
 ```
 
+Ese opt-in es solo para validar sintaxis en un clon nuevo. **Nunca lo pongas en CI,
+en Vercel ni en `build:web`**: ahí el guard tiene que poder fallar.
+
+### Si cambias de proyecto de Supabase
+
+Son cuatro sitios, en este orden:
+
+1. **Actions → Variables** del repo: `EXPO_PUBLIC_SUPABASE_URL` y
+   `EXPO_PUBLIC_SUPABASE_ANON_KEY`. Sin esto, el guard se queda sin contra qué
+   comparar.
+2. **Vercel → Settings → Environment Variables**: las mismas dos, en **Production
+   y Preview**. Las de Preview son las que usa `micasa-demo`.
+3. **`.env`** local.
+4. **`connect-src` en `vercel.json`**: las dos directivas, la de `https` y la de
+   `wss`. Este es el único que rompe la app de verdad si se olvida, y el único
+   que el guard detecta. Si solo cambias la `https`, Realtime se corta en
+   silencio.
+
 ## 📁 Estructura
 
 ```
