@@ -3,9 +3,11 @@
 // Por qué: en el commit 8de2a85 el lock pasó de 1809 claves `integrity` a 1.
 // Sin ellas, `npm ci` sigue fijando versiones, pero no verifica el contenido de
 // lo que descarga: instala lo que el registry sirva en ese momento. Y como
-// `master` mergea los PRs de dependabot sin que nadie mire, y tanto CI como el
-// build de Vercel usan `npm ci`, un paquete transitivo comprometido llegaría a
-// `node_modules` sin que nada lo notara.
+// `master` es la rama por defecto, así que dependabot abre ahí, y tanto CI como
+// el build de Vercel usan `npm ci`: un paquete transitivo comprometido llegaría a
+// `node_modules` sin que nada lo notara. Hoy no hay automerge
+// (`allow_auto_merge = false`), pero el lock es la base de los dos, y este
+// comprueba esa base.
 //
 // La causa de aquel cambio se sabe reproducir: cuando `node_modules` ya existe y
 // npm resuelve desde su caché local, escribe las entradas del lock solo con
@@ -55,19 +57,31 @@ try {
 
 const entries = Object.entries(lock.packages ?? {});
 
-// La entrada raíz no es un paquete instalado, es el proyecto.
-const installed = entries.filter(([key]) => key !== '');
-const withIntegrity = installed.filter(([, value]) => typeof value.integrity === 'string');
+// La entrada raíz no es un paquete instalado, es el proyecto. De las demás se
+// excluyen las que legítimamente no llevan hash (enlaces locales, workspaces):
+// contarlas en el denominador obligaría a tolerar un porcentaje de fallsos que
+// solo existiría por ellas, y esa tolerancia dejaría pasar paquetes de verdad
+// sin verificar. Hoy el lock no tiene ninguna, así que el ratio es 1 y el umbral
+// puede estar en 100% sin falsos rojos.
+const isLocal = (value) =>
+  typeof value.resolved === 'string' && (value.resolved.startsWith('file:') || value.resolved.startsWith('link:'));
 
-if (installed.length === 0) {
-  console.error('✗ package-lock.json no tiene entradas de paquetes.');
+const installed = entries.filter(([key]) => key !== '');
+const remote = installed.filter(([, value]) => !isLocal(value));
+const withIntegrity = remote.filter(([, value]) => typeof value.integrity === 'string');
+
+if (remote.length === 0) {
+  console.error('✗ package-lock.json no tiene entradas de paquetes de registry.');
   process.exit(1);
 }
 
-const ratio = withIntegrity.length / installed.length;
+const ratio = withIntegrity.length / remote.length;
 
 console.log(`  paquetes en el lock: ${installed.length}`);
-console.log(`  con hash de integridad: ${withIntegrity.length}`);
+if (installed.length !== remote.length) {
+  console.log(`  locales (sin hash por diseño): ${installed.length - remote.length}`);
+}
+console.log(`  con hash de integridad: ${withIntegrity.length} de ${remote.length} de registry`);
 
 // Además del ratio, el lock tiene que seguir siendo completo. Un lock truncado
 // con 100 entradas, todas con hash, daba un ✓ antes: el ratio es 1 pero el
@@ -92,7 +106,7 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-if (ratio >= 0.99) {
+if (ratio === 1) {
   console.log('  ✓ el lock verifica el contenido de lo que descarga');
   process.exit(0);
 }
@@ -109,9 +123,9 @@ console.error('  Para regenerarlo bien:');
 console.error('');
 console.error(REGEN);
 console.error('');
-console.error(`  Paquetes sin hash: ${installed.length - withIntegrity.length} de ${installed.length}`);
+console.error(`  Paquetes sin hash: ${remote.length - withIntegrity.length} de ${remote.length}`);
 const sample = installed
-  .filter(([, value]) => typeof value.integrity !== 'string')
+  .filter(([, value]) => !isLocal(value) && typeof value.integrity !== 'string')
   .slice(0, 5)
   .map(([key]) => key)
   .join('\n    ');

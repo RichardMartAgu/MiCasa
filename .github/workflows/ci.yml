@@ -75,9 +75,13 @@ jobs:
       # vulnerabilidad. Con `high` el bloqueo entra justo cuando algo llega a
       # producción con riesgo real, y se sube el listón cuando se resuelva.
       #
-      # Bloquear aquí, y no en el build de Vercel, es a propósito: dependabot
-      # mergea en master sin pasar por una persona, y este step es lo que corta
-      # que un PR automático con una vulnerabilidad alta llegue a desplegarse.
+      # Bloquear aquí, y no en el build de Vercel, es a propósito: así el
+      # despliegue manual se para antes, y en CI cualquier PR con una
+      # vulnerabilidad alta queda rojo aunque alguien lo mergee a mano.
+      # Ojo con la premisa: `master` es la rama por defecto, así que dependabot
+      # abre ahí, pero hoy NO hay automerge (`allow_auto_merge = false`) y casi
+      # todos sus PR se cierran sin mergear. Si algún día se activa el automerge,
+      # este step es lo que corta que un PR automático llegue a desplegarse.
       - name: Auditoría de dependencias
         run: npm audit --omit=dev --audit-level=high
 
@@ -87,8 +91,9 @@ jobs:
       # CI y el deploy, con el token de Actions delante. `ignore-scripts=true` no
       # protege de eso, porque bloquea el postinstall pero no el import.
       #
-      # Por eso un segundo paso sobre el árbol completo, a nivel critical: no
-      # bloquea hoy (0), pero corta si algo grave se colara por la cadena de
-      # build, que es el agujero que el anterior no ve.
+      # Por eso un segundo paso sobre el árbol completo, también a nivel high:
+      # es la misma línea que el de producción pero sin `--omit=dev`. Hoy da 0
+      # en los dos, y sube a high gracias al override de tmp, que quita los
+      # advisories high de la cadena de build.
       - name: Auditoría de dependencias de build
-        run: npm audit --audit-level=critical
+        run: npm audit --audit-level=high

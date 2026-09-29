@@ -182,6 +182,17 @@ npm run check:overrides # el override de tmp, necesita npm ci previo
 npm run verify:deps     # los dos + los dos gates de npm audit
 ```
 
+### Al mergear `develop` → `master`
+
+**Esta rama tiene que estar ya en `develop` antes de mergear a `master`.** Si llega
+el `ci.yml` nuevo sin el arreglo del lock, `master` se pone rojo: hoy todavía
+tiene `canvas: ^2.11.2` en `package.json`, que arrastra `tar@6.2.1` con un advisory
+*critical*, y los dos gates de `npm audit` lo bloquean.
+
+Además `master` está **divergido**, no solo atrasado: tiene commits que `develop` no
+tiene, así que el `develop` → `master` es un merge de verdad, no un fast-forward. Hay
+que resolverlo a mano y revisar lo que sale.
+
 ## 📁 Estructura
 
 ```
