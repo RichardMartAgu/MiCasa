@@ -116,6 +116,8 @@ Si dudas de si entra, no entra: rama + worktree + PR. El coste de equivocarse es
 
 # Despliegue
 
+**Dónde están los tokens y cómo se despliega una Edge Function**: en la nota privada `~/.config/opencode/notas/micasa-deploy.md`. Vive fuera del repo a propósito (el repo es público). Leerla antes de cualquier deploy; aquí dentro no se documenta.
+
 Despliegue a Vercel es **manual**: sin integración git (`vercel git connect` NO conectado). Cada deploy se lanza con `npm run deploy:vercel`. No asumir auto-deploy tras push.
 
 Antes de desplegar (local `npm run demo` o Vercel `npm run deploy:vercel`):
