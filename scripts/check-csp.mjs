@@ -41,23 +41,47 @@ function check(name, condition, detail) {
   }
 }
 
-// El origen real viene del .env que usa el build. Sin él no se puede comprobar
-// nada, y es un caso legítimo (instalación recién hecha, documentación): en vez
-// de fallar se avisa, porque el build de Vercel sí lo tiene.
-const envPath = path.join(root, '.env');
-if (!fs.existsSync(envPath)) {
-  console.log('  ! sin .env: no se puede comprobar la CSP contra el origen real');
+// El origen real llega por dos caminos distintos y hay que mirar los dos.
+//
+// En CI y en Vercel las variables están en `process.env`, no en un fichero: los
+// secretos no se escriben en disco durante el build. Si este script solo leyera
+// `.env` se saltaría entero justo donde dice proteger, con un exit 0 que parece
+// un OK. En local es al revés: `expo export` tampoco lee `.env` salvo que se
+// exporte al entorno, y el fichero suele estar.
+//
+// Así que se consulta `process.env` primero y, si no está, se cae a `.env`.
+// Solo si no aparece por ninguno de los dos lados se avisa y se sale con 0: sin
+// origen contra el que comparar no hay nada que verificar, y fallar ahí
+// bloquearía una instalación recién hecha.
+let raw = process.env.EXPO_PUBLIC_SUPABASE_URL;
+
+if (!raw) {
+  const envPath = path.join(root, '.env');
+  if (fs.existsSync(envPath)) {
+    const env = fs.readFileSync(envPath, 'utf8');
+    const match = env.match(/^EXPO_PUBLIC_SUPABASE_URL\s*=\s*(.+)$/m);
+    if (match) raw = match[1];
+  }
+}
+
+// Se limpia una sola vez y para los dos caminos: `.env` admite
+// `URL="https://..."` y `URL=https://...  # nota`, y alguien puede exportar la
+// variable con las comillas puestas. Sin esto, el `new URL` de abajo revienta con
+// un TypeError en vez de decir qué pasa.
+raw = (raw || '').replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
+
+if (!raw) {
+  console.log('  ! sin EXPO_PUBLIC_SUPABASE_URL (ni en process.env ni en .env): se omite');
   process.exit(0);
 }
 
-const env = fs.readFileSync(envPath, 'utf8');
-const match = env.match(/^EXPO_PUBLIC_SUPABASE_URL\s*=\s*(\S+)/m);
-if (!match) {
-  console.log('  ! sin EXPO_PUBLIC_SUPABASE_URL en .env: se omite la comprobación');
-  process.exit(0);
+let url;
+try {
+  url = new URL(raw);
+} catch {
+  fail(`EXPO_PUBLIC_SUPABASE_URL no es una URL válida: ${raw}`);
 }
 
-const url = new URL(match[1]);
 const origin = url.origin;
 const wss = origin.replace(/^https:/, 'wss:');
 

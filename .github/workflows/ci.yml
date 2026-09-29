@@ -27,3 +27,11 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # El guard de la CSP compara lo que dice vercel.json con el origen real de
+      # Supabase. Sin esta variable se queda sin contra qué comparar y se salta
+      # con un OK que no significa nada, así que aquí se le pasa la de verdad.
+      - name: Comprobar CSP
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
+        run: npm run check:csp
