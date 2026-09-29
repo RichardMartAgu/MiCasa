@@ -19,15 +19,20 @@ jobs:
 
       # Va antes de `npm ci` a propósito: el guard no necesita dependencias
       # (solo node:fs, node:path y node:url), así que un desajuste de la CSP
-      # sale en segundos en vez de tras instalar y testear. Y si la variable de
+      # sale en segundos en vez de tras instalar y testear. Y si una variable de
       # repositorio no existe, `${{ vars.* }}` la expande a cadena vacía sin
-      # avisar, y el guard se saltaría con un verde: por eso se comprueba antes.
+      # avisar, y el guard se saltaría con un verde: por eso se comprueban antes.
+      #
+      # Las dos, no solo la URL: el guard trata URL y anon key igual de
+      # obligatorias, y en un runner no existe `.env` (está gitignored), así que
+      # injectar solo una dejaba el step rojo siempre.
       - name: Comprobar CSP
         env:
           EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
         run: |
-          if [ -z "$EXPO_PUBLIC_SUPABASE_URL" ]; then
-            echo "::error::Falta la variable de repositorio EXPO_PUBLIC_SUPABASE_URL (Actions > Variables, scope Repository)"
+          if [ -z "$EXPO_PUBLIC_SUPABASE_URL" ] || [ -z "$EXPO_PUBLIC_SUPABASE_ANON_KEY" ]; then
+            echo "::error::Faltan las variables de repositorio EXPO_PUBLIC_SUPABASE_URL y EXPO_PUBLIC_SUPABASE_ANON_KEY (Actions > Variables, scope Repository). Ninguna es secreta: ambas viajan en el bundle público."
             exit 1
           fi
           node scripts/check-csp.mjs

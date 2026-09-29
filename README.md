@@ -47,6 +47,10 @@ cp .env.example .env
 
 Rellena `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` en `.env`.
 
+> Las dos van también como **Actions → Variables** de GitHub (scope Repository), porque
+> el guard de la CSP las necesita en CI y ahí no existe el fichero `.env`. Ninguna es
+> secreta: las dos viajan en el bundle que descarga el navegador.
+
 ### 3. Instalar y ejecutar
 
 ```bash
@@ -87,9 +91,30 @@ Los avisos de citas y cumpleaños en **iPhone solo llegan con la app instalada**
 npm test          # 241 tests unitarios (Jest)
 npm run typecheck # TypeScript estricto
 npm run lint      # ESLint (config de Expo)
+npm run check:csp # la CSP de vercel.json contra el proyecto real
 ```
 
 La lógica pura de negocio (validación, fechas, finanzas y cumpleaños) está aislada en `src/lib/` y cubierta por tests en `__tests__/`.
+
+### `check:csp`: por qué existe
+
+La cabecera `Content-Security-Policy` de `vercel.json` tiene el origen de Supabase
+escrito a mano, porque Vercel no interpola variables de entorno en ese fichero. La
+app, en cambio, lo lee de `.env` al compilar. Si los dos dejan de coincidir —cambias
+de proyecto de Supabase y olvidas la CSP— el síntoma no es un error: la CSP bloquea
+la petición antes de que salga, la consola no muestra nada y la app simplemente deja
+de tener datos.
+
+`npm run check:csp` compara ambas cosas y falla si no cuadran. Va enganchado a
+`build:web`, a `verify:pwa` y a CI, así que se ve antes de desplegar, no en el
+navegador de un usuario.
+
+En un clon sin `.env` falla también, porque sin origen no hay nada que comprobar.
+Si solo quieres validar la sintaxis sin tener las variables:
+
+```bash
+CSP_CHECK_OPTIONAL=1 npm run check:csp
+```
 
 ## 📁 Estructura
 
