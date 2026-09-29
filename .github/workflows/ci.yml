@@ -37,6 +37,14 @@ jobs:
           fi
           node scripts/check-csp.mjs
 
+      # Antes de `npm ci`, porque este script solo lee ficheros y no necesita
+      # dependencias. Es la línea de defensa barata: si alguien regenera el lock
+      # con `node_modules` presente, npm escribe las entradas solo con `version`
+      # y se pierden los hashes de integridad. Ya pasó en 8de2a85 (de 1809 a 1),
+      # y entonces `npm ci` dejó de verificar el contenido de lo que descarga.
+      - name: Integridad del lock
+        run: node scripts/check-lock-integrity.mjs
+
       - run: npm ci
 
       - name: Lint
@@ -47,3 +55,19 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # Puerta de vulnerabilidades, solo sobre lo que se instala en producción.
+      # `--omit=dev` porque las herramientas de build (jest, @expo/cli,
+      # workbox-cli) viven en devDependencies y arrastran advisories moderate
+      # que no llegan al bundle ni se ejecutan en el navegador de nadie.
+      #
+      # El nivel es `high`, no cero a propósito: por debajo hay advisory que
+      # arreglar exige bajar Expo de SDK 57 a 46, lo que es peor que la
+      # vulnerabilidad. Con `high` el bloqueo entra justo cuando algo llega a
+      # producción con riesgo real, y se sube el listón cuando se resuelva.
+      #
+      # Bloquear aquí, y no en el build de Vercel, es a propósito: dependabot
+      # mergea en master sin pasar por una persona, y este step es lo que corta
+      # que un PR automático con una vulnerabilidad alta llegue a desplegarse.
+      - name: Auditoría de dependencias
+        run: npm audit --omit=dev --audit-level=high

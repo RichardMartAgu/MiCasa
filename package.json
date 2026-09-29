@@ -68,6 +68,7 @@
     "build:web": "expo export --platform web && npm run build:pwa && npm run check:csp",
     "build:pwa": "npm run build:sw && workbox injectManifest workbox-config.js",
     "check:csp": "node scripts/check-csp.mjs",
+    "check:lock": "node scripts/check-lock-integrity.mjs",
     "verify:pwa": "node scripts/verify-pwa.cjs && npm run check:csp",
     "demo": "bash scripts/serve-demo.sh",
     "deploy:vercel": "npx vercel --prod --yes",
@@ -75,7 +76,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
-    "build:sw": "esbuild sw-src.js --bundle --format=iife --target=es2020 --outfile=sw-bundle.js"
+    "build:sw": "esbuild sw-src.js --bundle --format=iife --target=es2020 --outfile=sw-bundle.js",
+    "verify:deps": "npm run check:lock && npm audit --omit=dev --audit-level=high"
   },
   "jest": {
     "preset": "jest-expo",
