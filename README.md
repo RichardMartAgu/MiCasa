@@ -134,6 +134,68 @@ Son cuatro sitios, en este orden:
    que el guard detecta. Si solo cambias la `https`, Realtime se corta en
    silencio.
 
+### `check:lock`: por qué existe
+
+`package-lock.json` guarda un hash (`integrity`) por cada paquete. Sin él, `npm ci`
+sigue fijando versiones pero **no verifica el contenido de lo que descarga**:
+instala lo que el registry sirva en ese momento. `master` es la rama por defecto, así
+que dependabot abre sus PRs ahí, y tanto CI como el build de Vercel usan `npm ci`: un
+paquete transitivo comprometido llegaría a `node_modules` sin que nada lo notara.
+Hoy no hay automerge (`allow_auto_merge = false`) y casi todos los PRs de dependabot
+se cierran sin mergear, pero el lock es la base de los dos, y esto comprueba esa
+base. Si algún día se activa el automerge, este es el gate que lo detiene.
+
+Este repo estuvo un tiempo sin hashes: el commit `8de2a85` dejó el lock con **1** de
+1809. Se sabe reproducir, y la causa no es un misterio: si `node_modules` ya existe
+y npm resuelve desde su caché local, escribe las entradas del lock solo con `version`,
+sin volver a pedir los metadatos al registry.
+
+Para regenerarlo bien, borra las dos cosas y usa una caché que no tengas sucia:
+
+```bash
+rm -rf node_modules package-lock.json
+npm install --cache /tmp/npm-cache-fresco
+```
+
+Si no, vuelve a pasar y el build de producción sale sin verificar. Por eso
+`check:lock` va también en el `buildCommand` de Vercel, no solo en CI: el deploy es
+manual y sale de un checkout local, que es justo donde el lock puede estar a medias.
+En CI corre antes de `npm ci` a propósito, para que salga en segundos; en Vercel
+corre después de instalar, porque Vercel instala antes del `buildCommand`, así que
+allí no evita la instalación, solo impide el despliegue.
+
+**Sobre el `overrides` de `tmp`:** `tmp@0.0.33` llega por `workbox-cli` →
+`inquirer` → `external-editor`, toda cadena de desarrollo, y arrastraba dos
+advisories *high*. El `overrides` lo sube a `^0.2.5`, que es la primera versión
+corregida. No se ejecuta en producción ni en el navegador: `workbox injectManifest`
+no pasa por las preguntas interactivas de `inquirer`. Se sube porque `npm audit` lo
+marca *high* en el árbol completo, y con él fuera el gate de auditoría de build
+puede estar en `high` (que es donde está) sin que ese advisory lo tenga bloqueando.
+
+Como el override saca a `tmp` del rango que declara su consumidor
+(`external-editor` pide `^0.0.33`), hay un `check:overrides` que confirma que la
+versión forzada sigue exponiendo la API que él llama. Va en un script aparte del
+del lock, y después de `npm ci`, porque necesita `node_modules` y el del lock no
+puede tenerlo: se ejecuta en un runner donde aún no se ha instalado nada. Los tests
+del repo no cubren esa cadena, porque es la CLI interactiva de workbox.
+
+```bash
+npm run check:lock      # integridad del lock, sin dependencias
+npm run check:overrides # el override de tmp, necesita npm ci previo
+npm run verify:deps     # los dos + los dos gates de npm audit
+```
+
+### Al mergear `develop` → `master`
+
+**Esta rama tiene que estar ya en `develop` antes de mergear a `master`.** Si llega
+el `ci.yml` nuevo sin el arreglo del lock, `master` se pone rojo: hoy todavía
+tiene `canvas: ^2.11.2` en `package.json`, que arrastra `tar@6.2.1` con un advisory
+*critical*, y los dos gates de `npm audit` lo bloquean.
+
+Además `master` está **divergido**, no solo atrasado: tiene commits que `develop` no
+tiene, así que el `develop` → `master` es un merge de verdad, no un fast-forward. Hay
+que resolverlo a mano y revisar lo que sale.
+
 ## 📁 Estructura
 
 ```

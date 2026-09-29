@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build:web",
+  "buildCommand": "npm run check:lock && npm run check:overrides && npm run build:web",
   "outputDirectory": "dist",
   "framework": null,
   "rewrites": [
