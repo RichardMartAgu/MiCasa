@@ -1,8 +1,6 @@
 # INDEX — MiCasa
 
-App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 19 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.**
-
-> Warning: `/home/richard/MiCasa` contiene una modificación ajena en `app.json`, en rama `develop`. No tocarla.
+App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.**
 
 ## Inventario completo
 
@@ -66,8 +64,8 @@ App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 19 `
 
 ## Proyecto
 
-- Móvil: `src/`, Expo Router, paleta Dusk.
-- Web: `web/`, Astro y componentes compartidos.
+- Móvil y web: `src/`, Expo Router, paleta Dusk. La web es el mismo código (`expo export --platform web`) con Workbox encima.
+- No existe `web/`: es la PWA construida desde `src/`.
 - Datos: Supabase, PostgreSQL, RLS y Realtime.
-- Calidad: `npx tsc --noEmit`, `npx expo lint`, `npx jest`.
+- Calidad: `npx tsc --noEmit`, `npx expo lint`, `npx jest`, `npm run verify:pwa`.
 - Deploy Vercel: manual con `npm run deploy:vercel` (ver puntero de `AGENTS.md` → nota privada de tokens).

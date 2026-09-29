@@ -60,6 +60,6 @@
   "cards": [
     { "dot": "cyan", "title": "Pipeline", "items": ["Orquestador descompone en bloques", "Back/Front ejecuta, Security audita, QA verifica", "DevOps despliega al final"] },
     { "dot": "rose", "title": "Regla dura", "items": ["BLOQUEADO o FALLA → remediar y reauditar", "Nada se commitea sin APROBADO + PASA"] },
-    { "dot": "emerald", "title": "Verificación", "items": ["npx tsc --noEmit", "npx expo lint", "npx jest (+ checks de web/)"] }
+    { "dot": "emerald", "title": "Verificación", "items": ["npx tsc --noEmit", "npx expo lint", "npx jest (+ npm run verify:pwa si toca la web)"] }
   ]
 }
