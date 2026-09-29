@@ -13,7 +13,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `
 | [`CLAUDE.md`](CLAUDE.md) | Redirección a `AGENTS.md`. | Vigente; 1 línea. |
 | [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-09-29. |
 | [`README.md`](README.md) | Producto, funcionalidades, stack, puesta en marcha, calidad, estructura, modelo de datos. | Vigente. |
-| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global para continuar sesiones. **Empezar por «Pendientes»; las sesiones están en orden inverso (la primera «Sesión actual» es la más reciente).** | Actualizado 2026-09-28. |
+| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global para continuar sesiones. **Empezar por «Pendientes»; las sesiones están en orden inverso (la primera «Sesión actual» es la más reciente).** | Actualizado 2026-09-29. |
 
 ### Bugs resueltos o documentados
 
@@ -42,7 +42,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `
 
 | Dónde | Secciones (`##`) |
 |---|---|
-| `docs/estado-proyecto.md` | Pendientes · Riesgos aceptados · Sesiones (inverso) · Reglas de cierre · Plantilla de bloque · Warning |
+| `docs/estado-proyecto.md` | Pendientes · CORS (falso positivo) · Riesgos aceptados · Sesiones (inverso) · Reglas de cierre · Plantilla de bloque |
 | `docs/web-push.md` | Qué resuelve · Alcance · Arquitectura · Ficheros · Secretos · Detalles que costaron entender · Auditoría · Verificación · Riesgos · **CORS** · **«Si el botón Enviar falla otra vez»** · Aviso de prueba · Qué falta · Contexto de rama · **Rotar VAPID** |
 | `docs/pwa-installable.md` | Objetivo · Gotcha `web.output: single` · Archivos · Registro del SW · Decisiones security · Verificación · Alcance · Qué falta |
 | `docs/usuarios-prueba.md` | Por qué existen · `qa-toggle@micasa.dev` · Recrear cuenta · Reglas de seguridad |

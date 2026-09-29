@@ -4,12 +4,79 @@
 Viven aquí y no en el chat, que es donde se pierden. Lo que sigue se confirmó después
 de cerrar los bloques; nada de esto es hipótesis.
 
-### 1. Falta CSP en `vercel.json`
+**No hay ninguno abierto.** Los dos que hubo en esta sesión se cerraron:
 
-`vercel.json` lleva `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` y
-`Permissions-Policy`, pero **no hay `Content-Security-Policy`**. La app carga JavaScript
-de un bundle propio, así que una CSP restrictiva es viable. Anotado en
-`docs/pwa-installable.md` (F4) desde el principio y sigue abierto.
+- **CSP en `vercel.json`** — cerrada en el PR #86 (`d292a06`), desplegada y verificada
+  contra producción el 2026-09-29. Se añadió además `scripts/check-csp.mjs`, que
+  falla si la CSP y el origen real de Supabase dejan de coincidir, y va enganchado a
+  `build:web`, a `verify:pwa` y a CI. Ver la sesión de abajo.
+- **Allowlist de CORS de las previews de Vercel** — cerrada por el PR #83. Verificado
+  contra producción, no hay nada pendiente. Ver "CORS: no era un pendiente" más abajo.
+
+---
+
+## CORS: no era un pendiente
+
+Apareció como tarea abierta en varios informes de `security` y `qa-test` durante tres
+rondas de la sesión del 2026-09-29, y acabó en el resumen de la sesión como "pendiente
+de arreglar". **No lo estaba.** El PR #83 ya lo había resuelto.
+
+Medido contra producción el 2026-09-29, preflight contra
+`https://sxgsqvwvugdklycpqxiu.supabase.co/functions/v1/send-web-push`:
+
+| `Origin` | Resultado |
+|---|---|
+| `https://micasa-demo.vercel.app` | 204, permitido |
+| `https://micasa-demo-*-richardmartagus-projects.vercel.app` | 204, permitido |
+| `http://localhost:8081` | 204, permitido |
+| `https://otro-ignorado.com` | **403, denegado** |
+
+La API REST responde `access-control-allow-origin: *`. Y las Redirect URLs de Auth
+tampoco son un problema: el único flujo OAuth del repo es Google, y en
+`sxgsqvwvugdklycpqxiu` ese provider no está habilitado, así que la ruta no se usa
+(`/auth/v1/authorize` responde `Unsupported provider`).
+
+**De dónde salió el falso positivo**, para que no se repita: un 403 con un preflight
+desde el puerto `8099`, que es un puerto de prueba que alguien levantó a mano. Como
+`DEFAULT_ALLOWED_ORIGINS` (`supabase/functions/send-web-push/cors.ts:36`) solo admite
+`localhost:8080` y `8081`, ese origen se deniega, y el 403 se leyó como un fallo de
+producción cuando era del harness. Repetido desde `localhost:8080` el mismo preflight
+devuelve 204 con el ACAO correcto.
+
+**Lección operativa:** un 403 de CORS no dice por sí solo que la allowlist esté mal.
+Hay que mirar el `Origin` que lo produjo. Si viene de un puerto o un host que nadie
+usa en producción, es ruido del propio test. QA ya lo había descartado en su informe
+como artefacto del harness; aquí se recoge para que la siguiente sesión no lo vuelva
+a sacar de la lista.
+
+## Sesión actual — 2026-09-29 (CSP en la web, y cerrar tres PR)
+
+- Objetivo: añadir `Content-Security-Policy` a la web, que era el único hueco que
+  quedaba de los headers de `vercel.json`.
+- Archivos: `vercel.json`, `scripts/check-csp.mjs` (nuevo), `package.json`,
+  `.github/workflows/ci.yml`, `README.md`.
+- Security: **APROBADO**, tras cuatro rondas (REVISAR → REVISAR → REVISAR →
+  BLOQUEADO → APROBADO).
+- QA: **PASA**. Rutas autenticadas con credenciales reales, 0 violaciones, Realtime
+  abierto y Edge Function con 200 bajo la CSP.
+- Commits: `ba6a549`, `efa2454`, `1c9e016`, `8cc1562`, `b1babff`, `22b2043`. Mergeado
+  como `d292a06` (PR #86).
+- Despliegue: manual, `d292a06` en `micasa-demo.vercel.app`. Verificado en producción:
+  login real (`POST /auth/v1/token` 200, `rest/v1/casas` 200), WebSocket de Realtime
+  abierto, `example.com` bloqueado, 0 violaciones de consola, iPhone 13 y Pixel 5 sin
+  scroll horizontal, las 7 rutas SPA con CSP y `sw.js` con su `no-cache`.
+- Variables de Actions creadas (no son secretos, van en el bundle público):
+  `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY`. Las necesita el guard,
+  que en CI no tiene `.env`.
+- Nota: en la ronda 3 de auditoría, el guard seguía pudiendo salir en verde sin
+  comprobar, y en la 4 el step de CI quedaba rojo siempre porque inyectaba solo la URL
+  y el guard trata también la anon key como obligatoria. Los dos eran reales; los
+  detectamos tarde porque las pruebas de CI se hicieron en local con `.env` presente,
+  y ahí el fallo se tapaba. **Replicar el entorno del runner (sin `.env`) es lo que
+  los hizo visibles.**
+- Siguiente: nada abierto. Las vulnerabilidades de dependencias que marca `npm audit`
+  (`tar` critical y sus transversales) son preexistentes y no las introduce este
+  bloque; los PRs de dependabot están cerrados y tratarlas es otro bloque.
 
 ---
 
@@ -298,7 +365,10 @@ Lo que se descartó por el camino: `skipWaiting()` en `install` + recarga en `co
 
 ## Warning
 
-`/home/richard/MiCasa` contiene una modificación ajena en `app.json`, en rama `develop`. No tocar ni incluir ese archivo en esta feature.
+Este aviso se retiró el 2026-09-29: la modificación de `app.json` que describía ya no
+está en el árbol, así que el aviso solo hacía ruido: invitaba a no tocar un fichero que
+no había que tocar porque estaba limpio. Si vuelve a aparecer una modificación
+ajena en `develop`, se documenta aquí en el momento; no de forma preventiva.
 
 ## Plantilla para cerrar bloque
 
