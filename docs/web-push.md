@@ -112,7 +112,7 @@ Del bloque de CORS:
 - Con `WEB_PUSH_ALLOWED_ORIGINS=https://preview-abc.vercel.app`: ese origen entra y `micasa-demo.vercel.app` se queda sin permiso, que es el comportamiento buscado al sustituir la lista.
 - `npx tsc --noEmit`, `npx expo lint` y `npx jest` (49/49 suites, 653/653) limpios, aunque este bloque no toca la app. Ojo: `tsconfig.json` excluye `supabase/`, así que esos checks no dicen **nada** de la Edge Function. Para eso están `deno check` y `deno test`.
 
-**No verificado:** en un navegador real. Playwright no arranca en esta máquina (falta `libnspr4.so` y no hay sudo para instalarla), así que la suscripción, el banner de instalación y la recepción de un push siguen sin probarse de extremo a extremo. El CORS está verificado con un preflight de verdad contra la función local, pero **la Edge Function de producción todavía no tiene este código**: hay que desplegarla y repetir el `OPTIONS` contra `sxgsqvwvugdklycpqxiu`.
+**No verificado:** en un navegador real. Playwright no arranca en esta máquina (falta `libnspr4.so` y no hay sudo para instalarla), así que la suscripción, el banner de instalación y la recepción de un push siguen sin probarse de extremo a extremo. El CORS **sí está verificado contra producción** (v11, 2026-09-29): `OPTIONS` con la preview → `204`, con producción → `204`, con orígenes ajenos → `403`, y `POST` sin `Origin` → `401` (cron intacto).
 
 ## Riesgos aceptados y límites
 
@@ -162,6 +162,43 @@ Si se define la variable, su lista **sustituye** a la de por defecto (no se suma
 
 **El cron no se rompe.** `pg_net` llama sin `Origin`. Sin cabecera `Origin` no hay a quién devolverle permiso, y `corsHeaders` devuelve solo `Vary: Origin`. Lo que **no** hace la función es exigir un origen: si lo exigiera, el `POST` del cron se quedaría sin recordatorios. Hay un test que llama al handler sin `Origin` y comprueba que responde `401` (igual que antes) y no un rechazo por CORS.
 
+## Si el botón «Enviar» falla otra vez (registro del fix del 2026-09-29)
+
+**Síntoma.** El botón **Enviar** de Ajustes funciona en `micasa-demo.vercel.app` pero falla en cualquier *deployment de preview* de Vercel (`micasa-demo-<código>-richardmartagus-projects.vercel.app`). En la consola: error de red en la petición `OPTIONS` (Failed to fetch). **No es la suscripción, no es la sesión, no es VAPID**: el navegador ni siquiera manda el `POST`, porque el preflight sale `403`.
+
+**Diagnóstico en un minuto** (contra `sxgsqvwvugdklycpqxiu`):
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -X OPTIONS \
+  "https://sxgsqvwvugdklycpqxiu.supabase.co/functions/v1/send-web-push?mode=test" \
+  -H "Origin: <origen-de-la-preview>" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: authorization,content-type"
+```
+
+| Respuesta | Qué es | Arreglo |
+|---|---|---|
+| `204` | CORS bien; el fallo es otro (sesión, suscripción o `WEB_PUSH_ALLOWED_ORIGINS` mirando en otro sitio) | Mirar la respuesta del `POST ?mode=test` con sesión, no el CORS |
+| `403` con el patrón de la tabla de más arriba presente | O la función corre **código viejo** (v10 o anterior), o la variable `WEB_PUSH_ALLOWED_ORIGINS` está definida y **sustituye** la lista entera sin el patrón | Ver puntos 1 y 2 de abajo |
+| `403` con un origen que ni siquiera parece preview | Correcto: la allowlist rechaza orígenes ajenos | Nada que arreglar |
+
+**1. Función desplegada con código viejo.** El patrón vive en `DEFAULT_ALLOWED_ORIGINS` (`cors.ts`), que se compila **en el despliegue**: si la Edge Function no se redespliega, el cambio no existe en producción aunque esté en el repo. Comprobar la versión en el dashboard de Supabase → Edge Functions → `send-web-push` (la que trae el fix es la **v11**; una versión menor = código viejo) y redesplegar. Ojo: el CLI `supabase functions deploy` no funciona en esta máquina (no hay token); la vía válida está en la nota privada de despliegue (`~/.config/opencode/notas/micasa-deploy.md`, apuntada desde `AGENTS.md`).
+
+**2. `WEB_PUSH_ALLOWED_ORIGINS` definida.** Si la variable existe en la función, su lista **sustituye** a la de por defecto: quien la escribió tiene que repetir el patrón de preview a mano, o las previews vuelven a caer en `403` *con la función actualizada*. Se revisa en el dashboard de Supabase → Edge Functions → Secretes/vars. Si no hace falta, quitarla: sin la variable manda la lista por defecto, que ya lleva el patrón.
+
+**3. El host de preview cambió de formato.** Vercel puede emitir hosts con la rama delante (`git-<rama>-<hash>-…`): entran porque el `*` casa con cualquier fragmento de un segmento. Si algún día Vercel cambia el patrón de host por algo con puntos dentro del segmento, ampliar o ajustar la fila en `cors.ts` y añadir el caso a `cors.test.ts` (los tests de rechazo están para que el ajuste no abra la allowlist entera).
+
+**Verificación tras cualquier arreglo** (misma tabla que arriba, aplicada a la preview):
+
+| Origen | Esperado |
+|---|---|
+| preview de este proyecto | `204` |
+| `https://micasa-demo.vercel.app` | `204` |
+| otro proyecto / otro dominio / sufijo montado | `403` |
+| `POST` sin `Origin` (cron) | `401` |
+
+Y los tests: `npx -y deno test --allow-env --allow-read --node-modules-dir=auto supabase/functions/send-web-push/` → 54/54.
+
 ## Aviso de prueba
 
 Ajustes tiene un botón **Enviar** junto a "Aviso de prueba" que pide un push de prueba a la Edge Function (`?mode=test`). Sirve para comprobar que la suscripción está viva y que el service worker pinta la notificación, sin esperar a que llegue un recordatorio real, que solo salta en la ventana de 3 h tras las 09:00 locales.
@@ -173,21 +210,14 @@ Cómo está protegido:
 - Enfriamiento de 5 minutos, apoyado en la clave única de `push_log` (`test:<userId>:<bucket>`) para que funcione entre réplicas de la función. Si no queda ninguna suscripción activa se libera la reserva, para que un reintento no espere.
 - `renotify: true` a diferencia de los recordatorios: dos pruebas seguidas deben sonar, que es justo lo que se quiere comprobar.
 - Solo se muestra en web y cuando el navegador soporta push.
-- Necesita CORS: es una llamada entre orígenes con cabecera `Authorization`, y sin CORS el navegador no la deja salir. Ver la sección **CORS**; hasta que la Edge Function se despliegue con ese cambio, el botón no funciona aunque todo lo demás esté bien.
+- Necesita CORS: es una llamada entre orígenes con cabecera `Authorization`, y sin CORS el navegador no la deja salir. Ver la sección **CORS**; desplegado en producción desde la v11 (2026-09-29).
 
-Verificado en producción: sin sesión `401`, con un token inválido `401`, y con el secreto del dispatcher en lugar de sesión `401` (no se cuela por la otra vía). El dispatcher sigue respondiendo `202`. El CORS está verificado solo en local (ver **Verificación**).
+Verificado en producción: sin sesión `401`, con un token inválido `401`, y con el secreto del dispatcher en lugar de sesión `401` (no se cuela por la otra vía). El dispatcher sigue respondiendo `202`. El CORS está verificado contra producción desde la v11 (ver **Verificación**) y contra local con el preflight real.
 
 ## Qué falta
 
-1. **Desplegar la Edge Function**: `supabase functions deploy send-web-push`. Ojo a que se suban los tres ficheros nuevos (`handler.ts` y `cors.ts` van aparte de `index.ts`); con el CLI se sube el directorio entero, pero si se despliega a mano hay que incluirlos.
-2. Repetir el preflight contra producción y comprobar que ya no sale `405`:
-   ```bash
-   curl -i -X OPTIONS "https://sxgsqvwvugdklycpqxiu.supabase.co/functions/v1/send-web-push?mode=test" \
-     -H "Origin: https://micasa-demo.vercel.app" \
-     -H "Access-Control-Request-Method: POST" \
-     -H "Access-Control-Request-Headers: authorization,content-type"
-   ```
-   Y el dispatcher, que es lo que no debe romperse: `POST` con `x-cron-secret` y **sin** `Origin` → `202`, como hasta ahora.
+1. ~~**Desplegar la Edge Function**~~ — hecho, v11 desplegada el 2026-09-29 (incluye el CORS y el patrón de preview).
+2. ~~**Repetir el preflight contra producción**~~ — hecho: preview `204`, producción `204`, orígenes ajenos `403`, `POST` sin `Origin` `401`. La matriz de comprobación vive ahora en la sección **Si el botón «Enviar» falla otra vez**.
 3. Prueba en navegador real: activar el interruptor en Ajustes y pulsar **Enviar** en "Aviso de prueba". Con eso queda verificado el envío real de extremo a extremo; para un recordatorio de verdad, añadir una cita para mañana con recordatorio "Día antes" y comprobarlo a las 09:00 locales.
 4. Mergear `#51` (PWA) y abrir el PR de este bloque: `develop` exige revisión aprobatoria y el auto-merge está deshabilitado en el repo.
 5. Decidir el destino del PR `#48` (`feat(web): oculta notificaciones en web`), que choca con esta implementación: en web las notificaciones **sí** funcionan ahora.
