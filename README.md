@@ -134,6 +134,37 @@ Son cuatro sitios, en este orden:
    que el guard detecta. Si solo cambias la `https`, Realtime se corta en
    silencio.
 
+### `check:lock`: por qué existe
+
+`package-lock.json` guarda un hash (`integrity`) por cada paquete. Sin él, `npm ci`
+sigue fijando versiones pero **no verifica el contenido de lo que descarga**:
+instala lo que el registry sirva en ese momento. Como `master` mergea los PRs de
+dependabot sin que nadie mire, y tanto CI como el build de Vercel usan `npm ci`, un
+paquete transitivo comprometido llegaría a `node_modules` sin que nada lo notara.
+
+Este repo estuvo un tiempo sin hashes: el commit `8de2a85` dejó el lock con **1** de
+1809. Se sabe reproducir, y la causa no es un misterio: si `node_modules` ya existe
+y npm resuelve desde su caché local, escribe las entradas del lock solo con `version`,
+sin volver a pedir los metadatos al registry.
+
+Para regenerarlo bien, borra las dos cosas y usa una caché que no tengas sucia:
+
+```bash
+rm -rf node_modules package-lock.json
+npm install --cache /tmp/npm-cache-fresco
+```
+
+Si no, vuelve a pasar y el build de producción sale sin verificar. Por eso
+`check:lock` va también en el `buildCommand` de Vercel, no solo en CI: el deploy es
+manual y sale de un checkout local, que es justo donde el lock puede estar a medias.
+
+**Sobre el `overrides` de `tmp`:** `tmp@0.0.33` llega por `workbox-cli` →
+`inquirer` → `external-editor`, toda cadena de desarrollo, y arrastraba dos
+advisories *high*. El `overrides` lo sube a `^0.2.5`, que es la primera versión
+corregida. No se ejecuta en producción ni en el navegador; se sube porque
+`npm audit` lo marca *high* en el árbol completo y prefiero que el gate de CI pueda
+estar en `critical` sin que ese advisory lo tenga bloqueando.
+
 ## 📁 Estructura
 
 ```

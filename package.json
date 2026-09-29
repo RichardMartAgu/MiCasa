@@ -77,7 +77,7 @@
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
     "build:sw": "esbuild sw-src.js --bundle --format=iife --target=es2020 --outfile=sw-bundle.js",
-    "verify:deps": "npm run check:lock && npm audit --omit=dev --audit-level=high"
+    "verify:deps": "npm run check:lock && npm audit --omit=dev --audit-level=high && npm audit --audit-level=critical"
   },
   "jest": {
     "preset": "jest-expo",
@@ -98,5 +98,8 @@
       "<rootDir>/supabase/"
     ]
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "tmp": "^0.2.5"
+  }
 }

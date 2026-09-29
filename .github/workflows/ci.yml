@@ -71,3 +71,15 @@ jobs:
       # que un PR automático con una vulnerabilidad alta llegue a desplegarse.
       - name: Auditoría de dependencias
         run: npm audit --omit=dev --audit-level=high
+
+      # El step anterior solo mira lo que va a producción, con `--omit=dev`. Ese
+      # es el modelo de amenaza del navegador de un usuario, pero no el del build:
+      # Metro, @expo/cli y jest importan las devDependencies en runtime durante
+      # CI y el deploy, con el token de Actions delante. `ignore-scripts=true` no
+      # protege de eso, porque bloquea el postinstall pero no el import.
+      #
+      # Por eso un segundo paso sobre el árbol completo, a nivel critical: no
+      # bloquea hoy (0), pero corta si algo grave se colara por la cadena de
+      # build, que es el agujero que el anterior no ve.
+      - name: Auditoría de dependencias de build
+        run: npm audit --audit-level=critical
