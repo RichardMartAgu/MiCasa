@@ -138,9 +138,12 @@ Son cuatro sitios, en este orden:
 
 `package-lock.json` guarda un hash (`integrity`) por cada paquete. Sin él, `npm ci`
 sigue fijando versiones pero **no verifica el contenido de lo que descarga**:
-instala lo que el registry sirva en ese momento. Como `master` mergea los PRs de
-dependabot sin que nadie mire, y tanto CI como el build de Vercel usan `npm ci`, un
+instala lo que el registry sirva en ese momento. `master` es la rama por defecto, así
+que dependabot abre sus PRs ahí, y tanto CI como el build de Vercel usan `npm ci`: un
 paquete transitivo comprometido llegaría a `node_modules` sin que nada lo notara.
+Hoy no hay automerge (`allow_auto_merge = false`) y casi todos los PRs de dependabot
+se cierran sin mergear, pero el lock es la base de los dos, y esto comprueba esa
+base. Si algún día se activa el automerge, este es el gate que lo detiene.
 
 Este repo estuvo un tiempo sin hashes: el commit `8de2a85` dejó el lock con **1** de
 1809. Se sabe reproducir, y la causa no es un misterio: si `node_modules` ya existe
@@ -166,8 +169,8 @@ allí no evita la instalación, solo impide el despliegue.
 advisories *high*. El `overrides` lo sube a `^0.2.5`, que es la primera versión
 corregida. No se ejecuta en producción ni en el navegador: `workbox injectManifest`
 no pasa por las preguntas interactivas de `inquirer`. Se sube porque `npm audit` lo
-marca *high* en el árbol completo, y con él fuera el gate de `critical` puede estar
-ahí sin que ese advisory lo tenga bloqueando.
+marca *high* en el árbol completo, y con él fuera el gate de auditoría de build
+puede estar en `high` (que es donde está) sin que ese advisory lo tenga bloqueando.
 
 Como el override saca a `tmp` del rango que declara su consumidor
 (`external-editor` pide `^0.0.33`), hay un `check:overrides` que confirma que la

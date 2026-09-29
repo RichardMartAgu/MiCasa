@@ -63,8 +63,23 @@ const entries = Object.entries(lock.packages ?? {});
 // solo existiría por ellas, y esa tolerancia dejaría pasar paquetes de verdad
 // sin verificar. Hoy el lock no tiene ninguna, así que el ratio es 1 y el umbral
 // puede estar en 100% sin falsos rojos.
+//
+// Los tres casos que se excluyen, por qué no llevan hash y cómo los reconoce npm:
+// - `link: true`: un workspace del monorepo. Su `resolved` es una ruta relativa
+//   ("packages/foo"), no un URL, así que buscar solo prefijos de protocolo no lo
+//   habría pillado.
+// - `inBundle: true`: dependencia empaquetada dentro de otra. No tiene resolved
+//   ni integrity, porque no se descarga aparte.
+// - `resolved` con esquema file:/link:: dependencia local.
+//
+// Lo que NO se excluye, a propósito: si falta `resolved`, la entrada cuenta como
+// remota y sin hash, y el gate falla. Ese es exactamente el camino de la regresión
+// de 8de2a85, así que es el que tiene que seguir cortando.
 const isLocal = (value) =>
-  typeof value.resolved === 'string' && (value.resolved.startsWith('file:') || value.resolved.startsWith('link:'));
+  value.link === true ||
+  value.inBundle === true ||
+  (typeof value.resolved === 'string' &&
+    (value.resolved.startsWith('file:') || value.resolved.startsWith('link:')));
 
 const installed = entries.filter(([key]) => key !== '');
 const remote = installed.filter(([, value]) => !isLocal(value));
