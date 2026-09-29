@@ -10,13 +10,14 @@ declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void };
 import { corsHeaders, jsonResponse, preflightResponse, resolveAllowedOrigins } from "./cors.ts";
 import {
   appointmentQueryUpperBound,
+  birthdayChoiceFor,
   buildAppointmentDispatches,
   buildBirthdayDispatches,
   dedupeKey,
   isPushEnabled,
-  isValidChoice,
   type AppointmentRow,
   type ContactRow,
+  type PushPreference,
   type TargetedDispatch,
 } from "./reminders.ts";
 
@@ -256,7 +257,10 @@ async function buildDispatches(
       continue;
     }
 
-    const pref = (prefs ?? null) as { birthday_choice: string; enabled: boolean } | null;
+    // Sin cast: `PushPreference` ya modela la fila tal y como es, con
+    // `birthday_choice` sin validar, que es lo que permite que
+    // `birthdayChoiceFor` pueda mirar un valor ilegible.
+    const pref = (prefs ?? null) as PushPreference | null;
     if (!isPushEnabled(pref)) continue;
 
     const casaIds = await fetchCasaIds(db, group.userId);
@@ -265,7 +269,7 @@ async function buildDispatches(
     const appointments = await fetchAppointments(db, group.userId, casaIds, now, from);
     out.push(...buildAppointmentDispatches(appointments, context).map((d) => ({ ...d, ...target })));
 
-    const choice = isValidChoice(pref?.birthday_choice) ? pref.birthday_choice : "both";
+    const choice = birthdayChoiceFor(pref);
     if (choice !== "none") {
       const contacts = await fetchBirthdayContacts(db, casaIds);
       out.push(...buildBirthdayDispatches(contacts, choice, context).map((d) => ({ ...d, ...target })));

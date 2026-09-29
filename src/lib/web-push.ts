@@ -26,9 +26,9 @@ import { Platform } from 'react-native';
 
 import type { User } from '@supabase/supabase-js';
 
-import type { ReminderChoice } from './notification-schedule';
+import { reminderChoices, type ReminderChoice } from './notification-schedule';
 import { supabase } from './supabase';
-import { isTimeout, withTimeout, TimeoutError } from './with-timeout';
+import { errorText, isTimeout, withTimeout, TimeoutError } from './with-timeout';
 import {
   classifySubscribeFailure,
   SUBSCRIBE_FAILURE_MESSAGES,
@@ -39,6 +39,7 @@ import {
   CLAVES_PASO_MS,
   CLAVES_TIMEOUT_MS,
   PERMISSION_TIMEOUT_MS,
+  PREFS_READ_TIMEOUT_MS,
   SW_READY_TIMEOUT_MS,
   WEB_PUSH_TIMEOUT_MS,
 } from '@/lib/web-push-timeouts';
@@ -991,9 +992,66 @@ export async function syncPushPreferences(
   if (error) throw new Error(error.message);
 }
 
-function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return 'error desconocido';
+/**
+ * La preferencia de cumpleaños tal y como está guardada, que es el otro lado de
+ * `syncPushPreferences` y la fila que lee la Edge Function para decidir a quién
+ * avisa con la app cerrada.
+ *
+ * En nativo no hace falta: ahí la preferencia vive en AsyncStorage y la lee
+ * `getBirthdayChoice`. El hueco era que en web solo había escritura, y por eso la
+ * fila se guardaba bien y nadie la leía nunca: el selector de Ajustes arrancaba
+ * siempre en "sin aviso" por mucho que estuviera guardado.
+ *
+ * Devuelve `null` cuando no se puede saber qué hay guardado, y `null` no es lo
+ * mismo que `'none'`. La diferencia importa porque quien llama pinta chips: con un
+ * `'none'` de repliegue, un chip marcado que en realidad nadie eligió invites a
+ * pulsarlo para "confirmarlo", y eso escribe `'none'` encima de una fila que
+ * podía seguir en `both`. `null` deja el selector sin nada marcado, que sí dice la
+ * verdad: todavía no se sabe.
+ */
+export async function getStoredBirthdayChoice(user: User | null): Promise<ReminderChoice | null> {
+  if (!user) return null;
+
+  let value: unknown = null;
+  try {
+    // `Promise.resolve` y no el builder suelto: el tope de `withTimeout` espera
+    // una promesa, y el constructor de la consulta de supabase es un "thenable".
+    const { data, error } = await withTimeout(
+      Promise.resolve(
+        supabase
+          .from('push_preferences')
+          .select('birthday_choice')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+      ),
+      PREFS_READ_TIMEOUT_MS,
+      'la lectura de la preferencia de cumpleaños no ha terminado a tiempo',
+    );
+    if (error) throw new Error(error.message);
+    value = data?.birthday_choice ?? null;
+  } catch (error) {
+    // Un fallo aquí cae a `null` en vez de propagarse, por tres motivos que van
+    // juntos: quien llama no tiene dónde mostrar un motivo (el selector solo sabe
+    // pintar chips), un rechazo sin capturado ahí dejaba el interruptor de Ajustes
+    // deshabilitado hasta recargar, y sobre todo esta lectura no decide nada: no
+    // escribe, así que la fila de la base sigue siendo la buena y el servidor
+    // sigue avisando como la persona lo dejó. Decir "no sé" y no "sin aviso"
+    // tampoco pisa nada, y es lo que permite a quien llama no marcar ningún chip.
+    // El motivo se anota en consola, que es donde se puede mirar.
+    console.warn('No se pudo leer la preferencia de cumpleaños guardada', errorText(error));
+    return null;
+  }
+
+  // Mismo criterio de validez que `isValidChoice` de la Edge Function, y con la
+  // lista compartida en vez de repetida: los cuatro valores de `reminderChoices`
+  // y nada más. La columna es `text` con un `check` en la base, pero el cliente
+  // no puede dar por hecho que la fila la escribió esta versión del código.
+  //
+  // Sin fila (`maybeSingle` devuelve `data: null`) y con valor ilegible se
+  // devuelven las dos cosas como `null`, no como `'none'`. El servidor también
+  // avisa por lo mínimo en cuanto no sabe qué leer, así que los dos lados
+  // coinciden: quien no sabe, no afirma.
+  return reminderChoices.includes(value as ReminderChoice) ? (value as ReminderChoice) : null;
 }
 
 export type TestPushResult =

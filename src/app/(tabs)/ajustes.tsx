@@ -51,13 +51,14 @@ import {
   disableWebPush,
   enableWebPush,
   getActiveSubscription,
+  getStoredBirthdayChoice,
   isPushSupported,
   notificationPermission,
   sendTestPush,
   syncPushPreferences,
   WEB_PUSH_TIMEOUT_MS,
 } from '@/lib/web-push';
-import { withTimeout } from '@/lib/with-timeout';
+import { errorText, withTimeout } from '@/lib/with-timeout';
 import { validateCasaName, validateInviteCode } from '@/lib/validation';
 
 /**
@@ -119,7 +120,18 @@ export default function AjustesScreen() {
   const [loading, setLoading] = useState(false);
 
   const [notificationsEnabled, setNotificationsEnabledState] = useState(false);
-  const [birthdayChoice, setBirthdayChoiceState] = useState<ReminderChoice>('none');
+  // `null` y no `'none'` en el arranque, y no por descuido: es "todavía no se sabe
+  // qué hay guardado", que es un estado distinto de "no hay nada guardado". Con
+  // `'none'` como valor inicial, una lectura que falla dejaba el chip "Sin aviso"
+  // marcado como si fuera el valor real, y pulsarlo para "confirmarlo" escribía
+  // `'none'` encima de una fila que podía seguir en `both`. Con `null` no se marca
+  // ningún chip, que sí dice la verdad.
+  const [birthdayChoice, setBirthdayChoiceState] = useState<ReminderChoice | null>(null);
+  // Solo cubre la primera lectura. Las siguientes no lo vuelven a armar, y no hace
+  // falta: el interruptor maestro no pierde nada por releerse con la pantalla ya
+  // pintada, porque su valor no depende de esa lectura, y un parpadeo de "deshabilitado"
+  // en cada `TOKEN_REFRESHED` sería peor. El selector de cumpleaños sí depende, y por eso
+  // se protege con la secuencia de más abajo en vez de con este flag.
   const [prefsLoading, setPrefsLoading] = useState(true);
   // En web los avisos los manda el servidor, así que el estado real es si este
   // navegador tiene una suscripción activa, no la preferencia local.
@@ -139,6 +151,32 @@ export default function AjustesScreen() {
   // anterior queda invalidada en el instante en que el usuario toca el
   // interruptor.
   const pushReadSeq = useRef(0);
+  // Secuencia de las lecturas de la preferencia de cumpleaños, con contador
+  // propio y no el de arriba. En nativo, donde los dos estados se leen en el
+  // mismo efecto, compartirlo haría que tocar el selector de cumpleaños invalidara
+  // la lectura del interruptor maestro: un contador común convierte cada cambio
+  // del uno en un descarte del otro, y el maestro se quedaría sin leer
+  // (`getActiveSubscription` tarda hasta 10 s en registrar el worker). Con dos
+  // contadores, cada estado solo lo escribe su propia secuencia.
+  //
+  // En web esto ya no aplica al interruptor: el efecto de preferencias no lo
+  // escribe (ver más abajo), solo lo hace el de `getActiveSubscription`. Sigue
+  // siendo el contador correcto para el selector, y separarlo del de arriba es lo
+  // que permite que una elección no invalide la lectura de la suscripción.
+  //
+  // Mismo criterio que `pushReadSeq` y por el mismo motivo: la lectura de
+  // `push_preferences` tiene su propio tope (`PREFS_READ_TIMEOUT_MS`), así que
+  // puede seguir en vuelo cuando el usuario ya ha pulsado un chip. Sin esto, su
+  // respuesta llega después y marca el chip contrario de lo elegido, que es el
+  // sentido peligroso: la fila de la base manda sobre lo que el servidor avisa
+  // aunque la pantalla diga otra cosa.
+  const birthdayReadSeq = useRef(0);
+  // Secuencia de la lectura del interruptor maestro en nativo, con contador propio.
+  // El de `pushReadSeq` no sirve aquí: ese lo invalidan `handleToggleWebPush` y la
+  // relectura de la suscripción, que son cosas de web, y en nativo no existen.
+  // Compartirlo haría que una operación de web invalidara (o fuera invalidada por)
+  // una lectura de AsyncStorage, que es de otra plataforma y otro almacén.
+  const masterReadSeq = useRef(0);
   const [testPushBusy, setTestPushBusy] = useState(false);
   // La instalación de la web como app. En nativo no se enseña nada, y en web
   // solo aparece si hay algo que hacer: o se instala con un toque, o hay pasos
@@ -158,20 +196,100 @@ export default function AjustesScreen() {
 
   useEffect(() => {
     let active = true;
-    (async () => {
-      const [enabled, choice] = await Promise.all([
-        areNotificationsEnabled(),
-        getBirthdayChoice(),
-      ]);
-      if (!active) return;
-      setNotificationsEnabledState(enabled);
-      setBirthdayChoiceState(choice);
-      setPrefsLoading(false);
-    })();
+    // Dos contadores y una separación por plataforma, porque las dos lecturas no
+    // compiten en el mismo sitio:
+    //
+    // - La del interruptor maestro solo existe en nativo, donde el estado real está
+    //   en AsyncStorage. En web no se pide: `areNotificationsEnabled()` devuelve
+    //   `false` fijo sin consultar nada (ver `notifications.ts`), así que su valor
+    //   no es una lectura sino una constante, y escribirla apagaba el interruptor
+    //   con este navegador suscrito. En web el maestro lo escribe una sola lectura,
+    //   la de `getActiveSubscription`, más abajo.
+    // - La de la preferencia va en las dos, de fuentes distintas: la base en web
+    //   (la misma que lee el servidor para avisar con la app cerrada) y AsyncStorage
+    //   en nativo. Antes solo se pedía la de AsyncStorage y en web devolvía 'none'
+    //   siempre, así que el selector arrancaba sin nada aunque el valor estuviera
+    //   guardado.
+    const masterSeq = isWeb ? 0 : ++masterReadSeq.current;
+    const choiceSeq = ++birthdayReadSeq.current;
+    // Un contador y no un `setPrefsLoading(false)` por lectura porque en nativo hay
+    // dos y el interruptor no debe quedar habilitado hasta que las dos hayan
+    // terminado: con un `false` en cada `finally`, la primera en resolverse lo dejaba
+    // utilizable con el valor de la otra todavía sin leer.
+    //
+    // El contador es local de la pasada, y esa es la parte delicada. El efecto
+    // depende de `[isWeb, user]` y un `TOKEN_REFRESHED` entrega un objeto `user`
+    // nuevo con el mismo `id`, así que una pasada puede quedarse obsoleta con su
+    // lectura todavía en vuelo. Un contador compartido devolvía su cupo con la
+    // guarda `active` y la pasada muerta no lo devolvía nunca: el contador subía sin
+    // techo, `setPrefsLoading(false)` dejaba de ejecutarse y el interruptor quedaba
+    // bloqueado hasta recargar. Y quitarle la guarda tampoco valía, porque entonces
+    // la pasada que quedaba en pie ya no tenía a quién bajarlo.
+    //
+    // Local a la pasada, los dos casos se resuelven con la misma línea: la vieja no
+    // habilita nada porque su `active` ya es `false`, y la vigente baja el flag
+    // cuando la suya llega a cero. `prefsLoading` es monótono (no hay ningún
+    // `setPrefsLoading(true)`), así que a cero siempre quiere decir "ya se leyó todo
+    // lo que había en vuelo".
+    let pendingHere = isWeb ? 1 : 2;
+    const release = () => {
+      pendingHere -= 1;
+      if (pendingHere === 0 && active) setPrefsLoading(false);
+    };
+    if (isWeb) {
+      (async () => {
+        try {
+          // `null` cuando no se puede saber qué hay guardado, que deja el selector
+          // sin marcar en vez de mentir con un "Sin aviso" que nadie eligió.
+          const choice = await getStoredBirthdayChoice(user);
+          if (active && choiceSeq === birthdayReadSeq.current) setBirthdayChoiceState(choice);
+        } catch (error) {
+          // Hoy `getStoredBirthdayChoice` no propaga fallos (cae a `null`), pero este
+          // `catch` no es decorativo: si mañana lo hace, el `finally` de abajo sigue
+          // liberando el interruptor y el motivo queda en consola en vez de ser un
+          // rechazo sin capturar.
+          console.warn('No se pudo leer la preferencia de cumpleaños', errorText(error));
+        } finally {
+          release();
+        }
+      })();
+    } else {
+      (async () => {
+        try {
+          const enabled = await areNotificationsEnabled();
+          // Con secuencia propia: `handleToggleNotifications` también la mueve, así
+          // que si alguien apaga el interruptor mientras esta lectura sigue en vuelo
+          // (AsyncStorage puede tardar, y el efecto vuelve a correr en cada
+          // `TOKEN_REFRESHED`) la respuesta vieja no lo vuelve a encender encima.
+          if (active && masterSeq === masterReadSeq.current) {
+            setNotificationsEnabledState(enabled);
+          }
+        } catch (error) {
+          console.warn('No se pudo leer el estado de las notificaciones', errorText(error));
+        } finally {
+          release();
+        }
+      })();
+
+      (async () => {
+        try {
+          const choice = await getBirthdayChoice();
+          if (active && choiceSeq === birthdayReadSeq.current) setBirthdayChoiceState(choice);
+        } catch (error) {
+          console.warn('No se pudo leer la preferencia de cumpleaños', errorText(error));
+        } finally {
+          release();
+        }
+      })();
+    }
     return () => {
       active = false;
     };
-  }, []);
+    // `user` en las dependencias y no solo al montar: en web la sesión se restaura
+    // desde el almacenamiento y puede llegar después del primer render, y una
+    // lectura hecha sin usuario devuelve `null` y, sin releerse, el selector se
+    // quedaría sin marcar durante toda la sesión aunque la fila tuviera un valor.
+  }, [isWeb, user]);
 
   useEffect(() => {
     if (!isWeb) return;
@@ -401,6 +519,12 @@ export default function AjustesScreen() {
       await handleToggleWebPush(next);
       return;
     }
+    // Antes de esperar nada, y por lo mismo que hace `handleToggleWebPush` con su
+    // contador: la lectura de AsyncStorage del interruptor maestro puede seguir en
+    // vuelo cuando el usuario lo toca, y su respuesta vieja volvería a encenderlo
+    // encima de lo que acaba de pedir. Aquí además el efecto de preferencias vuelve
+    // a correr en cada `TOKEN_REFRESHED`, así que la ventana no era solo de montaje.
+    ++masterReadSeq.current;
     try {
       if (next) {
         const granted = await requestPermissions();
@@ -425,7 +549,12 @@ export default function AjustesScreen() {
         }
         await setNotificationsEnabled(true);
         setNotificationsEnabledState(true);
-        await syncAll(appointments, contacts, birthdayChoice);
+        // `?? 'none'` solo se alcanza si la preferencia todavía no se sabe, porque el
+        // interruptor está bloqueado mientras `prefsLoading`. Es el mismo repliegue
+        // conservador que usa el resto de la pantalla: no programar un aviso que
+        // quizá no se quiere es reversible; el otro sentido deja avisos activos que
+        // la persona no pidió.
+        await syncAll(appointments, contacts, birthdayChoice ?? 'none');
       } else {
         await setNotificationsEnabled(false);
         setNotificationsEnabledState(false);
@@ -436,6 +565,27 @@ export default function AjustesScreen() {
   }
 
   async function handleBirthdayChoice(choice: ReminderChoice) {
+    // Si la pantalla ya está enseñando ese valor, no se escribe nada. Sin esta
+    // guarda, pulsar el chip que ya se ve marcado (que es lo que hace quien cree
+    // que está confirmando) manda una escritura real a la fila: en web, con el
+    // chip "Sin aviso" marcado por una lectura que no pudo completarse, eso
+    // escribía `'none'` encima de una fila que podía seguir en `both'`, y el
+    // servidor dejaba de avisar sin que la pantalla hubiera dicho nada.
+    //
+    // La comparación contra `null` es lo que hace segura la guarda: con "no sé" no
+    // hay nada marcado, así que no hay chip marcado que "confirmar".
+    if (birthdayChoice === choice) return;
+    // Antes de esperar nada, y por lo mismo que el interruptor maestro: una
+    // lectura de `push_preferences` que siguiera en vuelo quedaría invalidada ya,
+    // no cuando termine esta escritura. Si resolviera mientras tanto, escribiría
+    // encima del chip recién marcado y la pantalla acabaría diciendo "sin aviso"
+    // con la fila de la base en "ambos", que es al servidor le sigue avisando.
+    ++birthdayReadSeq.current;
+    // Lo que había antes del toque, para poder volver si la escritura falla. La
+    // fila de la base es la buena: si el `upsert` no llega, el chip tiene que volver
+    // a decir lo que decía la fila, o la pantalla acabaría afirmando una
+    // preferencia que el servidor no tiene.
+    const previous = birthdayChoice;
     try {
       if (choice !== 'none' && !notificationsEnabled && !isWeb) {
         const result = await askEnableNotifications(
@@ -456,8 +606,14 @@ export default function AjustesScreen() {
       } else {
         await scheduleBirthdays(contacts, choice);
       }
-    } catch {
-      // el sync por realtime reintentará
+    } catch (error) {
+      // Se revierte a lo que había, no a `'none'`: `null` es "no se sabe" y volver
+      // a un valor inventado repetiría el fallo que este bloque arregla, y volver a
+      // un valor que tampoco se sabe deja el selector sin marcar, que al menos no
+      // miente. El motivo se anota, porque un `catch` con un comentario como cuerpo
+      // es el patrón que escondió el bug original.
+      setBirthdayChoiceState(previous);
+      console.warn('No se pudo guardar el aviso de cumpleaños elegido', errorText(error));
     }
   }
 
@@ -639,6 +795,15 @@ export default function AjustesScreen() {
           </View>
         ) : null}
         <Text style={styles.settingLabel}>Cumpleaños: avisar</Text>
+        {/* Mientras no se sabe qué hay guardado no se marca ningún chip, y eso se
+            dice. Un selector de radio sin nada marcado parece un fallo de la
+            pantalla; el texto evita que quien intente arreglarlo Pulse el primer
+            chip que vea y escriba un valor que no quería. */}
+        {!prefsLoading && birthdayChoice === null ? (
+          <Text style={styles.cardMeta}>
+            No se ha podido leer el aviso que tienes guardado. Elige uno para fijarlo.
+          </Text>
+        ) : null}
         <View style={styles.chipRow}>
           {reminderChoices.map((value) => (
             <Pressable
@@ -646,7 +811,7 @@ export default function AjustesScreen() {
               style={[styles.chip, birthdayChoice === value && styles.chipSelected]}
               accessibilityRole="radio"
               accessibilityState={{ checked: birthdayChoice === value }}
-              onPress={() => handleBirthdayChoice(value)}>
+              onPress={() => void handleBirthdayChoice(value)}>
               <Text style={[styles.chipText, birthdayChoice === value && styles.chipTextSelected]}>
                 {reminderChoiceLabels[value]}
               </Text>
