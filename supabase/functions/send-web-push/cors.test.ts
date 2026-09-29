@@ -120,9 +120,9 @@ Deno.test("isOriginAllowed dice que no cuando no hay Origin", () => {
 Deno.test("un subdominio hermano de Vercel no está permitido", () => {
   // El ataque de sufijo, y el más probable aquí: en Vercel cualquiera puede
   // desplegar y quedarse con `https://loquesea-abc.vercel.app`. Una comparación
-  // por `endsWith`, `includes` o comodín de subdominio dejaría pasar cualquier
-  // preview de cualquier cuenta, así que la comparación tiene que ser exacta y
-  // esto lo ata.
+  // por `endsWith` o `includes` dejaría pasar cualquier preview de cualquier
+  // cuenta, así que la comparación es exacta salvo para el patrón de preview,
+  // que está anclado al nombre de proyecto y al slug de la organización.
   assertEquals(isOriginAllowed("https://preview-abc.vercel.app", ALLOWED), false);
   assertEquals(isOriginAllowed("https://otro.vercel.app", ALLOWED), false);
   assertEquals(isOriginAllowed("https://micasa-demo.vercel.app.ataque.example", ALLOWED), false);
@@ -131,6 +131,67 @@ Deno.test("un subdominio hermano de Vercel no está permitido", () => {
   assertEquals(isOriginAllowed("https://micasa-demo.vercel.app@ataque.example", ALLOWED), false);
   // Un sufijo en otro sitio de la cadena tampoco.
   assertEquals(isOriginAllowed("https://micasa-demo.vercel.app.evil", ALLOWED), false);
+});
+
+const PREVIEW = "https://micasa-demo-kyp8fpsqy-richardmartagus-projects.vercel.app";
+
+Deno.test("una preview de este proyecto en Vercel está permitida", () => {
+  // Vercel cambia la URL en cada despliegue, así que no puede estar escrita a
+  // mano: sin el patrón, el botón "Enviar" falla en cualquier preview y solo
+  // funciona en producción.
+  assertEquals(isOriginAllowed(PREVIEW, ALLOWED), true);
+  // Otra preview del mismo proyecto, con otro código en medio.
+  assertEquals(
+    isOriginAllowed("https://micasa-demo-csrlzem2h-richardmartagus-projects.vercel.app", ALLOWED),
+    true,
+  );
+  // El host llega en minúsculas, pero no está de más probarlo desordenado.
+  assertEquals(isOriginAllowed(PREVIEW.toUpperCase(), ALLOWED), true);
+  // Y la cabecera reflejada es el origen del navegador tal cual.
+  assertEquals(corsHeaders(PREVIEW, ALLOWED)["Access-Control-Allow-Origin"], PREVIEW);
+  assertEquals(preflightResponse(PREVIEW, ALLOWED).status, 204);
+  assertEquals(
+    preflightResponse(PREVIEW, ALLOWED).headers.get("access-control-allow-origin"),
+    PREVIEW,
+  );
+});
+
+Deno.test("el comodín del preview no deja salir a nadie más", () => {
+  // El límite real del patrón. Si alguno de estos pasa, el allowlist dejó de
+  // ser una lista y pasó a ser decoración.
+  const denegados = [
+    // Otro proyecto de la misma organización: el patrón lleva el nombre.
+    "https://otro-proyecto-abc1234-richardmartagus-projects.vercel.app",
+    // El mismo nombre de proyecto en otra organización.
+    "https://micasa-demo-kyp8fpsqy-otra-cuenta.vercel.app",
+    // El comodín no cruza un punto: sería otro subdominio, no otro prefijo.
+    "https://micasa-demo-a.b-richardmartagus-projects.vercel.app",
+    // Sufijo de host montado a mano.
+    "https://micasa-demo-x-richardmartagus-projects.vercel.app.ataque.example",
+    // Dominio propio que imita el patrón.
+    "https://micasa-demo-x-richardmartagus-projects.evil.example",
+    // Producción con algo delante.
+    "https://x.micasa-demo.vercel.app",
+  ];
+  for (const origin of denegados) {
+    assertEquals(isOriginAllowed(origin, ALLOWED), false, origin);
+    assertEquals(preflightResponse(origin, ALLOWED).status, 403, origin);
+    assertEquals(
+      preflightResponse(origin, ALLOWED).headers.get("access-control-allow-origin"),
+      null,
+      origin,
+    );
+  }
+  // Y sigue sin salir nunca un `*` como ACAO, que es lo que convertiría el
+  // allowlist en un adorno.
+  assert(corsHeaders(PREVIEW, ALLOWED)["Access-Control-Allow-Origin"] !== "*");
+});
+
+Deno.test("un patrón solo funciona si la lista lo trae; suelto no vale", () => {
+  // `resolveAllowedOrigins` sustituye entera la lista: quien configure la
+  // variable tiene que escribir el patrón si quiere previews.
+  const soloProd = resolveAllowedOrigins("https://micasa-demo.vercel.app");
+  assertEquals(isOriginAllowed(PREVIEW, soloProd), false);
 });
 
 Deno.test("nunca se concede permiso con cookies", () => {

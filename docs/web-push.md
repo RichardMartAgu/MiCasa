@@ -45,7 +45,7 @@ El service worker (`sw-src.js`) solo precachea el shell y atiende `push` y `noti
 | `supabase/functions/send-web-push/reminders.ts` | Lógica pura de recordatorios (fechas, zonas horarias, texto). Sin I/O. |
 | `supabase/functions/send-web-push/reminders.test.ts` | 28 tests con `deno test`. |
 | `supabase/functions/send-web-push/cors.ts` | Lógica pura de CORS: allowlist de orígenes y cabeceras. Sin I/O ni `Deno.env`. |
-| `supabase/functions/send-web-push/cors.test.ts` | 16 tests con `deno test`, 4 de ellos contra el handler real. |
+| `supabase/functions/send-web-push/cors.test.ts` | 19 tests con `deno test`, 4 de ellos contra el handler real. |
 | `supabase/config.toml` | Declara `verify_jwt = false` solo para `send-web-push`. |
 | `src/lib/web-push.ts` | Suscripción en el navegador, permisos, alta y baja. |
 | `sw-src.js` | Service worker: precache, `push` y `notificationclick`. |
@@ -107,7 +107,7 @@ Del bloque de Web Push:
 
 Del bloque de CORS:
 
-- `deno check` limpio; `deno test --allow-env --allow-read` 51/51 (28 de recordatorios + 16 de CORS + 7 de suscripciones inservibles). El `--allow-env` hace falta porque el paquete npm `web-push` lee `process.env` al cargarse; sin él, `deno test` sin banderas falla al importar el módulo. El `--allow-read` lo necesita un único test, que lee el fuente del handler para atar que los dos `catch` que limpian suscripciones usan el clasificador.
+- `deno check` limpio; `deno test --allow-env --allow-read` 54/54 (28 de recordatorios + 19 de CORS + 7 de suscripciones inservibles). El `--allow-env` hace falta porque el paquete npm `web-push` lee `process.env` al cargarse; sin él, `deno test` sin banderas falla al importar el módulo. El `--allow-read` lo necesita un único test, que lee el fuente del handler para atar que los dos `catch` que limpian suscripciones usan el clasificador. Nota: en esta máquina `deno` no está instalado a mano, así que se invoca como `npx -y deno ... --node-modules-dir=auto` (la segunda bandera es la que resuelve `npm:web-push@3.6.7`).
 - Función arrancada en local (`deno run --allow-env --allow-net index.ts`) y probada con `curl`: preflight con origen permitido → `204` con `Access-Control-Allow-Origin`; preflight con origen ajeno → `403` sin esa cabecera; `POST ?mode=test` con origen permitido y sin sesión → `401` **con** la cabecera; `GET` con origen permitido → `405` con la cabecera; `POST` sin `Origin` con `x-cron-secret` → `401` sin CORS, igual que antes.
 - Con `WEB_PUSH_ALLOWED_ORIGINS=https://preview-abc.vercel.app`: ese origen entra y `micasa-demo.vercel.app` se queda sin permiso, que es el comportamiento buscado al sustituir la lista.
 - `npx tsc --noEmit`, `npx expo lint` y `npx jest` (49/49 suites, 653/653) limpios, aunque este bloque no toca la app. Ojo: `tsconfig.json` excluye `supabase/`, así que esos checks no dicen **nada** de la Edge Function. Para eso están `deno check` y `deno test`.
@@ -146,16 +146,19 @@ curl -i -X OPTIONS "https://sxgsqvwvugdklycpqxiu.supabase.co/functions/v1/send-w
 
 No se manda `Access-Control-Allow-Credentials`: la llamada no usa cookies, solo la cabecera `Authorization` con el JWT de la sesión. Añadirlo no arregla nada y obliga a que el origen se refleje.
 
-**Orígenes permitidos.** Lista explícita, nunca `*`. Viene de `WEB_PUSH_ALLOWED_ORIGINS` (separada por comas) y, si no se define, vale la de por defecto:
+**Orígenes permitidos.** Lista explícita, y `Access-Control-Allow-Origin` nunca se devuelve como `*`. Viene de `WEB_PUSH_ALLOWED_ORIGINS` (separada por comas) y, si no se define, vale la de por defecto:
 
 | Origen | Por qué |
 |---|---|
 | `https://micasa-demo.vercel.app` | La web de producción (alias de Vercel). |
+| `https://micasa-demo-*-richardmartagus-projects.vercel.app` | Los *deployments de preview* de Vercel, que llevan un código aleatorio en el host y cambian en cada despliegue: listados a mano, la siguiente preview ya no está. |
 | `https://micasa.app` | El dominio propio. Todavía no sirve la web; entra por si acaso. |
 | `http://localhost:8080` | La demo local (`npm run demo`). |
 | `http://localhost:8081` | El servidor de desarrollo de Expo. |
 
-Si se define la variable, su lista **sustituye** a la de por defecto (no se suma), para que quitar un origen siga siendo posible. Los orígenes de desarrollo son inocuos: un preflight solo puede decir que sí o que no, nunca concede nada, y la autenticación sigue siendo el JWT de la sesión o el secreto del cron. Los *deployments de preview* de Vercel tienen URLs distintas y hay que añadirlos a mano.
+**El único comodín admitido** es el `*` de la fila de preview, y va acotado: sustituye a un fragmento de **un** segmento de host (`[^.]*`, nunca cruza un punto) y el patrón sigue anclado a los dos extremos. Por eso `micasa-demo-kyp8fpsqy-richardmartagus-projects.vercel.app` entra y `otro-proyecto-abc1234-richardmartagus-projects.vercel.app` (otro proyecto de la misma organización), `micasa-demo-x-otra-cuenta.vercel.app` (otro propietario) y `micasa-demo-a.b-richardmartagus-projects.vercel.app` (otro subdominio) no. El host pertenece a la organización que posee `richardmartagus-projects`, que es el que no puede registrar nadie de fuera; sin ese prefijo de proyecto ni ese sufijo de organización, el patrón no coincide. Hay tests para cada uno de esos rechazos. Matiz: el comodín acota el **prefijo**, no el proyecto entero, así que un proyecto hermano que empezara por `micasa-demo-` también entraría; crear deployments en esa organización ya es tener push en el repo, así que el confinamiento es el mismo que el del resto de la lista.
+
+Si se define la variable, su lista **sustituye** a la de por defecto (no se suma), para que quitar un origen siga siendo posible. Ojo al sustituirla: si quien la define quiere previews, tiene que escribir el patrón también, porque la lista por defecto desaparece entera. Los orígenes de desarrollo son inocuos: un preflight solo puede decir que sí o que no, nunca concede nada, y la autenticación sigue siendo el JWT de la sesión o el secreto del cron.
 
 **El cron no se rompe.** `pg_net` llama sin `Origin`. Sin cabecera `Origin` no hay a quién devolverle permiso, y `corsHeaders` devuelve solo `Vary: Origin`. Lo que **no** hace la función es exigir un origen: si lo exigiera, el `POST` del cron se quedaría sin recordatorios. Hay un test que llama al handler sin `Origin` y comprueba que responde `401` (igual que antes) y no un rechazo por CORS.
 
