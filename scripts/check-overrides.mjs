@@ -79,6 +79,31 @@ const fails = [];
  * a un script que corre en el build de Vercel y en CI. Los dos overrides usan
  * `^X.Y.Z`, que es comparación de tres números.
  */
+/**
+ * La primera versión sin el advisory, por paquete. Es un suelo aparte del rango
+ * declarado, a propósito: comparar solo contra el rango deja pasar el caso de que
+ * alguien edite el propio override a la versión vulnerable (`uuid: "^7.0.3"`), que
+ * cumple su propio rango y `npm audit --audit-level=high` tampoco lo ve porque el
+ * advisory es moderate. Es justo el error que el README advierte, y sin este suelo
+ * era la forma más fácil de deshacer el override sin que nada se enterase.
+ */
+const MINIMO_SEGURO = {
+  tmp: '0.2.5',
+  uuid: '11.1.1',
+};
+
+/** Negativo si `a` es POSTERIOR a `b`, positivo si es anterior, 0 si son iguales. */
+function comparar(a, b) {
+  const va = a.split('.');
+  const vb = b.split('.');
+  for (let i = 0; i < 3; i++) {
+    const na = parseInt(va[i], 10);
+    const nb = parseInt(vb[i], 10);
+    if (na !== nb) return na - nb;
+  }
+  return 0;
+}
+
 function exigirOverrideAplicado(nombre, version) {
   const { overrides } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const rango = overrides?.[nombre];
@@ -90,7 +115,21 @@ function exigirOverrideAplicado(nombre, version) {
     );
   }
   if (!rango.startsWith('^')) {
-    throw new Error(`overrides.${nombre} = "${rango}" no es un rango ^, y este check solo los soporta`);
+    throw new Error(
+      `overrides.${nombre} = "${rango}" no empieza por ^. Este check solo interpreta rangos ^; ` +
+        `con una versión exacta o un ~, escribe ^${MINIMO_SEGURO[nombre]} o ajusta el script.`
+    );
+  }
+
+  // El suelo va primero: aunque el rango declarado sea enorme, por debajo de
+  // MINIMO_SEGURO el advisory sigue ahí.
+  const minimo = MINIMO_SEGURO[nombre];
+  if (comparar(version, minimo) < 0) {
+    throw new Error(
+      `${nombre}@${version} está por debajo de ${minimo}, que es la primera versión sin el advisory.\n` +
+        `  El override dice \`${rango}\`, pero ese rango se ha degradado: bajar el paquete a\n` +
+        `  su rango original devuelve la vulnerabilidad. Súbelo otra vez a ^${minimo} o más.`
+    );
   }
 
   const [major, minor, patch] = rango.slice(1).split('.').map((n) => parseInt(n, 10));
