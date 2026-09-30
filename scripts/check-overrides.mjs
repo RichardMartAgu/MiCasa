@@ -17,18 +17,26 @@
 // - `uuid` a `^11.1.1`, desde `^7.0.3`, por `@expo/config-plugins → xcode`.
 //   El advisory es un fallo de límites de buffer en v3/v5/v6 cuando se les pasa un
 //   buffer; se arregla en 11.1.1. `xcode` solo llama a `uuid.v4()`, que existe en
-//   v11. Ojo: v11 **quitó** el export `v` (la API antigua de v1), así que este
-//   check es el que avisa si `xcode` empezara a usarlo.
+//   v11, y lo verificó `expo prebuild` generando un `.pbxproj` con UUIDs correctos.
+//   Ni v7 ni v11 exportan `v`: esa API vieja no llegó a existir, así que no hay
+//   ningún export que se haya perdido en el salto y que haga falta vigilar.
 //
 // Ni los tests del repo cubren esto: la cadena es `workbox injectManifest` y
 // `xcode`, que solo corren en el build nativo, y los tests mockean el router.
 // Un test de Jest que los tocara probaría código de terceros.
 //
-// Lo que hay que vigilar no es si ese código funciona, sino que la versión
-// forzada siga exponiendo la API que el consumidor llama. Y se comprueba sobre el
-// módulo que el consumidor resuelve de verdad, no el de la raíz: si otro
-// consumidor metiera otra major, npm la anidaría y mirar el paquete hoisted sería
-// mirar otro módulo.
+// Lo que hay que vigilar son dos cosas, y la primera es la que de verdad protege:
+//
+// 1. Que el override siga APLICADO. Sin esto, quitarlo de package.json y
+//    regenerar el lock devuelve la versión vulnerable, con su advisory de vuelta,
+//    y todos los gates en verde: el resto de comprobaciones mirarían que la API
+//    siga viva, y la API de la versión vieja funciona igual de bien. Este script
+//    nació para que eso no pase en silencio, y solo lo cumple si compara la
+//    versión resuelta con el rango del override.
+// 2. Que la versión forzada siga exponiendo la API que el consumidor llama. Y se
+//    resuelve desde el módulo que el consumidor recibe de verdad, no desde el de
+//    la raíz: si otro consumidor metiera otra major, npm la anidaría y mirar el
+//    paquete hoisted sería mirar otro módulo.
 //
 // Un cuarto override, `decode-uri-component` a `^0.5.0`, se probó y **se descartó**
 // por incompatibilidad, no por el advisory: 0.5.0 pasó a ser ESM y exporta
@@ -42,7 +50,7 @@
 // cuando saque una versión que ya use la major corregida.
 
 import { createRequire } from 'node:module';
-import { existsSync } from 'node:fs';
+import fs, { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -58,6 +66,44 @@ if (!existsSync(path.join(root, 'node_modules'))) {
 }
 
 const fails = [];
+
+/**
+ * Falla si la versión que resolvió el consumidor no cumple el rango del override.
+ *
+ * Sin esto, quitar el override de `package.json` y regenerar el lock devuelve la
+ * versión vulnerable, con su advisory de vuelta, y todos los gates en verde: el
+ * check se limita a mirar que la API siga viva, y la API de la versión vieja
+ * funciona igual de bien. Es el modo de fallo que hace que este script exista.
+ *
+ * El rango se aplica a mano en vez de con `semver` para no añadir una dependencia
+ * a un script que corre en el build de Vercel y en CI. Los dos overrides usan
+ * `^X.Y.Z`, que es comparación de tres números.
+ */
+function exigirOverrideAplicado(nombre, version) {
+  const { overrides } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const rango = overrides?.[nombre];
+
+  if (!rango) {
+    throw new Error(
+      `package.json ya no declara overrides.${nombre}. Si se ha quitado a propósito, ` +
+        `borra también la comprobación del script; si no, el advisory vuelve sin que nada lo note.`
+    );
+  }
+  if (!rango.startsWith('^')) {
+    throw new Error(`overrides.${nombre} = "${rango}" no es un rango ^, y este check solo los soporta`);
+  }
+
+  const [major, minor, patch] = rango.slice(1).split('.').map((n) => parseInt(n, 10));
+  const [vmajor, vminor, vpatch] = version.split('.').map((n) => parseInt(n, 10));
+  const cumple = vmajor === major && (vminor > minor || (vminor === minor && vpatch >= patch));
+
+  if (!cumple) {
+    throw new Error(
+      `${nombre}@${version} no cumple el override \`${nombre}: ${rango}\`. El override no se está\n` +
+        `  aplicando: mira si falta en package.json o si el lock se regeneró sin él.`
+    );
+  }
+}
 
 function check(nombre, fn) {
   try {
@@ -78,9 +124,12 @@ function requireFrom(consumerDir) {
   return createRequire(path.join(dir, 'package.json'));
 }
 
-check('tmp → external-editor (tmpNameSync con objeto de opciones)', () => {
+check('tmp → external-editor (override aplicado, y tmpNameSync con objeto)', () => {
   const require = requireFrom('external-editor');
   const version = require('tmp/package.json').version;
+
+  exigirOverrideAplicado('tmp', version);
+
   const name = require('tmp').tmpNameSync({});
   if (typeof name !== 'string' || name.length === 0) {
     throw new Error(`tmp@${version} devolvió ${JSON.stringify(name)}`);
@@ -88,21 +137,20 @@ check('tmp → external-editor (tmpNameSync con objeto de opciones)', () => {
   return `tmp@${version}`;
 });
 
-check('uuid → xcode (v4 presente y con formato; el export legacy v ausente)', () => {
+check('uuid → xcode (override aplicado, y v4 con formato)', () => {
   const require = requireFrom('xcode');
   const version = require('uuid/package.json').version;
   const uuid = require('uuid');
 
+  // Lo primero es que el override siga aplicado. Sin esto, el check solo miraría
+  // que la API siga viva, y eso lo cumple igual la versión VULNERABLE: quitar el
+  // override de package.json y regenerar el lock devuelve uuid@7.0.3, con el
+  // advisory de vuelta y todos los gates en verde. Es el fallo que hace que este
+  // script exista, así que es lo que tiene que mirar primero.
+  exigirOverrideAplicado('uuid', version);
+
   if (typeof uuid.v4 !== 'function') {
     throw new Error(`uuid@${version} no expone v4, que es lo único que usa xcode`);
-  }
-  // El salto de 7 a 11 quitó `v`, que era la API antigua de v1. `xcode` no la usa
-  // hoy, pero se comprueba que siga ausente: si una major futura la reintrodujera,
-  // o si `xcode` empezara a llamar a algo que ella sí tenía, este es el gate que
-  // lo vería. El comentario de más arriba prometía esta comprobación sin
-  // cumplirla, y eso es peor que no prometerla.
-  if (uuid.v !== undefined) {
-    throw new Error(`uuid@${version} ha reintroducido el export legacy \`v\`: el salto 7→11 lo había quitado`);
   }
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid.v4())) {
     throw new Error(`uuid@${version}.v4() no devolvió un UUID con formato v4`);

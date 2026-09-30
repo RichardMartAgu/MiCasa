@@ -172,6 +172,22 @@ no pasa por las preguntas interactivas de `inquirer`. Se sube porque `npm audit`
 marca *high* en el árbol completo, y con él fuera el gate de auditoría de build
 puede estar en `high` (que es donde está) sin que ese advisory lo tenga bloqueando.
 
+### Por qué los rangos de Expo están donde están
+
+`expo` pasó de `~57.0.9` a `~57.0.26`, y lo mismo con `expo-router` y
+`expo-splash-screen`. **Esto no instala ni un byte nuevo**: `~57.0.9` ya
+permitía `57.0.26`, así que el árbol resuelto es idéntico antes y después, con el
+mismo tarball. Lo único que cambia son **2 de las 1823 entradas** del lock: el
+propio `uuid` y un `electron-to-chromium` que se movió de paso.
+
+El valor no está en los bytes, está en el suelo del rango. Con `~57.0.26` en
+`package.json`, un `npm install` de aquí en adelante no puede resolver por debajo
+de la versión que está probada hoy, cuando con `~57.0.9` podía volver a
+57.0.10 sin que nadie se enterase.
+
+Si alguna vez esto se lee como "actualicé Expo a la última", es al revés: no hay
+actualización de código, hay una promesa de que no habrá un downgrade accidental.
+
 ### Los `overrides`, y por qué hay un check que los vigila
 
 Hay dos overrides, y los dos sacan el paquete del rango que declara su consumidor.
@@ -183,10 +199,17 @@ que lo arregla es una major y el consumidor está pineado por dentro.
 | `tmp` `^0.0.33` → `^0.2.5` | 2 advisories *high*: escritura arbitraria vía symlink y path traversal | `workbox-cli → inquirer → external-editor` | `tmpNameSync(unObjeto)` |
 | `uuid` `^7.0.3` → `^11.1.1` | fallo de límites de buffer en v3/v5/v6 con buffer | `@expo/config-plugins → xcode` | `uuid.v4()` |
 
-Por eso hay un `check:overrides` que confirma que cada versión forzada sigue
-exponiendo la API que su consumidor llama de verdad. Sin él, un override
-incompatible se descubre en producción, y los tests no lo cazan: la cadena es
-`workbox injectManifest` y `xcode`, que solo corren en el build nativo.
+Por eso hay un `check:overrides`, que mira dos cosas:
+
+1. **Que el override siga aplicado.** Es la que de verdad protege. Sin ella,
+   quitar el override de `package.json` y regenerar el lock devuelve la versión
+   **vulnerable**, con su advisory de vuelta, y todos los gates en verde: el resto
+   de comprobaciones mirarían que la API siga viva, y la API de la versión vieja
+   funciona igual de bien.
+2. **Que la versión forzada siga exponiendo la API que su consumidor llama.** Sin
+   esto, un override incompatible se descubre en producción, y los tests no lo
+   cazan: la cadena es `workbox injectManifest` y `xcode`, que solo corren en el
+   build nativo.
 
 Va en un script aparte del lock, y después de `npm ci`, porque necesita
 `node_modules` y el del lock no puede tenerlo: se ejecuta en un runner donde aún no
