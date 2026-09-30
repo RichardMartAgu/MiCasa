@@ -1,6 +1,6 @@
 # INDEX — MiCasa
 
-App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.**
+App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.** Este índice es la fuente única de "qué hay": no crear documentos paralelos que lo dupliquen.
 
 ## Inventario completo
 
@@ -53,14 +53,47 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `
 | `AGENTS.md` | Expo v57 · Idioma · Acceso a info · Emails · Frontend · Agentes · Flujo por bloque · Git · Reglas duras (worktree, nada abierto) · **Despliegue** · Telegram |
 | `README.md` | Funcionalidades · Stack · Puesta en marcha · Demo · Calidad · Estructura · Modelo de datos |
 
+## Tabla de skills
+
+Viven en `~/.config/opencode/skills/`. **Cargar solo la aplicable al bloque**, nunca varias. Verificar que existe con `ls ~/.config/opencode/skills/<nombre>` antes de citarla aquí.
+
+| Ámbito | Skill |
+|---|---|
+| Cualquier commit/push/merge | [`.opencode/skills/micasa-git`](../.opencode/skills/micasa-git/SKILL.md) — **obligatoria, local a este repo** |
+| Supabase, RLS, Edge Functions | `supabase` |
+| Consultas y esquema Postgres | `supabase-postgres-best-practices` |
+| App Expo / UI móvil | `building-native-ui` |
+| Auth, pantalla de login | `login-design` |
+| Pulido de interfaz o redesign | `impeccable` |
+| Accesibilidad (WCAG) | `accessibility` |
+| Cualquier fetch, carga de datos | `native-data-fetching` |
+| E2E en navegador | `pw-launch` → `pw-test` → `pw-close` |
+| Vercel deploy | `deploy-to-vercel` |
+| Diagramas de arquitectura | `archify` |
+
+Los agentes de `.opencode/agents/` (`back`, `front`, `security`, `qa-test`, `devops`) no son skills: se invocan por la tabla de `AGENTS.md`.
+
+## Fuera de alcance
+
+Decisiones ya tomadas de forma explícita. No re-litigar sin motivo nuevo, y no implementar sin autorización explícita del usuario.
+
+| Tema | Fuera de alcance | Dónde se decidió |
+|---|---|---|
+| Alert en web | `Alert.alert` es no-op en web. En `citas.tsx` (líneas 247, 296 y 352) una cita con recordatorio no agenda ni avisa | `estado-proyecto.md` → «Riesgos aceptados» |
+| Longitud de `user_agent` | Sin check de longitud en la allowlist de VAPID | `estado-proyecto.md` → «Riesgos aceptados» |
+| CORS de previews | No es un pendiente: ya resuelto en el PR #83 | `estado-proyecto.md` → «CORS (falso positivo)» |
+| Filtros reutilizables | Cerrado y mergeado, no reabrir | `list-filtering-plan.md` → «Fuera de alcance» |
+| Bugs 01-07 | Cerrados con test en verde. Los `.md` son el relato de entonces, no el estado: no tienen nota de cierre, así que el test es la fuente | `__tests__/` |
+
 ## Orden de acceso
 
 1. `AGENTS.md`
 2. Este `INDEX.md` (mapa de secciones incluido)
 3. `README.md` bajo demanda
 4. `docs/estado-proyecto.md` → «Pendientes» + sesión más reciente
-5. Agentes: tabla de `AGENTS.md`; invocar solo el aplicable.
-6. Código: `grep`/`glob` antes de leer; `src/lib/` = lógica pura testeable.
+5. Agentes: tabla de `AGENTS.md`; invocar solo el aplicable. Skills: tabla de arriba.
+6. Gates antes de commitear: sección «Gates» de `AGENTS.md`.
+7. Código: `grep`/`glob` antes de leer; `src/lib/` = lógica pura testeable.
 
 ## Proyecto
 

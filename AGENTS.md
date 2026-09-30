@@ -55,7 +55,19 @@ Seis agentes especializados viven en `.opencode/agents/` e intervienen en el flu
 4. Invocar `qa-test` para validar typecheck, lint y tests.
 5. Ningún bloque se da por terminado ni se commitea hasta que `security` devuelve **APROBADO** y `qa-test` **PASA** (o los hallazgos están remediados).
 6. Si `security` o `qa-test` formulan preguntas, el orquestador las transmite al usuario y espera decisión si afectan al bloque.
-7. Verificar antes de entregar: `npx tsc --noEmit`, `npx expo lint`, `npx jest` (+ `npm run verify:pwa` si el bloque toca la web).
+7. Antes de dar por terminado el bloque, pasar los gates de la sección «Gates». Si alguno falla, el bloque no está terminado.
+
+# Gates
+
+Todo en verde antes de commitear. Cada comando es corto; si uno falla se corrige antes de continuar, no se anota como pendiente.
+
+- [ ] `npx tsc --noEmit` — typecheck sin errores
+- [ ] `npx expo lint` — lint limpio
+- [ ] `npx jest` — tests pasan
+- [ ] `npm run verify:pwa` — solo si el bloque toca la web o el service worker
+- [ ] `npm run verify:deps` — lock íntegro, overrides coherentes y `npm audit` sin hallazgos altos
+- [ ] `git status --porcelain` — limpio, sin ficheros sin trackear
+- [ ] `git ls-files | grep '\.env'` — solo `.env.example`; ningún fichero de entorno real en el índice
 
 # Git
 
