@@ -172,18 +172,53 @@ no pasa por las preguntas interactivas de `inquirer`. Se sube porque `npm audit`
 marca *high* en el árbol completo, y con él fuera el gate de auditoría de build
 puede estar en `high` (que es donde está) sin que ese advisory lo tenga bloqueando.
 
-Como el override saca a `tmp` del rango que declara su consumidor
-(`external-editor` pide `^0.0.33`), hay un `check:overrides` que confirma que la
-versión forzada sigue exponiendo la API que él llama. Va en un script aparte del
-del lock, y después de `npm ci`, porque necesita `node_modules` y el del lock no
-puede tenerlo: se ejecuta en un runner donde aún no se ha instalado nada. Los tests
-del repo no cubren esa cadena, porque es la CLI interactiva de workbox.
+### Los `overrides`, y por qué hay un check que los vigila
+
+Hay dos overrides, y los dos sacan el paquete del rango que declara su consumidor.
+Eso se hace a propósito, porque el advisory no tiene arreglo por bump: la versión
+que lo arregla es una major y el consumidor está pineado por dentro.
+
+| Override | Por qué | Consumidor | API que se comprueba |
+|---|---|---|---|
+| `tmp` `^0.0.33` → `^0.2.5` | 2 advisories *high*: escritura arbitraria vía symlink y path traversal | `workbox-cli → inquirer → external-editor` | `tmpNameSync(unObjeto)` |
+| `uuid` `^7.0.3` → `^11.1.1` | fallo de límites de buffer en v3/v5/v6 con buffer | `@expo/config-plugins → xcode` | `uuid.v4()` |
+
+Por eso hay un `check:overrides` que confirma que cada versión forzada sigue
+exponiendo la API que su consumidor llama de verdad. Sin él, un override
+incompatible se descubre en producción, y los tests no lo cazan: la cadena es
+`workbox injectManifest` y `xcode`, que solo corren en el build nativo.
+
+Va en un script aparte del lock, y después de `npm ci`, porque necesita
+`node_modules` y el del lock no puede tenerlo: se ejecuta en un runner donde aún no
+se ha instalado nada.
 
 ```bash
 npm run check:lock      # integridad del lock, sin dependencias
-npm run check:overrides # el override de tmp, necesita npm ci previo
+npm run check:overrides # los overrides, necesita npm ci previo
 npm run verify:deps     # los dos + los dos gates de npm audit
 ```
+
+### Lo que no se pudo arreglar, y por qué
+
+Quedan **3 advisories *moderate***, los tres de la misma raíz:
+`expo-router → query-string@7.1.3 → decode-uri-component@0.2.2`, con un ReDoS por
+decodificación exponencial. Se probaron dos caminos y ninguno sirve:
+
+- **Subir `decode-uri-component` a `^0.5.0`:** rompe. Pasó a ser ESM y exporta
+  `{ default }`, mientras `query-string@7.1.3` la llama sin desempaquetar.
+  Los 783 tests pasaban y el build también; reventaba al parsear la primera query
+  string con acentos. Por eso el check de overrides prueba `query-string.parse` a
+  propósito: es la comprobación que delata ese fallo, y la única forma de cazarlo
+  sin navegador.
+- **Subir `query-string` a `^9.5.1`:** incompatible por el otro lado. Ya no
+  arrastra la versión vulnerable, pero es ESM puro y `expo-router@57` es
+  CommonJS, así que no lo puede consumir.
+
+Los dos los arregla Expo, no este repo: hace falta que suba `query-string` a una
+major y ajuste su consumo, o que suelte la dependencia. Se revisan cuando Expo
+actualice esos transitivos. Mientras tanto es riesgo aceptado: es un ReDoS en una
+librería de parsing de query strings, en el cliente, con la entrada de la propia
+persona, no de un atacante.
 
 ### Al mergear `develop` → `master`
 

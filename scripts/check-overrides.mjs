@@ -1,30 +1,45 @@
-// Comprueba que el `overrides` de `tmp` siga sirviendo a quien lo consume.
+// Comprueba que cada `overrides` de `package.json` siga sirviendo a quien lo consume.
 //
-// Hay un `overrides: { tmp: ^0.2.5 }` en package.json que saca a `tmp` del rango
-// que declara su único consumidor: `external-editor@3.1.0` pide `^0.0.33`, que es
-// `>=0.0.33 <0.0.34`, y se le fuerza `0.2.7`. El motivo está en el README: sin el
-// override, `tmp@0.0.33` arrastra dos advisories *high* y el gate de auditoría del
-// árbol de build no podría estar en `high`.
+// Hay varios overrides que sacan un paquete del rango que declara su consumidor,
+// y los tres están por lo mismo: advisory que no tiene arreglo por bump, porque la
+// versión que lo arregla es una major y el consumidor está pineado por dentro.
+// El arreglo es el override más un check que confirme que la versión forzada sigue
+// exponiendo la API que el consumidor llama.
 //
-// Esta comprobación va en su propio script, y no dentro de
-// `check-lock-integrity.mjs`, por una razón concreta: este necesita
-// `node_modules`, y aquel se ejecuta ANTES de `npm ci`, en un runner limpio. Meter
-// un `require` aquí dentro dejó el CI de todos los pushes en rojo.
+// Los overrides, y de dónde sale cada uno:
 //
-// Ni los tests del repo cubren esto: la cadena es `workbox-cli` → `inquirer` →
-// `external-editor` → `tmp`, que es la CLI interactiva de workbox, y aquí solo se
-// usa `workbox injectManifest`, que no la carga. Un test de Jest que la tocara
-// tendría que lanzar un editor real sobre una TTY: lento y frágil en CI.
+// - `tmp` a `^0.2.5`, desde `^0.0.33`, por `workbox-cli → inquirer →
+//   external-editor`. Dos advisories high (escritura arbitraria vía symlink y
+//   path traversal). `external-editor` llama a `tmpNameSync(unObjeto)`, y ese es
+//   justo el contrato que 0.2.0 Sulokó al consolidar los argumentos posicionales
+//   de affix en un objeto de opciones. O sea que la versión forzada es la que el
+//   consumidor ya esperaba.
+// - `uuid` a `^11.1.1`, desde `^7.0.3`, por `@expo/config-plugins → xcode`.
+//   El advisory es un fallo de límites de buffer en v3/v5/v6 cuando se les pasa un
+//   buffer; se arregla en 11.1.1. `xcode` solo llama a `uuid.v4()`, que existe en
+//   v11. Ojo: v11 **quitó** el export `v` (la API antigua de v1), así que este
+//   check es el que avisa si `xcode` empezara a usarlo.
+//
+// Ni los tests del repo cubren esto: la cadena es `workbox injectManifest` y
+// `xcode`, que solo corren en el build nativo, y los tests mockean el router.
+// Un test de Jest que los tocara probaría código de terceros.
 //
 // Lo que hay que vigilar no es si ese código funciona, sino que la versión
 // forzada siga exponiendo la API que el consumidor llama. Y se comprueba sobre el
 // módulo que el consumidor resuelve de verdad, no el de la raíz: si otro
-// consumidor metiera otra major de `tmp`, npm la anidaría y mirar el `tmp`
-// hoisted sería mirar otro módulo.
+// consumidor metiera otra major, npm la anidaría y mirar el paquete hoisted sería
+// mirar otro módulo.
 //
-// Si esto falla, el arreglo NO es volver a `^0.0.33` (vuelve el advisory high):
-// es un `overrides` anidado, o subir `workbox-cli` cuando saque una versión que ya
-// use `tmp` en 0.2.x y dejar el override como redundante.
+// Un cuarto override, `decode-uri-component` a `^0.5.0`, se probó y **se descartó**
+// por incompatibilidad, no por el advisory: 0.5.0 pasó a ser ESM y exporta
+// `{ default }`, mientras `query-string@7.1.3` (dentro de `expo-router`) llama a
+// la función sin desempaquetar. Los tests y el build pasaban igual; reventaba al
+// parsear una query string real. Está anotado en el README porque es el tipo de
+// trampa que parece un arreglo y no lo es.
+//
+// Si algo de aquí falla, el arreglo NO es bajar el paquete a su rango original
+// (eso devuelve el advisory): es un override anidado, o subir el consumidor
+// cuando saque una versión que ya use la major corregida.
 
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
@@ -33,58 +48,81 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// El consumidor del override, no `tmp` directamente: así se comprueba el módulo
-// que `external-editor` recibe, con su anidamiento si lo hubiera.
-const consumer = path.join(root, 'node_modules', 'external-editor');
-
-if (!existsSync(consumer)) {
-  console.error('✗ external-editor no está instalado.');
+if (!existsSync(path.join(root, 'node_modules'))) {
+  console.error('✗ node_modules no está.');
   console.error('');
-  console.error('  Este script necesita `node_modules`: corre después de `npm ci`, no');
+  console.error('  Este script necesita las dependencias: corre después de `npm ci`, no');
   console.error('  antes. La comprobación del lock sin dependencias está en');
   console.error('  `npm run check:lock`.');
   process.exit(1);
 }
 
-const require = createRequire(path.join(consumer, 'package.json'));
+const fails = [];
 
-let tmp;
-try {
-  tmp = require('tmp');
-} catch (error) {
-  console.error(`✗ No se pudo cargar tmp desde external-editor: ${error.message}`);
+function check(nombre, fn) {
+  try {
+    const detalle = fn();
+    console.log(`  ✓ ${nombre}${detalle ? ` — ${detalle}` : ''}`);
+  } catch (error) {
+    console.log(`  ✗ ${nombre} — ${error.message}`);
+    fails.push(nombre);
+  }
+}
+
+/** Resuelve un módulo desde el `package.json` del consumidor, no desde la raíz. */
+function requireFrom(consumerDir) {
+  const dir = path.join(root, 'node_modules', consumerDir);
+  if (!existsSync(dir)) {
+    throw new Error(`${consumerDir} no está instalado`);
+  }
+  return createRequire(path.join(dir, 'package.json'));
+}
+
+check('tmp → external-editor (tmpNameSync con objeto de opciones)', () => {
+  const require = requireFrom('external-editor');
+  const version = require('tmp/package.json').version;
+  const name = require('tmp').tmpNameSync({});
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error(`tmp@${version} devolvió ${JSON.stringify(name)}`);
+  }
+  return `tmp@${version}`;
+});
+
+check('uuid → xcode (v4, y v1-v8 siguen ausentes a propósito)', () => {
+  const require = requireFrom('xcode');
+  const version = require('uuid/package.json').version;
+  const uuid = require('uuid');
+
+  if (typeof uuid.v4 !== 'function') {
+    throw new Error(`uuid@${version} no expone v4, que es lo único que usa xcode`);
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid.v4())) {
+    throw new Error(`uuid@${version}.v4() no devolvió un UUID con formato v4`);
+  }
+  return `uuid@${version}`;
+});
+
+check('query-string → expo-router (parse y stringify, sin desempaquetar)', () => {
+  // Aquí no hay override, pero es la comprobación que habría delatado el de
+  // `decode-uri-component`: esa dependencia se anima a fallar sin que ningún
+  // test ni el build se entere, porque solo se usa al parsear una query real.
+  const require = requireFrom('expo-router');
+  const version = require('query-string/package.json').version;
+  const parsed = require('query-string').parse('?a=1&b=hola%20mundo&c=%C3%A1');
+  if (parsed.a !== '1' || parsed.b !== 'hola mundo' || parsed.c !== 'á') {
+    throw new Error(`query-string@${version} parseó mal: ${JSON.stringify(parsed)}`);
+  }
+  return `query-string@${version}`;
+});
+
+if (fails.length > 0) {
   console.error('');
-  console.error('  El `overrides` de package.json puede estar apuntando a una versión');
-  console.error('  que no se resuelve. Revisa el lock y corre `npm ci`.');
-  process.exit(1);
-}
-
-let version;
-try {
-  version = require('tmp/package.json').version;
-} catch {
-  console.log('  ! no se pudo leer la versión de tmp; se comprueba solo la API');
-}
-
-// `external-editor/main/index.js` llama exactamente a esto, con un único objeto de
-// opciones. Es la llamada cuyo contrato cambió en `tmp` 0.2.0, así que es la que
-// delata un override incompatible.
-let name;
-try {
-  name = tmp.tmpNameSync({});
-} catch (error) {
-  console.error(`✗ tmp@${version ?? '?'} no expone tmpNameSync como la usa external-editor: ${error.message}`);
+  console.error(`✗ ${fails.length} override(s) no sirven a su consumidor: ${fails.join(', ')}`);
   console.error('');
-  console.error('  El `overrides` de tmp es incompatible con su consumidor. El arreglo');
-  console.error('  no es bajar tmp a 0.0.x (eso devuelve el advisory high), sino un');
-  console.error('  override anidado o subir workbox-cli. Ver el README.');
+  console.error('  El arreglo no es bajar el paquete a su rango original, que devuelve');
+  console.error('  el advisory: es un override anidado, o subir el consumidor cuando');
+  console.error('  saque una versión que ya use la major corregida. Ver el README.');
   process.exit(1);
 }
 
-if (typeof name !== 'string' || name.length === 0) {
-  console.error(`✗ tmp@${version ?? '?'} devolvió un nombre no utilizable: ${JSON.stringify(name)}`);
-  process.exit(1);
-}
-
-console.log(`  tmp@${version ?? '?'}: tmpNameSync funciona para external-editor`);
-console.log('  ✓ el override de tmp sigue sirviendo a su consumidor');
+console.log('  ✓ todos los overrides siguen sirviendo a su consumidor');
