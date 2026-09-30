@@ -88,7 +88,7 @@ Los avisos de citas y cumpleaños en **iPhone solo llegan con la app instalada**
 ## 🧪 Calidad
 
 ```bash
-npm test          # 241 tests unitarios (Jest)
+npm test          # 783 tests unitarios (Jest)
 npm run typecheck # TypeScript estricto
 npm run lint      # ESLint (config de Expo)
 npm run check:csp # la CSP de vercel.json contra el proyecto real
@@ -172,18 +172,83 @@ no pasa por las preguntas interactivas de `inquirer`. Se sube porque `npm audit`
 marca *high* en el árbol completo, y con él fuera el gate de auditoría de build
 puede estar en `high` (que es donde está) sin que ese advisory lo tenga bloqueando.
 
-Como el override saca a `tmp` del rango que declara su consumidor
-(`external-editor` pide `^0.0.33`), hay un `check:overrides` que confirma que la
-versión forzada sigue exponiendo la API que él llama. Va en un script aparte del
-del lock, y después de `npm ci`, porque necesita `node_modules` y el del lock no
-puede tenerlo: se ejecuta en un runner donde aún no se ha instalado nada. Los tests
-del repo no cubren esa cadena, porque es la CLI interactiva de workbox.
+### Por qué los rangos de Expo están donde están
+
+`expo` pasó de `~57.0.9` a `~57.0.26`, y lo mismo con `expo-router` y
+`expo-splash-screen`. **Esto no instala ni un byte nuevo**: `~57.0.9` ya
+permitía `57.0.26`, así que el árbol resuelto es idéntico antes y después, con el
+mismo tarball. Lo único que cambia son **2 de las 1823 entradas** del lock: el
+propio `uuid` y un `electron-to-chromium` que se movió de paso.
+
+El valor no está en los bytes, está en el suelo del rango. Con `~57.0.26` en
+`package.json`, un `npm install` de aquí en adelante no puede resolver por debajo
+de la versión que está probada hoy, cuando con `~57.0.9` podía volver a
+57.0.10 sin que nadie se enterase.
+
+Si alguna vez esto se lee como "actualicé Expo a la última", es al revés: no hay
+actualización de código, hay una promesa de que no habrá un downgrade accidental.
+
+### Los `overrides`, y por qué hay un check que los vigila
+
+Hay dos overrides, y los dos sacan el paquete del rango que declara su consumidor.
+Eso se hace a propósito, porque el advisory no tiene arreglo por bump: la versión
+que lo arregla es una major y el consumidor está pineado por dentro.
+
+| Override | Por qué | Consumidor | API que se comprueba |
+|---|---|---|---|
+| `tmp` `^0.0.33` → `^0.2.5` | 2 advisories *high*: escritura arbitraria vía symlink y path traversal | `workbox-cli → inquirer → external-editor` | `tmpNameSync(unObjeto)` |
+| `uuid` `^7.0.3` → `^11.1.1` | fallo de límites de buffer en v3/v5/v6 con buffer | `@expo/config-plugins → xcode` | `uuid.v4()` |
+
+Por eso hay un `check:overrides`, que mira dos cosas:
+
+1. **Que el override siga aplicado.** Es la que de verdad protege. Sin ella,
+   quitar el override de `package.json` y regenerar el lock devuelve la versión
+   **vulnerable**, con su advisory de vuelta, y todos los gates en verde: el resto
+   de comprobaciones mirarían que la API siga viva, y la API de la versión vieja
+   funciona igual de bien.
+2. **Que la versión forzada siga exponiendo la API que su consumidor llama.** Sin
+   esto, un override incompatible se descubre en producción, y los tests no lo
+   cazan: la cadena es `workbox injectManifest` y `xcode`, que solo corren en el
+   build nativo.
+
+Va en un script aparte del lock, y después de `npm ci`, porque necesita
+`node_modules` y el del lock no puede tenerlo: se ejecuta en un runner donde aún no
+se ha instalado nada.
 
 ```bash
 npm run check:lock      # integridad del lock, sin dependencias
-npm run check:overrides # el override de tmp, necesita npm ci previo
+npm run check:overrides # los overrides, necesita npm ci previo
 npm run verify:deps     # los dos + los dos gates de npm audit
 ```
+
+### Lo que no se pudo arreglar, y por qué
+
+Quedan **3 advisories *moderate***, los tres de la misma raíz:
+`expo-router → query-string@7.1.3 → decode-uri-component@0.2.2`, con un ReDoS por
+decodificación exponencial. Se probaron dos caminos y ninguno sirve:
+
+- **Subir `decode-uri-component` a `^0.5.0`:** rompe. Pasó a ser ESM y exporta
+  `{ default }`, mientras `query-string@7.1.3` la llama sin desempaquetar.
+  Los 783 tests pasaban y el build también; reventaba al parsear la primera query
+  string con acentos. Por eso el check de overrides prueba `query-string.parse` a
+  propósito: es la comprobación que delata ese fallo, y la única forma de cazarlo
+  sin navegador.
+- **Subir `query-string` a `^9.5.1`:** incompatible por el otro lado. Ya no
+  arrastra la versión vulnerable, pero es ESM puro y `expo-router@57` es
+  CommonJS, así que no lo puede consumir.
+
+Los dos los arregla Expo, no este repo: hace falta que suba `query-string` a una
+major y ajuste su consumo, o que suelte la dependencia. Se revisan cuando Expo
+actualice esos transitivos.
+
+Mientras tanto es riesgo aceptado, con un matiz que conviene no maquillar: la app
+es una PWA en un dominio público, así que la query string **no la controla solo la
+persona que la escribe**. Cualquiera puede mandar un enlace del tipo
+`micasa-demo.vercel.app/citas?<payload>` y quien lo abra se queda con el main
+thread bloqueado. Es un DoS de cliente, no de servidor: no expone datos ni degrada
+la web para nadie más, y el atacante solo se lo hace a sí mismo si consigue que
+alguien abra su enlace. Eso es lo que lo deja en accepted risk, y no el hecho de
+que la entrada sea «de fiar».
 
 ### Al mergear `develop` → `master`
 
