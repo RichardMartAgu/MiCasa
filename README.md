@@ -88,7 +88,7 @@ Los avisos de citas y cumpleaños en **iPhone solo llegan con la app instalada**
 ## 🧪 Calidad
 
 ```bash
-npm test          # 241 tests unitarios (Jest)
+npm test          # 783 tests unitarios (Jest)
 npm run typecheck # TypeScript estricto
 npm run lint      # ESLint (config de Expo)
 npm run check:csp # la CSP de vercel.json contra el proyecto real
@@ -216,9 +216,16 @@ decodificación exponencial. Se probaron dos caminos y ninguno sirve:
 
 Los dos los arregla Expo, no este repo: hace falta que suba `query-string` a una
 major y ajuste su consumo, o que suelte la dependencia. Se revisan cuando Expo
-actualice esos transitivos. Mientras tanto es riesgo aceptado: es un ReDoS en una
-librería de parsing de query strings, en el cliente, con la entrada de la propia
-persona, no de un atacante.
+actualice esos transitivos.
+
+Mientras tanto es riesgo aceptado, con un matiz que conviene no maquillar: la app
+es una PWA en un dominio público, así que la query string **no la controla solo la
+persona que la escribe**. Cualquiera puede mandar un enlace del tipo
+`micasa-demo.vercel.app/citas?<payload>` y quien lo abra se queda con el main
+thread bloqueado. Es un DoS de cliente, no de servidor: no expone datos ni degrada
+la web para nadie más, y el atacante solo se lo hace a sí mismo si consigue que
+alguien abra su enlace. Eso es lo que lo deja en accepted risk, y no el hecho de
+que la entrada sea «de fiar».
 
 ### Al mergear `develop` → `master`
 

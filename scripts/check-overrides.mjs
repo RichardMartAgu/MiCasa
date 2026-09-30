@@ -88,13 +88,21 @@ check('tmp → external-editor (tmpNameSync con objeto de opciones)', () => {
   return `tmp@${version}`;
 });
 
-check('uuid → xcode (v4, y v1-v8 siguen ausentes a propósito)', () => {
+check('uuid → xcode (v4 presente y con formato; el export legacy v ausente)', () => {
   const require = requireFrom('xcode');
   const version = require('uuid/package.json').version;
   const uuid = require('uuid');
 
   if (typeof uuid.v4 !== 'function') {
     throw new Error(`uuid@${version} no expone v4, que es lo único que usa xcode`);
+  }
+  // El salto de 7 a 11 quitó `v`, que era la API antigua de v1. `xcode` no la usa
+  // hoy, pero se comprueba que siga ausente: si una major futura la reintrodujera,
+  // o si `xcode` empezara a llamar a algo que ella sí tenía, este es el gate que
+  // lo vería. El comentario de más arriba prometía esta comprobación sin
+  // cumplirla, y eso es peor que no prometerla.
+  if (uuid.v !== undefined) {
+    throw new Error(`uuid@${version} ha reintroducido el export legacy \`v\`: el salto 7→11 lo había quitado`);
   }
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid.v4())) {
     throw new Error(`uuid@${version}.v4() no devolvió un UUID con formato v4`);
