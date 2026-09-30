@@ -30,10 +30,6 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
-.env
-
 # autoskills (regenerables con `npx autoskills`)
 .claude/skills/
 .agents/
@@ -53,6 +49,8 @@ example
 /ios
 /android
 .vercel
+
+# local env files — las reglas completas viven aquí, no duplicadas arriba
 .env*
 !.env.example
 

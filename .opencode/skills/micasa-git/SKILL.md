@@ -1,6 +1,6 @@
 ---
 name: micasa-git
-description: Buenas prácticas de git para el repo MiCasa. Usar ANTES de cualquier commit, push, merge, rebase, cherry-pick, reset o limpieza de ramas y worktrees. Cubre el flujo obligatorio de worktree por rama, los comandos destructivos que ya han causado pérdida de trabajo en este repo, y las rarezas de sus ramas (develop es la de trabajo, master es la de dependabot).
+description: Buenas prácticas de git para el repo MiCasa. Usar ANTES de cualquier commit, push, merge, rebase, cherry-pick, reset o limpieza de ramas y worktrees. Fija el flujo obligatorio: develop es la única base, un worktree y una rama por feature, y commit + push + PR siempre contra develop. master no es destino. Cubre los comandos destructivos que ya han causado pérdida de trabajo en este repo y las rarezas de sus ramas (master es la de dependabot).
 user-invocable: false
 allowed-tools: Bash(git status*), Bash(git diff*), Bash(git log*), Bash(git add*), Bash(git commit*), Bash(git fetch*), Bash(git pull*), Bash(git push*), Bash(git branch*), Bash(git worktree*), Bash(git rebase*), Bash(git cherry-pick*), Bash(git restore*), Bash(git stash*), Bash(git checkout*), Bash(git switch*), Bash(gh pr*), Bash(gh run*), Read, Grep, Glob, TodoWrite
 ---
@@ -9,11 +9,17 @@ allowed-tools: Bash(git status*), Bash(git diff*), Bash(git log*), Bash(git add*
 
 Skill de git **específica de este repositorio**. Las skills globales (`git-commit`, `git-push`…) explican cómo se usa git; esta explica cómo se usa git **aquí**, con las trampas que ya han mordido.
 
+## Las reglas, en una línea
+
+**`develop` es la única base.** De ella sale un worktree y una rama por feature. Cada feature
+termina en commit + push + PR **contra `develop`**. **`master` nunca es destino**, salvo que el
+usuario lo pida de forma explícita en ese momento.
+
 ## Las dos ramas, y por qué importa
 
 | Rama | Papel | Quién escribe |
 |---|---|---|
-| `develop` | La de trabajo. Todo lo que se despliega sale de aquí. | Personas y PRs manuales |
+| `develop` | La de trabajo. Base de todo. Todo lo que se despliega sale de aquí. | Personas y PRs manuales |
 | `master` | La de por defecto del repositorio. | **Dependabot**, y casi nada más |
 
 `develop` va muy por delante. En el momento de escribir esto, 36 commits por delante y 3 por detrás.
@@ -25,21 +31,36 @@ Skill de git **específica de este repositorio**. Las skills globales (`git-comm
 1. `git checkout develop` en el directorio principal y `git pull --ff-only`
 2. Crear rama desde `develop`: `git worktree add ../MiCasa-<nombre> -b <tipo>/<nombre> develop`
 3. Trabajar **dentro del worktree**, nunca en `/home/richard/MiCasa`
-4. Al terminar y pasar security + QA: commit, push, PR contra `develop`
+4. Al terminar y pasar security + QA: commit, `git push -u origin <tipo>/<nombre>`, PR **contra `develop`**
 5. Mergear, y **solo entonces** limpiar:
    ```bash
    git worktree remove /home/richard/MiCasa-<nombre>
    git branch -d <rama>
    ```
 
-`master` no se escribe nunca. `develop` tampoco, **salvo el cambio pequeño**: un commit
-directo en el directorio principal cuando es solo documentación (`*.md`), sin reescribir
-secciones enteras, de un archivo o menos de ~20 líneas, y sin tocar código, configuración,
-dependencias, migraciones ni secrets. Ni rama, ni worktree, ni PR, ni auditorías: no hay
-código que auditar.
+Casi nada se commitea directamente en `develop`. Ni código, ni configuración, ni
+migraciones, ni secrets, ni dependencias. **Feature = rama + worktree + PR a `develop`.**
 
-Si dudas de si algo entra en la excepción, no entra. El coste de equivocarse es un PR de
-más; el de hacerlo al revés es código sin auditar en `develop`.
+La única excepción es el **cambio pequeño**, y está definida en `AGENTS.md`, que es la
+fuente que manda: solo documentación (`*.md`), sin reescribir secciones enteras, de un
+archivo o menos de ~20 líneas, y sin tocar código ejecutable, configuración ni
+dependencias. Ni rama, ni worktree, ni PR, ni auditorías, porque no hay código que auditar.
+
+Si dudas de si un cambio entra en la excepción, no entra. El coste de equivocarse es un PR
+de más; el de hacerlo al revés es código sin auditar en `develop`.
+
+## `master` no es destino
+
+Un PR se abre contra `develop`. **Siempre.** No hay ninguna razón por la que abrirlo contra
+`master`: el cambio no se despliega desde ahí, y mergeado allí se queda invisible para
+`develop` (le pasó a #42).
+
+La única forma de tocar `master` es que **el usuario lo pida explícitamente** en ese momento.
+Sin esa frase, ni lo proposes ni lo hagas, aunque parezca lo lógico. Si el cambio necesita
+volver a `develop` después, es trabajo extra: mejor no llegar ahí.
+
+Si dependabot abre un PR contra `master` y hay que sacarlo a `develop`, eso se hace a mano y
+como un bloque propio, no de rebote.
 
 ## Comandos que aquí han roto trabajo
 
@@ -114,7 +135,7 @@ git branch                      # develop y master, nada más
 
 Un PR que no se puede mergear **se cierra con el motivo**. "Pendiente de revisar" no es un estado válido entre bloques: o entra en el bloque actual, o se cierra.
 
-## limpieza
+## Limpieza
 
 Cuando termines, no dejes worktrees ni ramas:
 
