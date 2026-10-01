@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [develop, master]
 
+# El job no usa el token para nada: solo lee el repo. Bajar el permiso por
+# defecto (que en un repo público es amplio) no rompe ningún step y acota el
+# radio de cualquier dependencia que se ejecute dentro.
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -85,12 +91,17 @@ jobs:
       # `npm run check:functions` y `npm run test:functions`, que van con
       # `npx -y deno` y por tanto con la última: aquí prima que dos ejecuciones
       # del mismo día resuelvan lo mismo.
-      - uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.9.6
 
+      # `--frozen` para los dos. Sin él, si al lock le falta una entrada, Deno
+      # la resuelve contra el registro y la escribe: el código se ejecuta
+      # **antes** de que el paso del lock avise. Con `--frozen` falla ahí mismo,
+      # antes de ejecutar nada. Comprobado: sin lock, sin `--frozen` sale 0 y
+      # crea el lock; con `--frozen` sale 1.
       - name: Typecheck de la Edge Function
-        run: deno check --node-modules-dir=none supabase/functions/send-web-push/
+        run: deno check --frozen --node-modules-dir=none supabase/functions/send-web-push/
 
       # `--allow-env` no lo pide ningún test: los 34 Injectan su propio `ENV`.
       # Lo pide `npm:web-push`, que lee `process.env` al importarse, así que sin
@@ -104,17 +115,29 @@ jobs:
       # Sin `--allow-net` a propósito, y es una barrera: un test que intentara
       # hablar con Supabase falla en vez de exfiltrar.
       - name: Test de la Edge Function
-        run: deno test --allow-env --allow-read=supabase/functions/send-web-push --node-modules-dir=none supabase/functions/send-web-push/
+        run: deno test --frozen --allow-env --allow-read=supabase/functions/send-web-push --node-modules-dir=none supabase/functions/send-web-push/
 
-# Si a `deno.lock` le falta una entrada, Deno la añade y sigue. En el runner eso
-      # se pierde: el job queda verde y el lock se queda corto para el siguiente.
+      # El lock de Deno de esta carpeta está commiteado, y este paso vigila que
+      # siga estándolo y sin cambios.
       #
-      # Este lock sí está commiteado, aunque `.gitignore` mencione `deno.lock`:
-      # esa regla es para el lock de la raíz, que contiene el árbol de Expo y no
-      # lo ejecuta nadie. Al estar ya trackeado, la regla no le afecta. Es un
-      # paso con teeth, comprobado: introduces una línea y sale con código 1.
+      # `git status --porcelain` y no `git diff --exit-code`, y por un motivo que
+      # importa: `git diff` compara el working tree contra el índice, así que si
+      # el fichero dejara de estar trackeado no habría nada que comparar y el
+      # paso saldría en verde. `git status --porcelain` sí ve el `??` de un
+      # fichero sin trackear, y así el caso que de verdad rompe el paso también
+      # sale rojo.
+      #
+      # Este lock **sí** está trackeado. El `deno.lock` de `.gitignore` es el de
+      # la raíz, que contiene el árbol de Expo y no ejecuta nadie; y a un
+      # fichero ya trackeado esa regla no le aplica. Si algún día alguien lo
+      # quita del índice "porque así estaba", este paso lo dice.
       - name: Lock de Deno sin cambios
-        run: git diff --exit-code -- supabase/functions/send-web-push/deno.lock
+        run: |
+          if [ -n "$(git status --porcelain -- supabase/functions/send-web-push/deno.lock)" ]; then
+            echo "::error::supabase/functions/send-web-push/deno.lock ha cambiado o ha dejado de estar trackeado. Súbelo en el mismo PR que el cambio que lo justificó."
+            git status --porcelain -- supabase/functions/send-web-push/deno.lock
+            exit 1
+          fi
 
       # Puerta de vulnerabilidades, solo sobre lo que se instala en producción.
       # `--omit=dev` porque las herramientas de build (jest, @expo/cli,
