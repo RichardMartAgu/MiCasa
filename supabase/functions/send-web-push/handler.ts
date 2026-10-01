@@ -422,7 +422,12 @@ function secondsToNextBucket(now: number, bucket: number, bucketMs: number): num
  * El enfriamiento se apoya en la clave única de `push_log` en vez de en un
  * marca de tiempo: así funciona entre réplicas de la función sin estado propio, y
  * no hay que tocar `push_preferences` (escribir ahí el instante del envío
- * reactivaría el interruptor maestro de quien lo pulses).
+ * reactivaría el interruptor maestro de quien lo pulse).
+ *
+ * La fila no se suelta en ninguna de las tres salidas —duplicada, lectura fallida
+ * y lista vacía—, y por eso el enfriamiento se aplica también en el estado
+ * trivial de un navegador sin suscripciones. Esa es justo la razón de existir del
+ * enfriamiento, así que soltarla en el caso vacío lo dejaba sin efecto.
  */
 const TEST_PUSH_COOLDOWN_MS = 5 * 60_000;
 
@@ -462,14 +467,17 @@ async function runTestPush(
   }
 
   if (result.delivered === 0) {
-    // Aquí sí se libera: la lista se leyó bien y está vacía de verdad, y el botón lo
-    // pulsa una persona que puede activar el push en otro momento. Un reintento
-    // inmediato no tiene por qué esperar 5 minutos.
-    await db
-      .from("push_log")
-      .delete()
-      .eq("user_id", userId)
-      .eq("dedupe_key", `test:${userId}:${bucket}`);
+    // Aquí la reserva se QUEDA, y antes se soltaba. Con cero suscripciones —el
+    // estado trivial de un navegador sin el push activo— el enfriamiento no se
+    // aplicaba nunca, que es justo el caso para el que existe: "por si alguien lo
+    // pulsa en bucle" (ver `sendTestPush` en la app). Soltarla convertía
+    // `?mode=test` en el mismo bucle sin límite que ya se cerró en `mode=now`.
+    //
+    // Se acepta que quien active el push en otro momento espere cinco minutos: es
+    // preferible a devolverle un botón que se puede martillear sin coste para
+    // nadie. Bajar el enfriamiento no sería la manera de arreglarlo, porque reabre
+    // el bucle; si de verdad hace falta poder reintentar antes, tiene que ser con
+    // otro mecanismo, no soltando la fila.
     return { ok: false, error: "sin suscripciones activas en este navegador" };
   }
 
@@ -506,11 +514,6 @@ async function resolveUserTimeZone(
 /** Zona por defecto del proyecto. Es la de `casa` en la mayoría de cuentas. */
 const DEFAULT_VAPID_SUBJECT_TIMEZONE = "Europe/Madrid";
 
-/** Libera una reserva de `push_log` para que un reintento no espere al día siguiente. */
-async function releaseClaim(db: Db, userId: string, key: string): Promise<void> {
-  await db.from("push_log").delete().eq("user_id", userId).eq("dedupe_key", key);
-}
-
 /**
  * Aviso de confirmación que pide el cliente al acabar de crear una cita o un
  * cumpleaños: "esto ya queda avisado".
@@ -545,6 +548,11 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * motivo. Y con un minuto tampoco frena lo que hay que frenar, que es el bucle:
  * mil peticiones por minuto siguen siendo mil, pero ninguna pasa de la primera
  * fila de `push_log`.
+ *
+ * Y no es solo un enfriamiento. La fila se pide antes de validar el tipo, el id y
+ * antes de cualquier consulta de negocio (ver `runNowPush`), así que el bucket
+ * acota el trabajo de TODAS las peticiones de este modo, incluidas las que ni
+ * siquiera llegan a preguntar por una referencia.
  */
 const NOW_PUSH_COOLDOWN_MS = 60_000;
 
@@ -556,6 +564,59 @@ async function runNowPush(
   now: number,
 ): Promise<{ body: Record<string, unknown>; status: number }> {
   const fail = (error: string, status: number) => ({ body: { ok: false, error }, status });
+
+  // La reserva va PRIMERO, antes de validar el tipo, el id y antes de cualquier
+  // consulta de negocio. Antes iba al final, después de leer preferencias, zona,
+  // casas y la referencia, y eso dejaba trece salidas tempranas —casi todas 4xx
+  // de validación— que no escribían nada. Con lo que el bucle más barato que
+  // quedaba era `?mode=now&type=appointment&id=<uuid aleatorio>`: un 404 de "esa
+  // cita no existe" después de haber pagado la validación de sesión, las dos
+  // llamadas a Vault y la consulta de la referencia, con cero filas escritas y sin
+  // enfriamiento. Mismo perfil de coste que el bucle ya cerrado, y más barato
+  // porque no necesita ni un contacto real.
+  //
+  // El precio de moverlo es que ahora un 400 o un 403 de validación también quema
+  // el bucket. Se acepta a conciencia: los dos sitios que llaman a este camino
+  // hacen fire-and-forget y tiran el retorno, así que para la UX no cambia nada; a
+  // cambio ninguna petición repite su trabajo sin pagar al menos un insert.
+  //
+  // Y no se suelta nunca en este camino: ni con `delivered === 0`, ni con
+  // `readFailed`, ni con un fallo inesperado, ni con ninguna de las salidas
+  // tempranas. Soltarla en cualquiera de ellas devuelve el bucle.
+  const bucket = Math.floor(now / NOW_PUSH_COOLDOWN_MS);
+  const retryInSeconds = secondsToNextBucket(now, bucket, NOW_PUSH_COOLDOWN_MS);
+  // Lo que esta fila significa ya no es "esta referencia quedó confirmada" sino
+  // "este usuario pidió una confirmación dentro de este minuto". Por eso la
+  // variable se llama reserva y no `key` de confirmación: es una reserva de usuario
+  // y minuto, y no un registro de lo que se confirmó ni de lo que se va a confirmar.
+  const reserva = nowDedupeKey(userId, bucket);
+  const { error: claimError } = await db
+    .from("push_log")
+    .insert({ user_id: userId, dedupe_key: reserva });
+
+  if (claimError) {
+    // 23505 = este usuario ya tiene una reserva viva en este minuto. No sale ningún
+    // push y no es un fallo del cliente: reintentar en bucle no produce un aviso
+    // nuevo, solo más peticiones.
+    //
+    // Por eso `ok` es false y no true: antes devolvía `ok: true` con
+    // `delivered: 0`, que se contradicen —nada salió y algo se dice que salió— y que
+    // además se leía como que el aviso estaba confirmado. El motivo y los segundos
+    // que faltan viajan con él para que quien lo use pueda decir qué hacer, que es
+    // lo mismo que hace `sendTestPush` con "demasiado rapido". El prefijo `now:` de
+    // la clave es lo que garantiza que esto no choca con el recordatorio del cron.
+    if (claimError.code === "23505") {
+      return {
+        body: { ok: false, skipped: true, error: "ya se confirmo en este minuto", retryInSeconds },
+        status: 200,
+      };
+    }
+    // Cualquier otro error es de la base de datos, no una duplicidad. Aquí sí se
+    // aborta: seguir significaría enviar sin haber reservado nada, que es el
+    // duplicado que `push_log` existe para evitar.
+    console.error("send-web-push: no se pudo reservar la confirmacion", claimError);
+    return fail("no se pudo registrar el aviso", 500);
+  }
 
   const type = params.get("type");
   const refId = params.get("id");
@@ -646,31 +707,9 @@ async function runNowPush(
   }
 
   // La fila existe y es visible, pero no hay recordatorio que confirmar. No es un
-  // error: el cliente solo lo llama cuando el usuario eligió un recordatorio.
+  // error: el cliente solo lo llama cuando el usuario eligió un recordatorio. La
+  // reserva de arriba se queda; el bucket ya está gastado.
   if (!dispatch) return fail("no hay recordatorio que confirmar", 404);
-
-  const bucket = Math.floor(now / NOW_PUSH_COOLDOWN_MS);
-  const retryInSeconds = secondsToNextBucket(now, bucket, NOW_PUSH_COOLDOWN_MS);
-  const key = nowDedupeKey(userId, bucket);
-  const { error: claimError } = await db
-    .from("push_log")
-    .insert({ user_id: userId, dedupe_key: key });
-
-  if (claimError) {
-    // 23505 = esta confirmación ya salió en este bucket. Se responde con ok porque
-    // el efecto pedido está cubierto o no se puede cumplir y se reintenta luego: el
-    // cliente no tiene nada que reintentar. Con el bucket por usuario, además, este
-    // es el camino que corta el bucle de "no tengo suscripciones", sin tener que
-    // soltar la reserva entre vuelta y vuelta.
-    if (claimError.code === "23505") {
-      return { body: { ok: true, delivered: 0, skipped: true, retryInSeconds }, status: 200 };
-    }
-    // Cualquier otro error es de la base de datos, no una duplicidad. Aquí sí se
-    // aborta: seguir significaría enviar sin haber reservado nada, que es el
-    // duplicado que `push_log` existe para evitar.
-    console.error("send-web-push: no se pudo reservar la confirmacion", claimError);
-    return fail("no se pudo registrar el aviso", 500);
-  }
 
   try {
     const result = await sendToUser(db, secrets, userId, {
@@ -687,10 +726,9 @@ async function runNowPush(
 
     if (result.delivered === 0) {
       // Nadie lo recibió (típicamente: sin suscripciones en este navegador). La
-      // reserva NO se suelta: es ella la que hace de enfriamiento. Soltarla era lo
-      // que dejaba el bucle abierto, porque el siguiente request volvía a reservar
-      // la misma clave y a pagar otra vez la validación de sesión, las dos llamadas
-      // a Vault y las consultas de casas, citas y suscripciones.
+      // reserva NO se suelta: es ella la que hace de enfriamiento, y ahora además
+      // es lo único que separa dos peticiones de este camino, porque se pide antes
+      // de validar nada.
       return {
         body: {
           ok: false,
@@ -707,10 +745,11 @@ async function runNowPush(
     };
   } catch (error) {
     // `sendToUser` ya captura los fallos por suscripción, así que llegar aquí es
-    // un fallo inesperado. Aun así, la reserva se suelta: una fila puesta por un
-    // envío que no ocurrió bloquearía el reintento y ocuparía una fila para siempre.
+    // un fallo inesperado. La reserva se queda igualmente: ahora se pide antes de
+    // validar nada, así que soltarla aquí volvería a abrir el bucle que la fila
+    // cierra. El precio es un minuto sin poder reintentar y una fila de más, y lo
+    // paga un camino que casi no se recorre; soltarla lo pagaría todo el mundo.
     console.error("send-web-push: fallo en el aviso de confirmacion", error);
-    await releaseClaim(db, userId, key);
     return fail("no se pudo enviar el aviso", 500);
   }
 }

@@ -1127,11 +1127,18 @@ export async function sendTestPush(): Promise<TestPushResult> {
  * Devuelve `{ ok: false }` sin lanzar en cuanto algo no cuadra, y quien la llama
  * tiene que ignorar el resultado: el registro se guardó igual, y un push que no
  * sale no es motivo para enseñarle un error a alguien que ya ha hecho lo que quería.
+ *
+ * `retryInSeconds` es parte del contrato y se rellena en todos los caminos en los
+ * que no salió ningún push, no solo en el 404 de "sin suscripciones": también viaja
+ * en el 200 de la petición que se come el enfriamiento, porque para quien reintenta
+ * los dos son el mismo problema. Los dos call sites actuales lo ignoran (los dos
+ * hacen fire-and-forget), pero el contrato queda completo para que el siguiente que
+ * quiera decir "espera N segundos" no tenga que adivinarlo ni mirar el servidor.
  */
 export async function sendNowPush(
   type: 'appointment' | 'birthday',
   id: string,
-): Promise<{ ok: boolean; delivered?: number; error?: string }> {
+): Promise<{ ok: boolean; delivered?: number; error?: string; retryInSeconds?: number }> {
   if (Platform.OS !== 'web') return { ok: false, error: 'solo funciona en web' };
 
   const { data: sessionData } = await supabase.auth.getSession();
@@ -1164,14 +1171,21 @@ export async function sendNowPush(
     return { ok: false, error: 'respuesta ilegible' };
   }
 
-  if (!response.ok) {
-    return { ok: false, error: typeof body.error === 'string' ? body.error : 'error inesperado' };
-  }
-  if (body.ok === true) {
+  // El cuerpo dice las dos cosas que importan para reintentar: por qué no salió
+  // nada y cuánto queda. Se leen juntas y fuera del `!response.ok`, porque el
+  // servidor responde 200 también cuando la petición se come el enfriamiento
+  // (`skipped`): tratarlo como un error de red perdería el motivo y la espera. El
+  // status sigue mandando en la éxito, por si un proxy devolviera un cuerpo ajeno
+  // con `ok: true`.
+  const error = typeof body.error === 'string' ? body.error : 'error inesperado';
+  const retryInSeconds =
+    typeof body.retryInSeconds === 'number' ? body.retryInSeconds : undefined;
+
+  if (response.ok && body.ok === true) {
     return {
       ok: true,
       delivered: typeof body.delivered === 'number' ? body.delivered : 0,
     };
   }
-  return { ok: false, error: typeof body.error === 'string' ? body.error : 'error inesperado' };
+  return { ok: false, error, retryInSeconds };
 }

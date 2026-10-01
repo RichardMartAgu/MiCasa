@@ -637,6 +637,19 @@ export function buildNowBirthdayDispatch(input: {
  * una validación de sesión, dos llamadas a Vault y varias consultas), no dos avisos
  * del mismo evento. `bucket` viene del reloj del llamador, no de aquí, para que este
  * módulo siga sin leer la hora.
+ *
+ * Lo que la fila significa, escrito aquí para que no se lea de otra manera: NO es
+ * "esta referencia quedó confirmada", es "este usuario pidió una confirmación dentro
+ * de este minuto". La reserva se pide antes de validar el tipo, el id y antes de
+ * consultar nada (ver `runNowPush`), así que hasta un `id` que no existe deja fila.
+ *
+ * El canje de ese espacio de nombres por usuario es deliberado y tiene un precio
+ * concreto: guardar un cumpleaños y una cita dentro del mismo minuto hace que la
+ * SEGUNDA respuesta sea "omitida" sin mandar push, porque la clave ya está ocupada.
+ * Es aceptable porque los dos call sites hacen fire-and-forget e ignoran el
+ * retorno —la UI no se entera—, y porque el caso real es una persona creando una
+ * cosa y guardando la otra un momento después. Con la clave por referencia, el
+ * bucle volvería a entrar por la vía de un `id` que no existe.
  */
 export function nowDedupeKey(userId: string, bucket: number): string {
   return `now:${userId}:${bucket}`;

@@ -163,6 +163,18 @@ class FakeDb {
     return this.calls.filter((c) => c.table === table && (op === undefined || c.op === op));
   }
 
+  /**
+   * Cuántas filas de `push_log` hay de verdad.
+   *
+   * Hace falta porque `calls` registra el `insert` aunque la restricción de
+   * unicidad lo rechace: `from()` apunta la llamada antes de que se sepa el
+   * resultado. Contar llamadas no demuestra que quedara fila, y esto es
+   * precisamente lo que se quiere demostrar.
+   */
+  pushLogRows(): number {
+    return this.insertadas.size;
+  }
+
   from(table: string): Query {
     const call: Call = { table, op: "select", eq: {} };
     this.calls.push(call);
@@ -185,6 +197,12 @@ class FakeDb {
       const clave = String(call.payload?.dedupe_key ?? "");
       if (this.insertadas.has(clave)) return fallo("duplicate key", "23505");
       this.insertadas.add(clave);
+      return SIN_ERROR;
+    }
+    if (call.table === "push_log" && call.op === "delete" && call.eq.dedupe_key !== undefined) {
+      // Sin esto el doble mentía sobre el estado: un `delete` real sí deja la clave
+      // libre para volver a insertarla, y aquí se quedaría bloqueada para siempre.
+      this.insertadas.delete(String(call.eq.dedupe_key));
       return SIN_ERROR;
     }
 
@@ -271,15 +289,18 @@ Deno.test("el bucket corta el segundo intento dentro del mismo minuto", async ()
   const primero = await cuerpo(await handle(peticionNow(), ENV, deps));
   assertEquals(primero.ok, false);
 
-  // Mismo bucket: la clave única de `push_log` salta y la respuesta es ok-skipped,
-  // porque el efecto pedido está cubierto o no se puede cumplir y se reintenta
-  // luego. No es un error que el cliente pueda arreglar reintentando.
+  // Mismo bucket: la clave única de `push_log` salta y no sale ningún push. Ya no
+  // se responde `ok: true` con `delivered: 0`, que se contradicen: `ok` es false,
+  // el motivo viaja con `skipped` y los segundos que faltan para el siguiente
+  // bucket también. Reintentar en bucle no produce un aviso nuevo, solo peticiones.
   const segundo = await handle(peticionNow(), ENV, deps);
   assertEquals(segundo.status, 200);
   const body = await cuerpo(segundo);
-  assertEquals(body.ok, true);
+  assertEquals(body.ok, false);
   assertEquals(body.skipped, true);
+  assertEquals(body.error, "ya se confirmo en este minuto");
   assert(typeof body.retryInSeconds === "number");
+  assertEquals(body.delivered, undefined);
   // Y lo que de verdad mide el bucle: el segundo intento no vuelve a leer las
   // suscripciones ni a tocar la reserva. Choca en la clave única y ahí acaba.
   assertEquals(db.callsTo("push_subscriptions").length, 1);
@@ -311,6 +332,113 @@ Deno.test("la reserva de la confirmación va por usuario y no por referencia", a
 
   const clave = String(db.callsTo("push_log", "insert")[0].payload?.dedupe_key);
   assertEquals(clave, `now:${USER}:${Math.floor(reloj / 60_000)}`);
+});
+
+// ---------------------------------------------------------------------------
+// La reserva se pide ANTES de validar nada: sin esto, un 4xx de validación es el
+// bucle más barato que queda (paga sesión, Vault y la consulta, y no escribe nada).
+// ---------------------------------------------------------------------------
+
+Deno.test("una referencia que no existe también quema el bucket", async () => {
+  // El caso que motivated el arreglo: antes salía un 404 sin escribir fila, así que
+  // el mismo request se podía repetir indefinidamente pagando la validación de
+  // sesión y las dos llamadas a Vault cada vez.
+  const db = guionConfirmacion({ "contacts:select": [filas([])] });
+  const deps = { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000 };
+
+  const res = await handle(peticionNow(), ENV, deps);
+  assertEquals(res.status, 404);
+  assertEquals((await cuerpo(res)).error, "ese contacto no existe");
+  assertEquals(db.pushLogRows(), 1);
+  assertEquals(db.callsTo("push_log", "delete").length, 0);
+
+  // Y en el mismo minuto no vuelve a preguntar: choca en la clave única. La segunda
+  // petición llega a hacer el `insert` —no hay forma de saber que está repetida sin
+  //arlo a probar—, pero no pasa de ahí ni deja una segunda fila.
+  const repetido = await handle(peticionNow(), ENV, deps);
+  assertEquals((await cuerpo(repetido)).skipped, true);
+  assertEquals(db.pushLogRows(), 1);
+  assertEquals(db.callsTo("contacts").length, 1);
+});
+
+Deno.test("pasado el bucket, una referencia que no existe vuelve a preguntar", async () => {
+  // Que la reserva caduque con el bucket es lo que la deja ser un enfriamiento y no
+  // una condena: al minuto siguiente la petición se atiende con normalidad.
+  const db = guionConfirmacion({ "contacts:select": [filas([])] });
+  let reloj = 1_800_000_000_000;
+  const deps = { createDb: () => db as unknown as SupabaseClient, now: () => reloj };
+
+  await handle(peticionNow(), ENV, deps);
+  reloj += 61_000;
+
+  const otro = await cuerpo(await handle(peticionNow(), ENV, deps));
+  assertEquals(otro.error, "ese contacto no existe");
+  assertEquals(db.callsTo("push_log", "insert").length, 2);
+  assertEquals(db.callsTo("contacts").length, 2);
+});
+
+Deno.test("un tipo inválido también deja fila", async () => {
+  // Prueba de que la reserva va antes de validar el tipo, y no después: un 400 que
+  // no escribe nada es exactamente el bucle que había que cerrar.
+  const db = guionConfirmacion();
+  const res = await handle(peticionNow({ type: "inventado" }), ENV, {
+    createDb: () => db as unknown as SupabaseClient,
+    now: () => 1_800_000_000_000,
+  });
+
+  assertEquals(res.status, 400);
+  assertEquals((await cuerpo(res)).error, "tipo invalido");
+  assertEquals(db.callsTo("push_log", "insert").length, 1);
+  // Y ni siquiera ha llegado a mirar preferencias: la fila se puso primero.
+  assertEquals(db.callsTo("push_preferences").length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// `mode=test`: el enfriamiento tampoco puede anularse a sí mismo.
+// ---------------------------------------------------------------------------
+
+/** Llamada de `mode=test` con sesión, que es el botón de Ajustes. */
+function peticionTest(): Request {
+  return new Request(`${FN}?mode=test`, { method: "POST", headers: { authorization: "Bearer sesion" } });
+}
+
+Deno.test("sin suscripciones, el aviso de prueba tampoco se puede repetir en bucle", async () => {
+  // Aquí la reserva se soltaba cuando la lista salía vacía, que es el estado trivial:
+  // con cero suscripciones el enfriamiento de 5 minutos no se aplicaba nunca y
+  // `?mode=test` quedaba sin límite, que es justo para lo que existe.
+  const db = new FakeDb({ "push_subscriptions:select": [filas([])] });
+  const deps = { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000 };
+
+  const res = await handle(peticionTest(), ENV, deps);
+  assertEquals((await cuerpo(res)).error, "sin suscripciones activas en este navegador");
+  assertEquals(db.pushLogRows(), 1);
+  assertEquals(db.callsTo("push_log", "delete").length, 0);
+
+  // El segundo intento choca en la reserva y dice cuánto queda, en vez de repetir
+  // la lectura de suscripciones y el envío.
+  const repetido = await cuerpo(await handle(peticionTest(), ENV, deps));
+  assertEquals(repetido.ok, false);
+  assertEquals(repetido.error, "demasiado rapido");
+  assert(typeof repetido.retryInSeconds === "number");
+  assert((repetido.retryInSeconds as number) <= 300);
+  assertEquals(db.pushLogRows(), 1);
+  assertEquals(db.callsTo("push_subscriptions").length, 1);
+});
+
+Deno.test("mode=test con fallo de lectura no suelta la reserva", async () => {
+  // El otro caso que hay que no mezclar con el de la lista vacía: aquí no se sabe si
+  // hay suscripciones, así que el motivo es de fallo y no de "no tienes ninguna", y
+  // la fila se queda igual. El 200 es el de siempre en este modo: `runTestPush` no
+  // elige status, el que lleva el 500 de verdad es el camino de `mode=now`.
+  const db = new FakeDb({ "push_subscriptions:select": [fallo("statement timeout")] });
+  const res = await handle(peticionTest(), ENV, {
+    createDb: () => db as unknown as SupabaseClient,
+    now: () => 1_800_000_000_000,
+  });
+
+  assertEquals(res.status, 200);
+  assertEquals((await cuerpo(res)).error, "no se pudieron leer tus suscripciones");
+  assertEquals(db.callsTo("push_log", "delete").length, 0);
 });
 
 // ---------------------------------------------------------------------------
