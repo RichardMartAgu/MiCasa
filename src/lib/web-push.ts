@@ -1108,3 +1108,70 @@ export async function sendTestPush(): Promise<TestPushResult> {
   }
   return { ok: false, error: typeof body.error === 'string' ? body.error : 'error inesperado' };
 }
+
+/**
+ * Confirma que una cita o un cumpleaños recién creado queda avisado, con un aviso
+ * inmediato y aparte del recordatorio que manda el cron.
+ *
+ * El servidor compone el texto y sabe qué se ha programado (lo lee de la fila y de
+ * `push_preferences`), así que aquí no se manda ni el texto ni el slot: mandarlos
+ * desde el cliente dejaría que la confirmación dijera una cosa y el recordatorio
+ * otra.
+ *
+ * Es un canal distinto del de las notificaciones locales: en nativo no hay
+ * suscripciones de Web Push, y en web las notificaciones locales no existen. Por
+ * eso sale temprano en nativo, y por eso no se pide permiso ni se mira
+ * `areNotificationsEnabled()`: ambas cosas serían ciertas solo en el sitio donde
+ * esta función no hace nada.
+ *
+ * Devuelve `{ ok: false }` sin lanzar en cuanto algo no cuadra, y quien la llama
+ * tiene que ignorar el resultado: el registro se guardó igual, y un push que no
+ * sale no es motivo para enseñarle un error a alguien que ya ha hecho lo que quería.
+ */
+export async function sendNowPush(
+  type: 'appointment' | 'birthday',
+  id: string,
+): Promise<{ ok: boolean; delivered?: number; error?: string }> {
+  if (Platform.OS !== 'web') return { ok: false, error: 'solo funciona en web' };
+
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) return { ok: false, error: 'sesión no válida' };
+
+  const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+  const params = new URLSearchParams({ mode: 'now', type, id, timezone: detectTimeZone() });
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/functions/v1/send-web-push?${params.toString()}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+    });
+  } catch {
+    return { ok: false, error: 'sin conexión' };
+  }
+
+  // El cuerpo puede no ser JSON: un 502 del proxy o una caída a mitad de camino.
+  // Sin este try, un `json()` que revienta convertía un problema de red en una
+  // excepción sin capturar, y en una llamada `void` eso es un rechazo mudo.
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await response.json()) as Record<string, unknown>;
+  } catch {
+    return { ok: false, error: 'respuesta ilegible' };
+  }
+
+  if (!response.ok) {
+    return { ok: false, error: typeof body.error === 'string' ? body.error : 'error inesperado' };
+  }
+  if (body.ok === true) {
+    return {
+      ok: true,
+      delivered: typeof body.delivered === 'number' ? body.delivered : 0,
+    };
+  }
+  return { ok: false, error: typeof body.error === 'string' ? body.error : 'error inesperado' };
+}

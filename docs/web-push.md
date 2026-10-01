@@ -42,8 +42,8 @@ El service worker (`sw-src.js`) solo precachea el shell y atiende `push` y `noti
 | `supabase/migrations/20260925_web_push_drop_secrets_plural.sql` | Retira el RPC que devolvía los tres secretos de golpe. |
 | `supabase/functions/send-web-push/index.ts` | Arranque de la función: `Deno.serve` y las tipografías del runtime. |
 | `supabase/functions/send-web-push/handler.ts` | La Edge Function: autenticación, consultas, envío, mantenimiento de suscripciones y CORS. |
-| `supabase/functions/send-web-push/reminders.ts` | Lógica pura de recordatorios (fechas, zonas horarias, texto). Sin I/O. |
-| `supabase/functions/send-web-push/reminders.test.ts` | 28 tests con `deno test`. |
+| `supabase/functions/send-web-push/reminders.ts` | Lógica pura de recordatorios (fechas, zonas horarias, texto) y de las confirmaciones del modo `now`. Sin I/O: **no importa nada de `@supabase/supabase-js`**. |
+| `supabase/functions/send-web-push/reminders.test.ts` | 43 tests con `deno test`. |
 | `supabase/functions/send-web-push/cors.ts` | Lógica pura de CORS: allowlist de orígenes y cabeceras. Sin I/O ni `Deno.env`. |
 | `supabase/functions/send-web-push/cors.test.ts` | 19 tests con `deno test`, 4 de ellos contra el handler real. |
 | `supabase/config.toml` | Declara `verify_jwt = false` solo para `send-web-push`. |
@@ -199,6 +199,21 @@ curl -s -o /dev/null -w "%{http_code}\n" -X OPTIONS \
 
 Y los tests: `npx -y deno test --allow-env --allow-read --node-modules-dir=auto supabase/functions/send-web-push/` → 54/54.
 
+## Cómo correr los tests de la función
+
+```
+npm run test:functions
+```
+
+El script es `npx -y deno test --allow-env --allow-read --node-modules-dir=none supabase/functions/send-web-push/`. Cada bandera tiene un motivo:
+
+- `--allow-env`: el paquete npm `web-push` lee `process.env` al cargarse.
+- `--allow-read`: un único test lee el fuente de `handler.ts` para atar que los dos `catch` que limpian suscripciones usan el clasificador.
+- `--node-modules-dir=none`: explícito a propósito. Con `--node-modules-dir=auto`, que es lo que se usaba antes, Deno **reescribe el `node_modules` de la app**: sustituye los enlaces simbólico de nivel superior por entradas dentro de un `node_modules/.deno` propio y rompe Jest, que deja de encontrar `jest-expo`. Pasó de verdad, y la única salida fue `rm -rf node_modules && npm ci`. Con `none` no toca nada. No se usa `--allow-net` porque con `none` Deno resuelve los dependencias él mismo y no necesita red una vez poblada la caché.
+
+Deno **no** viene en el PATH de esta máquina, y por eso el script usa `npx -y deno` (probado con 2.9.6) en vez de un `deno` global. **CI no corre estos tests todavía**: `.github/workflows/ci.yml` solo lanza `npm run typecheck`, `npm run lint`, `npm test` y `npm run verify:pwa`, y `tsconfig.json` excluye `supabase/`, así que ni `tsc` ni Jest dicen nada de la Edge Function. Para comprobarla hacen falta `deno check` y `deno test`. Añadir un job de Deno al CI está pendiente.
+
+
 ## Aviso de prueba
 
 Ajustes tiene un botón **Enviar** junto a "Aviso de prueba" que pide un push de prueba a la Edge Function (`?mode=test`). Sirve para comprobar que la suscripción está viva y que el service worker pinta la notificación, sin esperar a que llegue un recordatorio real, que solo salta en la ventana de 3 h tras las 09:00 locales.
@@ -213,6 +228,28 @@ Cómo está protegido:
 - Necesita CORS: es una llamada entre orígenes con cabecera `Authorization`, y sin CORS el navegador no la deja salir. Ver la sección **CORS**; desplegado en producción desde la v11 (2026-09-29).
 
 Verificado en producción: sin sesión `401`, con un token inválido `401`, y con el secreto del dispatcher en lugar de sesión `401` (no se cuela por la otra vía). El dispatcher sigue respondiendo `202`. El CORS está verificado contra producción desde la v11 (ver **Verificación**) y contra local con el preflight real.
+
+## Confirmación de un cumpleaños o cita recién creado (`?mode=now`)
+
+La app llama a este modo al acabar de crear una cita o un contacto con fecha, y sale un push diciendo que ya queda avisado.
+
+**No es el recordatorio.** El recordatorio lo sigue mandando el cron, a las 09:00 locales del día anterior o del mismo día. Esto solo confirma que el evento quedó anotado. La distinción no es cosmética, es lo que sostiene el diseño:
+
+- **La clave de idempotencia va en su propio espacio de nombres**: `now:<tipo>:<refId>:<día local>`, contra `${tipo}:${refId}:${slot>:<día local>}` del cron. Con la clave del cron, la confirmación insertaría la fila que el cron necesita para el recordatorio de verdad, el cron vería el `23505` y se saltaría el aviso: el usuario se quedaría **sin el recordatorio** a cambio de un "ya está avisado". Hay un test que calcula las dos claves a la vez para el mismo evento y asserta que no chocan.
+- **El texto dice la fecha de verdad**, no "mañana" ni "hoy". El texto del cron (`Cita mañana: Dentista`) habría sido mentira con tres meses de antelación. Para las citas es `Es el 20 de marzo a las 11:00.` y para los cumpleaños `Es el 5 de octubre.`, seguidos de `Te avisaremos el día antes y el mismo día.` según la preferencia.
+
+Por eso un cumpleaños **fuera de la ventana de día antes / mismo día también se confirma**. La primera versión exigía que el cumpleaños cayera hoy o mañana, así que un contacto creado con un cumpleaños dentro de tres meses no enviaba nada: la función no hacía nada en el caso normal de uso.
+
+Cómo está protegido:
+
+- Se autentica con el **JWT de la sesión**, igual que `?mode=test`, y vive **antes** del gate del secreto del cron. Con el gate delante respondería `401` siempre, que es el bug que mató al botón de Ajustes.
+- La fila se lee con el **mismo filtro de visibilidad que el dispatcher**: miembro de la casa, y para citas además el autor. Un exmiembro conserva sus filas en `appointments` (solo se le borra de `casa_members`), así que sin ese filtro seguiría recibiendo los títulos y horas de una casa a la que ya no pertenece. En los cumpleaños el filtro es `casa_id IN (casas del usuario)`, **no** `user_id`: `contacts.user_id` es `on delete set null` y filtrar por él rompía el caso normal de una casa compartida.
+- **Respeta el consentimiento**: con el interruptor maestro apagado responde `403` y no envía, y si la preferencia no se puede leer falla cerrado. Confirmar que quedó avisado también es un push, así que no es una excepción al interruptor.
+- Un fallo al leer las preferencias es `500`, y "no hay recordatorio que confirmar" es `404`: no es lo mismo "tu cumpleaños no tiene aviso" que "hemos tenido un fallo".
+- La reserva de `push_log` se suelta si no se entregó a nadie, y también si el envío lanza; un error de base de datos que no sea `23505` aborta **sin** enviar, que es el duplicado que `push_log` existe para evitar.
+- El `timezone` llega del cliente y se valida con `isValidTimeZone` antes de usarse; si no es una zona que `Intl` entienda, se usa la de la suscripción activa del usuario y, en último caso, `Europe/Madrid`.
+
+`src/lib/web-push.ts` la envuelve en `sendNowPush(type, id)`, que **no** acepta `slot`: el servidor sabe lo que quedó programado desde la fila y desde `push_preferences`, y un slot elegido por el cliente podría mentir sobre eso.
 
 ## Qué falta
 

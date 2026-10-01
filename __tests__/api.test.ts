@@ -1,4 +1,5 @@
 import type { AppointmentIcon } from '@/lib/appointment-icons';
+import type { ApiError } from '@/lib/api';
 import {
   addAppointment,
   addAppointmentKind,
@@ -163,8 +164,29 @@ describe('validación de iconos de tipos de cita', () => {
   });
 });
 
-describe('CRUD por tabla', () => {
-  const tableCases: [string, () => Promise<unknown>][] = [
+describe('mutaciones que devuelven { error, data }', () => {
+  const createCases: [string, () => Promise<{ error: ApiError | null; data?: unknown }>][] = [
+    ['addAppointment', () => addAppointment({ casa_id: 'c', user_id: 'u', title: 't', kind: 'otro', starts_at: '2026-01-01' })],
+    ['addContact', () => addContact({ casa_id: 'c', user_id: 'u', name: 'n', birth_date: '2020-01-01' })],
+  ];
+
+  it.each(createCases)('%s devuelve error=null y data cuando no hay error', async (_name, fn) => {
+    setupFrom({ error: null, data: { id: 'new-id' } });
+    const result = await fn();
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual({ id: 'new-id' });
+  });
+
+  it.each(createCases)('%s traduce errores de base de datos', async (_name, fn) => {
+    setupFrom({ error: { message: 'duplicate key value violates unique constraint' }, data: undefined });
+    const result = await fn();
+    expect(result.error).toEqual({ message: 'Ese registro ya existe.' });
+    expect(result.data).toBeUndefined();
+  });
+});
+
+describe('mutaciones que devuelven ApiError | null', () => {
+  const simpleCases: [string, () => Promise<ApiError | null>][] = [
     ['updateCategory', () => updateCategory('1', { name: 'x', color: '#fff', icon: 'i', budget: null })],
     ['removeCategory', () => removeCategory('1')],
     ['addExpense', () => addExpense({ casa_id: 'c', user_id: 'u', category_id: null, title: 't', amount: 1, spent_at: '2026-01-01' })],
@@ -181,7 +203,6 @@ describe('CRUD por tabla', () => {
     ['addShoppingItem', () => addShoppingItem({ list_id: 'l', casa_id: 'c', name: 'n' })],
     ['toggleShoppingItem', () => toggleShoppingItem('1', false)],
     ['removeShoppingItem', () => removeShoppingItem('1')],
-    ['addContact', () => addContact({ casa_id: 'c', user_id: 'u', name: 'n', birth_date: '2020-01-01' })],
     ['updateContact', () => updateContact('1', { name: 'n', birth_date: '2020-01-01' })],
     ['removeContact', () => removeContact('1')],
     ['updateCasa', () => updateCasa('1', { name: 'Nuevo nombre' })],
@@ -190,13 +211,13 @@ describe('CRUD por tabla', () => {
     ['setCasaMemberRole', () => setCasaMemberRole('c1', 'u2', 'admin')],
   ];
 
-  it.each(tableCases)('%s devuelve null cuando no hay error', async (_name, fn) => {
+  it.each(simpleCases)('%s devuelve null cuando no hay error', async (_name, fn) => {
     setupFrom({ error: null });
     const result = await fn();
     expect(result).toBeNull();
   });
 
-  it.each(tableCases)('%s traduce errores de base de datos', async (_name, fn) => {
+  it.each(simpleCases)('%s traduce errores de base de datos', async (_name, fn) => {
     setupFrom({ error: { message: 'duplicate key value violates unique constraint' } });
     const result = await fn();
     expect(result).toEqual({ message: 'Ese registro ya existe.' });

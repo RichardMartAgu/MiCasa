@@ -271,9 +271,9 @@ export async function addContact(input: {
   birth_date: string;
   relationship?: string | null;
   phone?: string | null;
-}): Promise<ApiError | null> {
-  const { error } = await supabase.from('contacts').insert(input);
-  return toError(error);
+}): Promise<{ error: ApiError | null; data?: Contact }> {
+  const { data, error } = await supabase.from('contacts').insert(input).select().single();
+  return { error: toError(error), data: (data as Contact | null) ?? undefined };
 }
 
 export async function updateContact(

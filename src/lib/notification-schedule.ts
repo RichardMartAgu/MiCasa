@@ -93,6 +93,27 @@ export function slotForDate(trigger: Date, startsAt: string | Date): ReminderSlo
   return triggerDay < startDay ? 'day-before' : 'same-day';
 }
 
+/**
+ * Qué slot es un aviso de cumpleaños, según cuándo salta respecto al **próximo**
+ * cumpleaños, no al año en que nació la persona.
+ *
+ * No es lo mismo que `slotForDate`, y por eso tiene su propia función. `slotForDate`
+ * compara dos fechas que están en el mismo horizonte: la cita es de este mes o del
+ * siguiente. Un cumpleaños se programa para dentro de un año, así que compararlo con
+ * la fecha de nacimiento (típicamente décadas atrás) da siempre "más tarde que el
+ * cumpleaños", o sea `same-day`, y el aviso del día anterior se etiquetaba como del
+ * mismo día. Con `choice: "both"` los dos avisos caían en la misma clave del mapa y
+ * el segundo pisaba al primero: el aviso del día antes se guardaba con el texto
+ * "Cumpleaños hoy" y, además, su identificador se perdía, así que `cancelKeys` ya
+ * no podía cancelar ese aviso y disparaba igual.
+ *
+ * El mismo fallo está en `slotForDate` para un cumpleaños, y no se arregla ahí porque
+ * esa función se usa también para citas, donde sí es correcta.
+ */
+export function slotForBirthday(trigger: Date, birthDate: Date, now: Date): ReminderSlot {
+  return slotForDate(trigger, nextBirthday(birthDate, now));
+}
+
 function hashString(input: string): string {
   let hash = 5381;
   for (let i = 0; i < input.length; i++) {

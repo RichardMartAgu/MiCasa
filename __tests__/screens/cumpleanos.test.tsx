@@ -69,9 +69,16 @@ jest.mock('@/lib/calendar-sync', () => ({
 
 const mockGetBirthdayChoice = jest.fn();
 const mockScheduleBirthdays = jest.fn();
+const mockScheduleBirthday = jest.fn();
 jest.mock('@/lib/notifications', () => ({
   getBirthdayChoice: (...args: unknown[]) => mockGetBirthdayChoice(...args),
   scheduleBirthdays: (...args: unknown[]) => mockScheduleBirthdays(...args),
+  scheduleBirthday: (...args: unknown[]) => mockScheduleBirthday(...args),
+}));
+
+const mockSendNowPush = jest.fn();
+jest.mock('@/lib/web-push', () => ({
+  sendNowPush: (...args: unknown[]) => mockSendNowPush(...args),
 }));
 
 const mockToISODate = jest.fn();
@@ -128,7 +135,7 @@ function setup(contacts: Contact[] = [], currentCasa = casa) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockAddContact.mockResolvedValue(null);
+  mockAddContact.mockResolvedValue({ error: null, data: { id: 'new-id', casa_id: 'c1', user_id: 'u1', name: 'Sofía', birth_date: '2020-05-10', relationship: null, phone: null, created_at: '2026-01-01' } });
   mockRemoveContact.mockResolvedValue(null);
   mockUpdateContact.mockResolvedValue(null);
   mockBirthdayLabel.mockReturnValue('en 5 días');
@@ -136,6 +143,8 @@ beforeEach(() => {
   mockToISODate.mockReturnValue('2020-05-10');
   mockGetBirthdayChoice.mockResolvedValue('both');
   mockScheduleBirthdays.mockResolvedValue(undefined);
+  mockScheduleBirthday.mockResolvedValue(undefined);
+  mockSendNowPush.mockResolvedValue({ ok: true, delivered: 1 });
   mockValidateTitle.mockReturnValue({ valid: true });
   mockValidateDate.mockReturnValue({ valid: true });
   mockValidateOptionalText.mockReturnValue({ valid: true });
@@ -277,7 +286,14 @@ describe('CumpleanosScreen', () => {
       );
     });
     await waitFor(() => {
-      expect(mockScheduleBirthdays).toHaveBeenCalledWith([], 'both');
+      expect(mockScheduleBirthday).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'new-id',
+          name: 'Sofía',
+          birth_date: '2020-05-10',
+        }),
+        'both',
+      );
     });
   });
 
@@ -304,7 +320,8 @@ describe('CumpleanosScreen', () => {
   it('muestra Alert si addContact falla', async () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockAddContact.mockResolvedValue({
-      message: 'Problema de conexión. Inténtalo de nuevo.',
+      error: { message: 'Problema de conexión. Inténtalo de nuevo.' },
+      data: undefined,
     });
     const { getByText, getAllByDisplayValue } = setup([]);
 
@@ -322,6 +339,95 @@ describe('CumpleanosScreen', () => {
       );
     });
     alertSpy.mockRestore();
+  });
+
+  it('confirma con un push que el contacto nuevo queda avisado', async () => {
+    // Es la otra mitad de la feature: además de agendar la notificación local, sale
+    // un aviso inmediato por Web Push. En web las notificaciones locales no existen,
+    // así que este es el único aviso que el usuario ve al crear el contacto.
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nuevo contacto')).toBeTruthy());
+    fireEvent.changeText(getByLabelText('Nombre'), 'Sofía');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockSendNowPush).toHaveBeenCalledWith('birthday', 'new-id');
+    });
+  });
+
+  it('no confirma nada al editar: el contacto ya estaba anotado', async () => {
+    const { getByText, getByDisplayValue } = setup([restContact]);
+
+    fireEvent.press(getByText('pencil-outline'));
+    await waitFor(() => expect(getByText('Editar contacto')).toBeTruthy());
+    fireEvent.changeText(getByDisplayValue('Leo'), 'León');
+    fireEvent.press(getByText('Guardar cambios'));
+
+    await waitFor(() => {
+      expect(mockUpdateContact).toHaveBeenCalled();
+    });
+    expect(mockSendNowPush).not.toHaveBeenCalled();
+  });
+
+  it('sin recordatorio no hay nada que confirmar', async () => {
+    // El servidor responde 404 a esto, así que ni se pregunta: se waste una
+    // llamada por cada contacto creado por alguien que no quiere avisos.
+    mockGetBirthdayChoice.mockResolvedValue('none');
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nuevo contacto')).toBeTruthy());
+    fireEvent.changeText(getByLabelText('Nombre'), 'Sofía');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockAddContact).toHaveBeenCalled();
+    });
+    expect(mockSendNowPush).not.toHaveBeenCalled();
+    expect(mockScheduleBirthday).not.toHaveBeenCalled();
+  });
+
+  it('si el push falla, el contacto sigue guardado y sin Alert', async () => {
+    // El registro ya está hecho y el cron avisará igual: un push que no sale no es
+    // motivo para enseñarle un error a alguien que ya ha hecho lo que quería. Por eso
+    // la llamada va con `.catch()` y no suelta la excepción.
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockSendNowPush.mockRejectedValue(new Error('sin conexión'));
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nuevo contacto')).toBeTruthy());
+    fireEvent.changeText(getByLabelText('Nombre'), 'Sofía');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockSendNowPush).toHaveBeenCalled();
+    });
+    // El guardado se completó y no se molestó al usuario.
+    expect(mockAddContact).toHaveBeenCalled();
+    expect(alertSpy).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it('si la preferencia no se puede leer, guarda pero no agenda ni avisa', async () => {
+    // `getBirthdayChoice` lee AsyncStorage y puede fallar. Sin el `try/catch`, el
+    // usuario vería un fallo después de un guardado correcto, que es peor que no
+    // agendar nada: el sync por realtime reintenta la agenda.
+    mockGetBirthdayChoice.mockRejectedValue(new Error('AsyncStorage no disponible'));
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nuevo contacto')).toBeTruthy());
+    fireEvent.changeText(getByLabelText('Nombre'), 'Sofía');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockAddContact).toHaveBeenCalled();
+    });
+    expect(mockScheduleBirthday).not.toHaveBeenCalled();
+    expect(mockSendNowPush).not.toHaveBeenCalled();
   });
 
   it('muestra aviso de crear casa cuando no hay casa', () => {

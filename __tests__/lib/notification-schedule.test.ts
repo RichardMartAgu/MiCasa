@@ -9,6 +9,7 @@ import {
   notificationKey,
   reminderChoiceLabels,
   reminderChoices,
+  slotForBirthday,
   slotForDate,
 } from '@/lib/notification-schedule';
 import type { Appointment, Contact } from '@/lib/types';
@@ -193,6 +194,69 @@ describe('slotForDate', () => {
   it('distingue día antes de mismo día', () => {
     expect(slotForDate(new Date(2026, 8, 24, 9, 0), '2026-09-25T10:00:00')).toBe('day-before');
     expect(slotForDate(new Date(2026, 8, 25, 9, 0), '2026-09-25T10:00:00')).toBe('same-day');
+  });
+});
+
+describe('slotForBirthday', () => {
+  // El bug que motivó esta función. `slotForDate` compara el aviso contra la fecha
+  // de nacimiento, y un cumpleaños se programa para dentro de un año, así que el
+  // aviso del día antes salía SIEMPRE etiquetado como `same-day`. Con
+  // `choice: "both"` los dos avisos caían en la misma clave del mapa: el segundo
+  // pisaba al primero, el aviso del día antes se guardaba con el texto "Cumpleaños
+  // hoy", y su identificador se perdía, de modo que `cancelKeys` ya no podía
+  // cancelar ese aviso y saltaba igual.
+  //
+  // Los datos de siempre lo escondían: el fixture de `notifications.test.ts` usa
+  // una fecha de nacimiento de 2026 con el reloj en 2026, así que el próximo
+  // cumpleaños cae en el mismo año que el nacimiento y la comparación acierta por
+  // casualidad. El fallo necesita que el próximo cumpleaños caiga en un año
+  // POSTERIOR al del nacimiento, o sea una persona que ya ha nacido, que es
+  // exactamente el caso de todos los contactos reales.
+  const birth = new Date(1990, 4, 10); // 10 de mayo de 1990
+
+  it('el aviso del día antes se etiqueta day-before con un cumpleaños ya pasado', () => {
+    // 20 de junio de 2026: el próximo cumpleaños es el 10 de mayo de 2027, o sea un
+    // año después del nacimiento. Aquí es donde el método antiguo se equivocaba.
+    const now = new Date(2026, 5, 20);
+    const trigger = new Date(2027, 4, 9, 9, 0);
+    expect(slotForBirthday(trigger, birth, now)).toBe('day-before');
+    // Y el método antiguo, con la misma fecha de nacimiento, se equivocaba.
+    expect(slotForDate(trigger, birth)).toBe('same-day');
+  });
+
+  it('el aviso del mismo día se etiqueta same-day', () => {
+    const now = new Date(2026, 5, 20);
+    expect(slotForBirthday(new Date(2027, 4, 10, 9, 0), birth, now)).toBe('same-day');
+  });
+
+  it('funciona igual si el próximo cumpleaños cae este año', () => {
+    // El caso en el que `slotForDate` ya acertaba, para que el cambio no rompa lo
+    // que ya iba bien.
+    const now = new Date(2026, 8, 20); // 20 de septiembre de 2026
+    const sameYear = new Date(2026, 11, 15); // 15 de diciembre de 2026
+    expect(slotForBirthday(new Date(2026, 11, 14, 9, 0), sameYear, now)).toBe('day-before');
+    expect(slotForBirthday(new Date(2026, 11, 15, 9, 0), sameYear, now)).toBe('same-day');
+  });
+
+  it('los dos slots quedan en claves distintas, así que no se pisan', () => {
+    // Lo que de verdad rompía la agenda: dos avisos con la misma clave de mapa.
+    // Con la clave compartida, el segundo `scheduleNotificationAsync` sobrescribía
+    // el identificador del primero en el mapa y ese aviso quedaba sin poder
+    // cancelarse.
+    const now = new Date(2026, 5, 20);
+    const dayBefore = notificationKey(
+      'birthday',
+      'c1',
+      slotForBirthday(new Date(2027, 4, 9, 9, 0), birth, now),
+    );
+    const sameDay = notificationKey(
+      'birthday',
+      'c1',
+      slotForBirthday(new Date(2027, 4, 10, 9, 0), birth, now),
+    );
+    expect(dayBefore).toBe('birthday:c1:day-before');
+    expect(sameDay).toBe('birthday:c1:same-day');
+    expect(dayBefore).not.toBe(sameDay);
   });
 });
 

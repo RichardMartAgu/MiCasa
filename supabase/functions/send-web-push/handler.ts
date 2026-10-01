@@ -13,11 +13,19 @@ import {
   birthdayChoiceFor,
   buildAppointmentDispatches,
   buildBirthdayDispatches,
+  buildNowAppointmentDispatch,
+  buildNowBirthdayDispatch,
   dedupeKey,
   isPushEnabled,
+  isValidChoice,
+  isValidTimeZone,
+  localDayUtc,
+  nowDedupeKey,
   type AppointmentRow,
   type ContactRow,
+  type NowDispatch,
   type PushPreference,
+  type ReminderType,
   type TargetedDispatch,
 } from "./reminders.ts";
 
@@ -284,7 +292,7 @@ async function sendToUser(
   db: Db,
   secrets: PushSecrets,
   userId: string,
-  payload: { title: string; body: string; tag: string; url: string },
+  payload: { title: string; body: string; data: { type: string; id: string; url: string } },
 ): Promise<{ delivered: number; removed: number }> {
   // Configurar las claves VAPID aquí y no en quien llama: `sendToUser` es el
   // único sitio que despacha, y hay dos caminos que llegan (el dispatcher y el
@@ -315,9 +323,13 @@ async function sendToUser(
           body: payload.body,
           icon: "/icon-192.png",
           badge: "/icon-192.png",
-          tag: payload.tag,
+          // El service worker vuelve a componer el `tag` a partir de `data.type` e
+          // `data.id` (ver sw-src.js), así que aquí van los dos de verdad: si
+          // `type` fuera siempre "test", el aviso de confirmación se pintaría como
+          // genérico y, además, se apilaría con los avisos de prueba.
+          tag: `${payload.data.type}:${payload.data.id}`,
           renotify: true,
-          data: { type: "test", url: payload.url },
+          data: payload.data,
         }),
         { TTL: 300, urgency: "normal" },
       );
@@ -381,8 +393,7 @@ async function runTestPush(
   const result = await sendToUser(db, secrets, userId, {
     title: "MiCasa: aviso de prueba",
     body: "Si lees esto, los avisos de verdad te llegaran con el movil bloqueado.",
-    tag: `test:${userId}`,
-    url: "/",
+    data: { type: "test", id: userId, url: "/" },
   });
 
   if (result.delivered === 0) {
@@ -398,9 +409,214 @@ async function runTestPush(
   return { ok: true, delivered: result.delivered, removedSubscriptions: result.removed };
 }
 
+/**
+ * Zona horaria con la que se compone el aviso.
+ *
+ * La que manda el cliente es la de lo que el usuario está viendo ahora mismo, así
+ * que se prefiere si `Intl` la entiende. Si no, se cae a la de su suscripción
+ * activa (que es con la que el cron le manda las cosas) y, en último caso, a la
+ * del proyecto. Nunca se usa el valor crudo sin comprobar: es entrada del cliente.
+ */
+async function resolveUserTimeZone(
+  db: Db,
+  userId: string,
+  requested: string | null,
+): Promise<string> {
+  if (isValidTimeZone(requested)) return requested;
+
+  const { data } = await db
+    .from("push_subscriptions")
+    .select("timezone")
+    .eq("user_id", userId)
+    .eq("active", true)
+    .limit(1)
+    .maybeSingle();
+
+  const stored = (data as { timezone?: unknown } | null)?.timezone;
+  return isValidTimeZone(stored) ? stored : DEFAULT_VAPID_SUBJECT_TIMEZONE;
+}
+
+/** Zona por defecto del proyecto. Es la de `casa` en la mayoría de cuentas. */
+const DEFAULT_VAPID_SUBJECT_TIMEZONE = "Europe/Madrid";
+
+/** Libera una reserva de `push_log` para que un reintento no espere al día siguiente. */
+async function releaseClaim(db: Db, userId: string, key: string): Promise<void> {
+  await db.from("push_log").delete().eq("user_id", userId).eq("dedupe_key", key);
+}
+
+/**
+ * Aviso de confirmación que pide el cliente al acabar de crear una cita o un
+ * cumpleaños: "esto ya queda avisado".
+ *
+ * No es el recordatorio. El recordatorio lo sigue mandando el cron, y por eso la
+ * clave de esta confirmation lleva el prefijo `now:` (ver `nowDedupeKey`): con la
+ * clave del cron, esta función se comería el aviso de verdad.
+ *
+ * Se autentica por la sesión, no por el secreto del cron, así que solo puede
+ * avisar a quien lo pide. Y no puede avisar de lo que el cron no avisaría: la fila
+ * se lee con el mismo filtro de visibilidad que usa `buildDispatches` (miembro de
+ * la casa, y para citas además el autor). Un exmiembro de una casa conserva sus
+ * filas en `appointments` porque solo se le borra de `casa_members`, así que sin
+ * ese filtro seguiría recibiendo los títulos y horas de una casa a la que ya no
+ * pertenece, aunque la UI ya no se los muestre.
+ */
+/**
+ * Los `id` de `appointments` y `contacts` son `uuid`. Comprobarlo aquí evita que un
+ * valor con otra forma llegue a la consulta: PostgREST responde con un error de
+ * sintaxis, que sin esto se devolvería como un 500 ("no se pudo leer la cita") cuando
+ * de verdad es una petición mal formada. Y corta antes de que un `searchParams`
+ * arbitrariamente largo llegue a la base de datos.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function runNowPush(
+  db: Db,
+  secrets: PushSecrets,
+  userId: string,
+  params: URLSearchParams,
+): Promise<{ body: Record<string, unknown>; status: number }> {
+  const fail = (error: string, status: number) => ({ body: { ok: false, error }, status });
+
+  const type = params.get("type");
+  const refId = params.get("id");
+  if (type !== "appointment" && type !== "birthday") return fail("tipo invalido", 400);
+  if (refId === null || !UUID_PATTERN.test(refId)) return fail("id invalido", 400);
+
+  // Consentimiento. El interruptor maestro frena TODO lo que sale por push, y este
+  // camino no es una excepción: si el usuario lo apagó en Ajustes, confirmar que
+  // quedó avisado también es un push. Sin preferences se asume activado, igual que
+  // en el dispatcher, porque llegar aquí ya implica una sesión viva.
+  const { data: prefs, error: prefsError } = await db
+    .from("push_preferences")
+    .select("birthday_choice, enabled")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (prefsError) {
+    // Fallo cerrado, por el mismo motivo que en `buildDispatches`: con la otra
+    // opción, un error transitorio de la base reactivaba los avisos de un usuario
+    // que los tenía apagados.
+    console.error("send-web-push: no se pudieron leer las preferencias", prefsError);
+    return fail("no se pudieron leer tus preferencias", 500);
+  }
+
+  // Sin cast: `PushPreference` modela la fila sin validar `birthday_choice`, que es
+  // lo que permite mirar un valor ilegible sin que el compilador lo llame imposible.
+  const pref = (prefs ?? null) as PushPreference | null;
+  if (!isPushEnabled(pref)) return fail("los avisos estan apagados", 403);
+  if (type === "birthday" && birthdayChoiceFor(pref) === "none") {
+    return fail("no tienes aviso de cumpleanos activado", 403);
+  }
+
+  const timeZone = await resolveUserTimeZone(db, userId, params.get("timezone"));
+  const today = localDayUtc(new Date(), timeZone);
+
+  // Mismo criterio de visibilidad que `buildDispatches`.
+  const casaIds = await fetchCasaIds(db, userId);
+  if (casaIds.length === 0) return fail("no perteneces a ninguna casa", 404);
+
+  let dispatch: NowDispatch | null = null;
+
+  if (type === "appointment") {
+    const { data, error } = await db
+      .from("appointments")
+      .select("id, title, starts_at, reminder_choice")
+      .eq("id", refId)
+      .eq("user_id", userId)
+      .in("casa_id", casaIds)
+      .maybeSingle();
+
+    if (error) {
+      console.error("send-web-push: no se pudo leer la cita", error);
+      return fail("no se pudo leer la cita", 500);
+    }
+    if (!data) return fail("esa cita no existe", 404);
+
+    const appointment = data as AppointmentRow;
+    dispatch = buildNowAppointmentDispatch({
+      refId: appointment.id,
+      title: appointment.title,
+      startsAt: appointment.starts_at,
+      choice: isValidChoice(appointment.reminder_choice) ? appointment.reminder_choice : "none",
+      timeZone,
+    });
+  } else {
+    const { data, error } = await db
+      .from("contacts")
+      .select("id, name, birth_date")
+      .eq("id", refId)
+      .in("casa_id", casaIds)
+      .maybeSingle();
+
+    if (error) {
+      console.error("send-web-push: no se pudo leer el contacto", error);
+      return fail("no se pudo leer el contacto", 500);
+    }
+    if (!data) return fail("ese contacto no existe", 404);
+
+    const contact = data as ContactRow;
+    dispatch = buildNowBirthdayDispatch({
+      refId: contact.id,
+      name: contact.name,
+      birthDate: contact.birth_date,
+      choice: birthdayChoiceFor(pref),
+      today,
+    });
+  }
+
+  // La fila existe y es visible, pero no hay recordatorio que confirmar. No es un
+  // error: el cliente solo lo llama cuando el usuario eligió un recordatorio.
+  if (!dispatch) return fail("no hay recordatorio que confirmar", 404);
+
+  const key = nowDedupeKey(dispatch, today);
+  const { error: claimError } = await db
+    .from("push_log")
+    .insert({ user_id: userId, dedupe_key: key });
+
+  if (claimError) {
+    // 23505 = esta confirmación ya salió hoy. Se responde con ok porque el efecto
+    // pedido está cumplido, no con un error: el cliente no tiene nada que reintentar.
+    if (claimError.code === "23505") {
+      return { body: { ok: true, delivered: 0, skipped: true }, status: 200 };
+    }
+    // Cualquier otro error es de la base de datos, no una duplicidad. Aquí sí se
+    // aborta: seguir significaría enviar sin haber reservado nada, que es el
+    // duplicado que `push_log` existe para evitar.
+    console.error("send-web-push: no se pudo reservar la confirmacion", claimError);
+    return fail("no se pudo registrar el aviso", 500);
+  }
+
+  try {
+    const result = await sendToUser(db, secrets, userId, {
+      title: dispatch.title,
+      body: dispatch.body,
+      data: { type: dispatch.type, id: dispatch.refId, url: dispatch.url },
+    });
+
+    if (result.delivered === 0) {
+      // Nadie lo recibió (típicamente: sin suscripciones en este navegador). Se
+      // suelta la reserva para que un reintento no tenga que esperar al día
+      // siguiente, y para no dejar filas huérfanas.
+      await releaseClaim(db, userId, key);
+      return fail("sin suscripciones activas", 404);
+    }
+
+    return {
+      body: { ok: true, delivered: result.delivered, removedSubscriptions: result.removed },
+      status: 200,
+    };
+  } catch (error) {
+    // `sendToUser` ya captura los fallos por suscripción, así que llegar aquí es
+    // un fallo inesperado. Aun así, la reserva se suelta: una fila puesta por un
+    // envío que no ocurrió bloquearía el reintento y ocuparía una fila para siempre.
+    console.error("send-web-push: fallo en el aviso de confirmacion", error);
+    await releaseClaim(db, userId, key);
+    return fail("no se pudo enviar el aviso", 500);
+  }
+}
+
 /** Reparte y envía todos los recordatorios pendientes. */
-async function runDispatch(db: Db, secrets: PushSecrets): Promise<Record<string, unknown>> {
-  const now = new Date();
+async function runDispatch(db: Db, secrets: PushSecrets): Promise<Record<string, unknown>> {  const now = new Date();
   const windowStart = new Date(now.getTime() - CATCHUP_MINUTES * 60_000);
 
   const { data: subs, error: subsError } = await db
@@ -567,30 +783,41 @@ export async function handle(req: Request, env: EnvReader = Deno.env): Promise<R
 
   const subject = env.get("VAPID_SUBJECT") ?? DEFAULT_VAPID_SUBJECT;
 
-  // Aviso de prueba: lo pide el usuario con su propia sesión, no el dispatcher.
+  const mode = new URL(req.url).searchParams.get("mode");
+
+  // Modos que se autentican con la sesión del usuario: el aviso de prueba de
+  // Ajustes y la confirmación de una cita o cumpleaños recién creado.
   //
-  // Esta rama va ANTES del gate del secreto del cron, y no por descuido: ese
-  // gate protege al dispatcher, que tiene alcance global, y el aviso de prueba
-  // no lo tiene porque solo puede avisar a quien se acaba de autenticar. Con el
-  // gate delante, el botón de Ajustes no tenía forma de mandar el secreto (no
-  // debe viajar en un bundle) y respondía 401 siempre: estaba muerto.
+  // Este grupo va ANTES del gate del secreto del cron, y no por descuido: ese gate
+  // protege al dispatcher, que tiene alcance global, y estos dos no lo tienen
+  // porque solo pueden avisar a quien se acaba de autenticar. Con el gate delante,
+  // el botón de Ajustes no tenía forma de mandar el secreto (no debe viajar en un
+  // bundle) y respondía 401 siempre: estaba muerto.
   //
-  // El orden que sí importa es otro: primero se valida la sesión y solo después
-  // se leen las claves VAPID de Vault, para que una petición sin sesión válida
-  // no llegue a tocar ningún secreto.
-  if (new URL(req.url).searchParams.get("mode") === "test") {
+  // El orden que sí importa es otro: primero se valida la sesión y solo después se
+  // leen las claves VAPID de Vault, para que una petición sin sesión válida no
+  // llegue a tocar ningún secreto.
+  if (mode === "test" || mode === "now") {
     const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
     if (token.length === 0) return json({ error: "falta la sesion" }, 401);
 
     const { data: userData, error: userError } = await db.auth.getUser(token);
     if (userError || !userData?.user) return json({ error: "sesion no valida" }, 401);
 
-    const testVapid = await readVapidKeys(db, env);
-    if (!testVapid) return json({ error: "no autorizado" }, 401);
+    const userVapid = await readVapidKeys(db, env);
+    if (!userVapid) return json({ error: "no autorizado" }, 401);
 
-    // `cronSecret` vacío a propósito: este camino no lo usa, y así no se
+    // `cronSecret` vacío a propósito: estos caminos no lo usan, y así no se
     // construye un valor que luego se lee sin querer.
-    return json(await runTestPush(db, { cronSecret: "", subject, ...testVapid }, userData.user.id));
+    const userSecrets: PushSecrets = { cronSecret: "", subject, ...userVapid };
+    const userId = userData.user.id;
+
+    if (mode === "now") {
+      const result = await runNowPush(db, userSecrets, userId, new URL(req.url).searchParams);
+      return json(result.body, result.status);
+    }
+
+    return json(await runTestPush(db, userSecrets, userId));
   }
 
   // Antes de autenticar solo se lee el secreto del cron, y se hace por entorno

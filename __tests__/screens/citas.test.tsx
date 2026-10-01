@@ -56,6 +56,11 @@ jest.mock('@/lib/notifications', () => ({
   askEnableNotifications: (...args: unknown[]) => mockAskEnableNotifications(...args),
 }));
 
+const mockSendNowPush = jest.fn();
+jest.mock('@/lib/web-push', () => ({
+  sendNowPush: (...args: unknown[]) => mockSendNowPush(...args),
+}));
+
 const mockAddAppointment = jest.fn();
 const mockRemoveAppointment = jest.fn();
 const mockUpdateAppointment = jest.fn();
@@ -150,6 +155,7 @@ beforeEach(() => {
   mockCancelEntityKey.mockResolvedValue(undefined);
   mockAreNotificationsEnabled.mockResolvedValue(true);
   mockAskEnableNotifications.mockResolvedValue('enabled');
+  mockSendNowPush.mockResolvedValue({ ok: true, delivered: 1 });
   mockFormatDateTime.mockReturnValue('12 sep 2026, 10:00');
   mockValidateTitle.mockReturnValue({ valid: true });
   mockValidateDate.mockReturnValue({ valid: true });
@@ -333,8 +339,76 @@ describe('CitasScreen', () => {
     });
   });
 
-  it('avisa si recordatorio sin notif activadas y no agenda si cancela', async () => {
-    jest.replaceProperty(Platform, 'OS', 'android');
+  it('confirma con un push que la cita nueva queda avisada', async () => {
+    // La otra mitad de la feature: además de agendar la notificación local, sale un
+    // aviso inmediato por Web Push. En web las notificaciones locales no existen, así
+    // que este es el único aviso que el usuario ve al crear la cita.
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+    fireEvent.press(getByText('Día antes + mismo día'));
+    fireEvent.changeText(getByLabelText('Título'), 'Vacunación');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockSendNowPush).toHaveBeenCalledWith('appointment', 'a1');
+    });
+  });
+
+  it('sin recordatorio no hay nada que confirmar', async () => {
+    // El servidor responde 404 a esto, así que ni se pregunta: se waste una
+    // llamada por cada cita creada sin recordatorio.
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+    fireEvent.changeText(getByLabelText('Título'), 'Vacunación');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockAddAppointment).toHaveBeenCalled();
+    });
+    expect(mockSendNowPush).not.toHaveBeenCalled();
+  });
+
+  it('no confirma nada al editar: la cita ya estaba anotada', async () => {
+    const { getByText, getByDisplayValue } = setup([upcomingAppointment]);
+
+    fireEvent.press(getByText('pencil-outline'));
+    await waitFor(() => expect(getByText('Editar cita')).toBeTruthy());
+    fireEvent.changeText(getByDisplayValue('Dentista'), 'Vacunación');
+    fireEvent.press(getByText('Guardar cambios'));
+
+    await waitFor(() => {
+      expect(mockUpdateAppointment).toHaveBeenCalled();
+    });
+    expect(mockSendNowPush).not.toHaveBeenCalled();
+  });
+
+  it('si el push falla, la cita sigue guardada y sin Alert', async () => {
+    // El registro ya está y el cron avisará igual: un push que no sale no es motivo
+    // para enseñarle un error a alguien que ya ha hecho lo que quería. Por eso la
+    // llamada va con `.catch()`.
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockSendNowPush.mockRejectedValue(new Error('sin conexión'));
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+    fireEvent.press(getByText('Día antes + mismo día'));
+    fireEvent.changeText(getByLabelText('Título'), 'Vacunación');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockSendNowPush).toHaveBeenCalled();
+    });
+    expect(mockAddAppointment).toHaveBeenCalled();
+    expect(alertSpy).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it('avisa si recordatorio sin notif activadas y no agenda si cancela', async () => {    jest.replaceProperty(Platform, 'OS', 'android');
     mockAreNotificationsEnabled.mockResolvedValue(false);
     mockAskEnableNotifications.mockResolvedValue('cancelled');
     mockAddAppointment.mockResolvedValue({
