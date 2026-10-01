@@ -272,6 +272,24 @@ describe('scheduleBirthdays', () => {
     expect(mockCancel).toHaveBeenCalledTimes(2);
     expect(mockSchedule).not.toHaveBeenCalled();
   });
+
+  it('se salta un contacto con fecha ilegible sin tumbar al resto de la lista', async () => {
+    // El `continue` de esta función. No es la misma rama que la de `scheduleBirthday`,
+    // que hace `return`: aquí una fecha inválida no puede dejar sin agendar a los
+    // demás contactos de la lista, que es justo lo que llega por realtime y por la
+    // edición. Un solo contacto bueno mezclado con uno malo, y el bueno se agenda.
+    const ilegible: Contact = { ...contact, id: 'otro', birth_date: 'no-es-una-fecha' };
+
+    await scheduleBirthdays([ilegible, contact], 'both');
+
+    // Solo los dos avisos del contacto bueno, ninguno del otro.
+    expect(mockSchedule).toHaveBeenCalledTimes(2);
+    const map = JSON.parse((await AsyncStorage.getItem('notification_map_v1')) ?? '{}');
+    expect(map['birthday:c1:day-before'].identifiers).toEqual(['notif-id-1']);
+    expect(map['birthday:c1:same-day'].identifiers).toEqual(['notif-id-2']);
+    expect(map['birthday:otro:day-before']).toBeUndefined();
+    expect(map['birthday:otro:same-day']).toBeUndefined();
+  });
 });
 
 describe('scheduleBirthday', () => {

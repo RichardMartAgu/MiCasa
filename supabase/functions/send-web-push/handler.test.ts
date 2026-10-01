@@ -19,8 +19,13 @@
  * los enfriamientos: sin ella, el segundo `insert` de una misma clave se colaría y
  * los tests de deduplicación no probarían nada.
  */
+// Especificador en línea como en el resto del módulo. Pasarlo por el import map de
+// deno.json se probó y no compensa: deja dos identidades distintas de
+// `SupabaseClient` en el grafo y el type-check de `handle` deja de cuadrar.
+// deno-lint-ignore no-import-prefix
 import { assert, assertEquals } from "jsr:@std/assert@1";
 
+// deno-lint-ignore no-import-prefix
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 import { handle } from "./handler.ts";
@@ -29,6 +34,7 @@ const FN = "https://proyecto.supabase.co/functions/v1/send-web-push";
 const USER = "11111111-1111-4111-8111-111111111111";
 const CASA = "22222222-2222-4222-8222-222222222222";
 const CONTACTO = "33333333-3333-4333-8333-333333333333";
+const CITA = "44444444-4444-4444-8444-444444444444";
 const MADRID = "Europe/Madrid";
 
 /**
@@ -47,6 +53,11 @@ interface Call {
   op: Op;
   payload?: Record<string, unknown>;
   eq: Record<string, unknown>;
+  /**
+   * Filtros de `.in(...)`, aparte de los de `.eq(...)` porque el valor es una lista
+   * y mezclarlos haría ambiguo leer una aserción.
+   */
+  inList: Record<string, unknown[]>;
   lt?: [string, unknown];
   /** `maybeSingle` Was llamado: la respuesta es una fila, no una lista. */
   single?: boolean;
@@ -108,7 +119,8 @@ class Query {
     return this;
   }
 
-  in(_columna: string, _valores: unknown[]): Query {
+  in(columna: string, valores: unknown[]): Query {
+    this.call.inList[columna] = valores;
     return this;
   }
 
@@ -176,15 +188,16 @@ class FakeDb {
   }
 
   from(table: string): Query {
-    const call: Call = { table, op: "select", eq: {} };
+    const call: Call = { table, op: "select", eq: {}, inList: {} };
     this.calls.push(call);
     return new Query(call, this);
   }
 
-  async rpc(nombre: string): Promise<Answer> {
+  rpc(nombre: string): Promise<Answer> {
     // Los tests pasan el secreto y las claves por `env`, así que ninguna lectura de
     // Vault debería ocurrir. Si ocurre, se ve aquí en vez de colgarse en la red.
-    return fallo(`el test no debería leer Vault, pero pidió ${nombre}`);
+    // Sin `async`: no hay nada que esperar dentro, y esperar sería mentir sobre eso.
+    return Promise.resolve(fallo(`el test no debería leer Vault, pero pidió ${nombre}`));
   }
 
   auth = {
@@ -209,13 +222,35 @@ class FakeDb {
     const cola = this.guion[`${call.table}:${call.op}`];
     if (cola === undefined) return fallo(`sin guion para ${call.table}:${call.op}`);
     const answer = cola.length > 1 ? (cola.shift() as Answer) : (cola[0] as Answer);
+
+    // Los filtros de `.eq()` y `.in()` se aplican de verdad a las filas del guion.
+    //
+    // Antes esto no pasaba y por eso ninguna prueba podía decir nada de los filtros
+    // de visibilidad: `.in()` era un no-op, así que un `.in("casa_id", ...)` equivocado
+    // o simplemente ausente daba el mismo resultado que uno bien puesto, y el test
+    // pasaba igual. Con esto, una cita de otra casa o de otro autor sale como fila
+    // inexistente, que es lo que hace Postgres, y quitar el filtro en el handler se ve
+    // en un test rojo.
+    let data = answer.data;
+    if (Array.isArray(data)) {
+      data = (data as Record<string, unknown>[]).filter((fila) => {
+        for (const [columna, valor] of Object.entries(call.eq)) {
+          if (fila[columna] !== valor) return false;
+        }
+        for (const [columna, valores] of Object.entries(call.inList)) {
+          if (!valores.includes(fila[columna])) return false;
+        }
+        return true;
+      });
+    }
+
     // `maybeSingle` de verdad devuelve la fila, no la lista con la fila dentro. Sin
     // esto, `preferences.birthday_choice` sería `undefined` sobre un array y la
     // función leería "sin aviso de cumpleaños" en un caso que sí lo tiene.
-    if (call.single && Array.isArray(answer.data)) {
-      return { ...answer, data: answer.data[0] ?? null };
+    if (call.single && Array.isArray(data)) {
+      return { ...answer, data: data[0] ?? null };
     }
-    return answer;
+    return { ...answer, data };
   }
 }
 
@@ -251,12 +286,42 @@ async function cuerpo(res: Response): Promise<Record<string, unknown>> {
 /** Guion de una confirmación de cumpleaños que llega hasta el envío sin destinatario. */
 function guionConfirmacion(extra: Guion = {}): FakeDb {
   return new FakeDb({
-    "push_preferences:select": [filas([{ enabled: true, birthday_choice: "both" }])],
-    "casa_members:select": [filas([{ casa_id: CASA }])],
-    "contacts:select": [filas([{ id: CONTACTO, name: "Lucía", birth_date: "1990-06-20" }])],
+    // `user_id` y `casa_id` están porque el doble filtra de verdad: sin ellos, el
+    // filtro de visibilidad de la propia consulta se comería la fila y todos estos
+    // tests pasarían por un 404 en vez de por el camino que quieren comprobar.
+    "push_preferences:select": [filas([{ user_id: USER, enabled: true, birthday_choice: "both" }])],
+    "casa_members:select": [filas([{ user_id: USER, casa_id: CASA }])],
+    "contacts:select": [filas([{ id: CONTACTO, casa_id: CASA, name: "Lucía", birth_date: "1990-06-20" }])],
     "push_subscriptions:select": [filas([])],
     ...extra,
   });
+}
+
+/**
+ * Guion de una confirmación de cita: misma forma, con `appointments` en vez de
+ * `contacts`. `overrides` sustituye una fila por otra, que es como se expresan los
+ * casos de visibilidad: la fila existe en la base pero el filtro no la deja pasar.
+ */
+function guionCita(extra: Guion = {}): FakeDb {
+  return new FakeDb({
+    "push_preferences:select": [filas([{ user_id: USER, enabled: true, birthday_choice: "both" }])],
+    "casa_members:select": [filas([{ user_id: USER, casa_id: CASA }])],
+    "appointments:select": [filas([citaDe(USER, CASA, "both")])],
+    "push_subscriptions:select": [filas([])],
+    ...extra,
+  });
+}
+
+/** Una cita tal y como la lee `runNowPush`. */
+function citaDe(userId: string, casaId: string, reminderChoice: unknown): Record<string, unknown> {
+  return {
+    id: CITA,
+    user_id: userId,
+    casa_id: casaId,
+    title: "Dentista",
+    starts_at: "2026-03-20T10:00:00Z",
+    reminder_choice: reminderChoice,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -499,4 +564,165 @@ Deno.test("la poda de push_log corre aunque no haya nada que repartir", async ()
   assert(podas[0].lt !== undefined);
   assertEquals(podas[0].lt[0], "sent_at");
   assertEquals(podas[0].lt[1], new Date(1_800_000_000_000 - 30 * 86_400_000).toISOString());
+});
+
+// ---------------------------------------------------------------------------
+// La rama de citas de `mode=now`: los filtros de visibilidad.
+//
+// Hasta aquí los 13 tests de este fichero usaban `peticionNow()`, cuyo `type` es
+// `birthday`. La mitad de citas de la confirmación no tenía ni una prueba a nivel
+// de handler, y con ella sus dos filtros, que son justo la afirmación de seguridad
+// del módulo: una cita solo se confirma a quien la escribió y solo si sigue siendo
+// miembro de la casa. Un exmiembro conserva sus filas en `appointments` porque solo
+// se le borra de `casa_members` (ver el comentario de `runNowPush`), así que sin
+// `.eq("user_id", …)` y `.in("casa_id", …)` seguiría recibiendo los títulos y las
+// horas de una casa a la que ya no pertenece.
+//
+// Estos tests no se escriben con el doble viejo: `.in()` era un no-op, así que el filtro
+// aplicado, el equivocado y el ausente daba el mismo resultado y el test pasaba igual.
+// Con `.in()` aplicando de verdad, quitar cualquiera de los dos en el handler sale rojo.
+// ---------------------------------------------------------------------------
+
+Deno.test("la cita se confirma con el filtro de autor y de casa puesto", async () => {
+  const db = guionCita();
+  const res = await handle(
+    peticionNow({ type: "appointment", id: CITA }),
+    ENV,
+    { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000 },
+  );
+
+  // Lo que sale por la consulta, no solo lo que responde: que la casa y el autor
+  // van en el filtro y no se leyeran sin comprobar.
+  const consulta = db.callsTo("appointments", "select");
+  assertEquals(consulta.length, 1);
+  assertEquals(consulta[0].eq.id, CITA);
+  assertEquals(consulta[0].eq.user_id, USER);
+  assertEquals(consulta[0].inList.casa_id, [CASA]);
+
+  // Y con eso la cita llega al envío: sin suscripciones, el 404 es el de "no hay a
+  // quién avisar", que es un camino distinto del 404 de "no la veo".
+  assertEquals(res.status, 404);
+  assertEquals((await cuerpo(res)).error, "sin suscripciones activas");
+});
+
+Deno.test("una cita de otra casa no se confirma, aunque el usuario sea miembro de ella", async () => {
+  // El caso del exmiembro. La fila existe y es exactamente igual salvo el `casa_id`.
+  // Sin el `.in("casa_id", …)` el filtro no la pararía y el título y la hora saldrían.
+  const db = guionCita({
+    "appointments:select": [filas([citaDe(USER, "55555555-5555-4555-8555-555555555555", "both")])],
+  });
+  const res = await handle(
+    peticionNow({ type: "appointment", id: CITA }),
+    ENV,
+    { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000 },
+  );
+
+  assertEquals(res.status, 404);
+  assertEquals((await cuerpo(res)).error, "esa cita no existe");
+  // Ni una sola lectura de suscripciones: no se llegó a intentar avisar a nadie.
+  assertEquals(db.callsTo("push_subscriptions").length, 0);
+});
+
+Deno.test("la cita de otro usuario no se confirma, aunque sea de su casa", async () => {
+  // El otro filtro: dos miembros de la misma casa se ven las citas el uno del otro
+  // en la app, pero la confirmación es de quien la acaba de crear. Sin
+  // `.eq("user_id", …)`, cualquier miembro recibiría el aviso de la cita del otro.
+  const db = guionCita({
+    "appointments:select": [
+      filas([citaDe("66666666-6666-4666-8666-666666666666", CASA, "both")]),
+    ],
+  });
+  const res = await handle(
+    peticionNow({ type: "appointment", id: CITA }),
+    ENV,
+    { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000 },
+  );
+
+  assertEquals(res.status, 404);
+  assertEquals((await cuerpo(res)).error, "esa cita no existe");
+  assertEquals(db.callsTo("push_subscriptions").length, 0);
+});
+
+Deno.test("un reminder_choice que no es de la lista se traduce a 'sin aviso'", async () => {
+  // La columna no tiene CHECK, así que un valor raro llega a la base por lo que sea.
+  // `isValidChoice` lo filtra, pero lo que importa es que el filtro llegue al
+  // dispatch: sin él, un valor basura se colaría como choice y se confirmaría un
+  // recordatorio que el cron no mandará nunca.
+  for (const basura of ["BOTH", "", null, 3]) {
+    const db = guionCita({
+      "appointments:select": [filas([citaDe(USER, CASA, basura)])],
+    });
+    const res = await handle(
+      peticionNow({ type: "appointment", id: CITA }),
+      ENV,
+      { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000 },
+    );
+
+    assertEquals(res.status, 404);
+    // El 404 de "no hay recordatorio", no el de "no hay a quién avisar": la cita se
+    // ve, lo que no hay es nada que confirmar.
+    assertEquals((await cuerpo(res)).error, "no hay recordatorio que confirmar");
+    assertEquals(db.callsTo("push_subscriptions").length, 0);
+  }
+});
+
+Deno.test("un reminder_choice válido llega al dispatch y se confirma", async () => {
+  // El control positivo del anterior: si este no llegara al envío, el test del valor
+  // basura pasaría por un motivo equivocado.
+  for (const choice of ["day-before", "same-day", "both"]) {
+    const db = guionCita({ "appointments:select": [filas([citaDe(USER, CASA, choice)])] });
+    const res = await handle(
+      peticionNow({ type: "appointment", id: CITA }),
+      ENV,
+      { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000 },
+    );
+
+    assertEquals(res.status, 404);
+    assertEquals((await cuerpo(res)).error, "sin suscripciones activas");
+  }
+});
+
+Deno.test("una cita que no existe responde 404 y no intenta enviarla", async () => {
+  const db = guionCita({ "appointments:select": [filas([])] });
+  const res = await handle(
+    peticionNow({ type: "appointment", id: CITA }),
+    ENV,
+    { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000 },
+  );
+
+  assertEquals(res.status, 404);
+  assertEquals((await cuerpo(res)).error, "esa cita no existe");
+  assertEquals(db.callsTo("push_subscriptions").length, 0);
+});
+
+Deno.test("si no se puede leer la cita responde 500, no un 404 de 'no existe'", async () => {
+  // Un fallo de base de datos y una cita que no existen se parecen, y confundirlos
+  // haría creer al cliente que su cita se borró.
+  const db = guionCita({ "appointments:select": [fallo("statement timeout")] });
+  const res = await handle(
+    peticionNow({ type: "appointment", id: CITA }),
+    ENV,
+    { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000 },
+  );
+
+  assertEquals(res.status, 500);
+  assertEquals((await cuerpo(res)).error, "no se pudo leer la cita");
+  assertEquals(db.callsTo("push_subscriptions").length, 0);
+});
+
+Deno.test("una cita que no se ve quema la reserva igual que una que sí", async () => {
+  // El diseño de la reserva es que se pide antes de validar nada, y eso incluye antes
+  // de leer la cita: si una cita ajena no quemara el bucket, `?mode=now&type=
+  // appointment&id=<uuid de otra casa>` sería un bucle gratis para quien lo probara.
+  const db = guionCita({
+    "appointments:select": [filas([citaDe(USER, "55555555-5555-4555-8555-555555555555", "both")])],
+  });
+  await handle(
+    peticionNow({ type: "appointment", id: CITA }),
+    ENV,
+    { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000 },
+  );
+
+  assertEquals(db.pushLogRows(), 1);
+  assertEquals(db.callsTo("push_log", "delete").length, 0);
 });
