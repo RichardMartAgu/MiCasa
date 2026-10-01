@@ -78,8 +78,8 @@
     {
       "id": "web",
       "type": "frontend",
-      "label": "Web Astro",
-      "sublabel": "shadcn-astro · Nano Stores",
+      "label": "Web (PWA)",
+      "sublabel": "Expo export · Workbox",
       "pos": [
         300,
         460
@@ -88,7 +88,7 @@
         170,
         64
       ],
-      "tag": "web/"
+      "tag": "src/ → PWA"
     },
     {
       "id": "auth",
@@ -502,7 +502,7 @@
       "title": "Clientes",
       "items": [
         "App móvil Expo SDK 57 (src/)",
-        "Web Astro Mobile-First (web/)",
+        "Web PWA Mobile-First (misma app Expo exportada)",
         "Paleta Dusk compartida"
       ]
     },

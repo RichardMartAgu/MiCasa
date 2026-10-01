@@ -22,9 +22,19 @@ MiCasa envía correos con **Resend**:
 - **Transaccionales**: invitación a casa, bienvenida, recordatorios de citas/cumpleaños, avisos de presupuesto. Via Edge Function en `supabase/functions/` con `RESEND_API_KEY` en secrets.
 - Nunca hardcodear claves; `RESEND_API_KEY` vive en secrets de Supabase/Vercel.
 
-# Frontend web
+# Frontend
 
-La app móvil Expo vive en `src/` (paleta Dusk). El frontend web vive en **`web/`** (Astro + shadcn-astro + tailwind merge + Nano Stores + astro-icon, Mobile-First). Ambos comparten paleta Dusk y capa de datos sobre Supabase.
+Una sola app en `src/` (Expo SDK 57, paleta Dusk) que sirve **móvil y web**. No hay frontend aparte: `web/` nunca existió en este repo.
+
+La web es el mismo código exportado con `expo export --platform web`, y encima Workbox le inyecta el service worker para convertirla en PWA. La cadena de build es:
+
+```
+src/  →  expo export --platform web  →  Workbox (sw-src.js)  →  PWA
+```
+
+Scripts que importan: `npm run build:web` (export + PWA), `npm run build:pwa` (solo Workbox), `npm run verify:pwa` (comprueba manifest, service worker y assets). `npm run deploy:vercel` sirve lo que hay en `dist/`, así que `build:web` es obligatorio antes de desplegar.
+
+La capa de datos (Supabase) y la paleta Dusk son las mismas en las dos plataformas.
 
 # Agentes del proyecto
 
@@ -32,9 +42,9 @@ Seis agentes especializados viven en `.opencode/agents/` e intervienen en el flu
 
 - **`orquestador`**: coordina. Descompone objetivos en bloques, asigna a back/front, lanza security y qa-test tras cada bloque, gestiona veredictos, coordina deploy con devops. Única vía hacia el usuario.
 - **`back`**: Supabase (PostgreSQL + RLS + Realtime + Edge Functions Deno) y Resend (SMTP auth + transaccionales).
-- **`front`**: app móvil Expo (`src/`) y frontend web Astro (`web/`), paleta Dusk.
+- **`front`**: app Expo SDK 57 (`src/`) para móvil y web, paleta Dusk, build PWA con Workbox.
 - **`security`**: auditoría de seguridad read-only por bloque. Veredicto APROBADO/REVISAR/BLOQUEADO + 3-5 preguntas estratégicas.
-- **`qa-test`**: calidad. Typecheck, lint, tests (Jest móvil, Vitest/Playwright web), cobertura y edge cases. Veredicto PASA/REVISAR/FALLA.
+- **`qa-test`**: calidad. Typecheck, lint, tests (Jest), cobertura, edge cases y `npm run verify:pwa` en la web. Veredicto PASA/REVISAR/FALLA.
 - **`devops`**: CI/CD (GitHub Actions), deploys Vercel/EAS, migraciones Supabase, secrets (incluida `RESEND_API_KEY`) y salud del entorno.
 
 # Flujo por bloque de código
@@ -45,7 +55,19 @@ Seis agentes especializados viven en `.opencode/agents/` e intervienen en el flu
 4. Invocar `qa-test` para validar typecheck, lint y tests.
 5. Ningún bloque se da por terminado ni se commitea hasta que `security` devuelve **APROBADO** y `qa-test` **PASA** (o los hallazgos están remediados).
 6. Si `security` o `qa-test` formulan preguntas, el orquestador las transmite al usuario y espera decisión si afectan al bloque.
-7. Verificar antes de entregar: `npx tsc --noEmit`, `npx expo lint`, `npx jest` (+ checks de `web/` si aplica).
+7. Antes de dar por terminado el bloque, pasar los gates de la sección «Gates». Si alguno falla, el bloque no está terminado.
+
+# Gates
+
+Todo en verde antes de commitear. Cada comando es corto; si uno falla se corrige antes de continuar, no se anota como pendiente.
+
+- [ ] `npx tsc --noEmit` — typecheck sin errores
+- [ ] `npx expo lint` — lint limpio
+- [ ] `npx jest` — tests pasan
+- [ ] `npm run verify:pwa` — solo si el bloque toca la web o el service worker
+- [ ] `npm run verify:deps` — lock íntegro, overrides coherentes y `npm audit` sin hallazgos altos
+- [ ] `git status --porcelain` — limpio, sin ficheros sin trackear
+- [ ] `git ls-files | grep '\.env'` — solo `.env.example`; ningún fichero de entorno real en el índice
 
 # Git
 
@@ -116,6 +138,8 @@ Si dudas de si entra, no entra: rama + worktree + PR. El coste de equivocarse es
 
 # Despliegue
 
+**Dónde están los tokens y cómo se despliega una Edge Function**: en la nota privada `~/.config/opencode/notas/micasa-deploy.md`. Vive fuera del repo a propósito (el repo es público). Leerla antes de cualquier deploy; aquí dentro no se documenta.
+
 Despliegue a Vercel es **manual**: sin integración git (`vercel git connect` NO conectado). Cada deploy se lanza con `npm run deploy:vercel`. No asumir auto-deploy tras push.
 
 Antes de desplegar (local `npm run demo` o Vercel `npm run deploy:vercel`):
@@ -126,12 +150,8 @@ Antes de desplegar (local `npm run demo` o Vercel `npm run deploy:vercel`):
 
 `devops` supervisa despliegues, migraciones y secrets.
 
-# Notificaciones por Telegram
+# Notificaciones
 
-Cuando haya actualizaciones de estado relevantes para el usuario (bloque terminado, auditoría, deploy, errores), notificar por Telegram usando `telegram-opencode-bot`:
+Las notificaciones automáticas están desactivadas. No llamar a `scripts/notify-telegram.sh` ni a ningún otro canal sin que el usuario lo pida en ese momento.
 
-```bash
-bash scripts/notify-telegram.sh "Mensaje"
-```
-
-El script lee `TELEGRAM_BOT_TOKEN` de `~/telegram-opencode-bot/.env` y usa el último `chat_id` conocido de la API de Telegram.
+El estado se comunica en la conversación, y Telegram solo de forma puntual y explícita.

@@ -28,7 +28,7 @@ import type { User } from '@supabase/supabase-js';
 
 import { reminderChoices, type ReminderChoice } from './notification-schedule';
 import { supabase } from './supabase';
-import { isTimeout, withTimeout, TimeoutError } from './with-timeout';
+import { errorText, isTimeout, withTimeout, TimeoutError } from './with-timeout';
 import {
   classifySubscribeFailure,
   SUBSCRIBE_FAILURE_MESSAGES,
@@ -122,7 +122,10 @@ const LECTURA_TIMEOUT_MS = 1500;
  * se compararon mal dos cadenas y casi se reporto un bug que no existia.
  */
 export const VAPID_PUBLIC_KEY =
-  'BHJV5jOQoaXKdrI90Z7O-7tYh29DANfUB7jSMS8w3M_szTkpfCXaQx7uzoW5IixMuaCHmKJeVvW4Cz_oHaUpmrg';
+  'BE0dUENG6OObo-glDTMYOygHGnpsmwm81wN-ipjZZgOL9wBFyNDoYnGZ8cRwSevW9DEVsNQnF4zFGoA8eQt85FI';
+
+/** Versión de la clave VAPID. Cámbiala al rotar la clave para forzar re-suscripción. */
+export const VAPID_KEY_VERSION = '2026-09-28-v3';
 
 /** Rutas internas a las que puede llevar un aviso. Espejo de sw-src.js. */
 export const ALLOWED_PUSH_ROUTES = ['/citas', '/cumpleanos'] as const;
@@ -180,7 +183,65 @@ export interface SubscriptionShape {
     | { get: (name: 'p256dh' | 'auth') => ArrayBuffer | null }
     | { p256dh?: string | null; auth?: string | null }
     | null;
-  getKey?: (name: 'p256dh' | 'auth') => ArrayBuffer | null;
+  getKey?: (name: 'p256dh' | 'auth') => ArrayBuffer | null | Promise<ArrayBuffer | null>;
+  toJSON?: () =>
+    | { endpoint?: string | null; keys?: Record<string, string | null> | null }
+    | null;
+}
+
+/**
+ * Lee una clave de la suscripción sin suponer cómo la expone el navegador.
+ *
+ * `PushSubscription` **no tiene** atributo `keys`: comprobado en Chrome 153 con
+ * una suscripción real contra FCM, `sub.keys` es `undefined` y
+ * `Object.getOwnPropertyNames(sub)` está vacío. Las claves viven en el
+ * `ArrayBuffer` que devuelve `getKey()` —síncrono, según la WebIDL de la
+ * especificación— y, ya codificadas en base64url, en `toJSON().keys`.
+ *
+ * Leer `subscription.keys` a secas hacía que toda suscripción real se juzgara
+ * incompleta: el lector devolvía `null`, la espera de claves reintentaba sobre
+ * el mismo objeto y el alta terminaba siempre en "sin claves". El campo `keys`
+ * solo existe en los objetos de prueba de este repositorio, así que los tests
+ * pasaban mientras el navegador real fallaba.
+ *
+ * Se prueban las tres formas conocidas, en orden de fiabilidad, y se devuelve
+ * `null` solo cuando ninguna da nada.
+ */
+function readKey(
+  subscription: SubscriptionShape,
+  name: 'p256dh' | 'auth',
+): ArrayBuffer | string | null {
+  try {
+    const value = subscription.getKey?.(name);
+    // Si alguna implementación devolviera una promesa, se ignora aquí y se
+    // sigue con las fuentes síncronas: `toBase64Url` no sabe leer un `Promise`
+    // y produciría una cadena vacía en vez de un error claro.
+    if (value && typeof (value as { then?: unknown }).then !== 'function') {
+      return value as ArrayBuffer;
+    }
+  } catch {
+    // `getKey` puede lanzar con una suscripción a medias; se sigue probando.
+  }
+
+  const keys = subscription.keys;
+  if (keys) {
+    if ('get' in keys) {
+      const value = keys.get(name);
+      if (value) return value;
+    } else {
+      const value = keys[name];
+      if (value) return value;
+    }
+  }
+
+  try {
+    const value = subscription.toJSON?.()?.keys?.[name];
+    if (value) return value;
+  } catch {
+    // `toJSON` no está obligado a existir ni a funcionar.
+  }
+
+  return null;
 }
 
 /**
@@ -194,10 +255,9 @@ export interface SubscriptionShape {
  */
 export function incompleteReason(subscription: SubscriptionShape): IncompleteReason | null {
   if (!subscription.endpoint) return 'sin-endpoint';
-  const keys = subscription.keys;
-  if (!keys) return 'sin-claves';
-  const p256dh = 'get' in keys ? keys.get('p256dh') : keys.p256dh;
-  const auth = 'get' in keys ? keys.get('auth') : keys.auth;
+  const p256dh = readKey(subscription, 'p256dh');
+  const auth = readKey(subscription, 'auth');
+  if (!p256dh && !auth) return 'sin-claves';
   if (!p256dh) return 'sin-p256dh';
   if (!auth) return 'sin-auth';
   return null;
@@ -308,10 +368,8 @@ export async function esperarClaves(
 /** Normaliza lo que devuelve `PushSubscription` a lo que espera la tabla. */
 export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubscriptionRecord | null {
   const endpoint = subscription.endpoint ?? null;
-  const keys = subscription.keys;
-  if (!keys) return null;
-  const p256dhRaw = subscription.getKey?.('p256dh') ?? ('get' in keys ? keys.get('p256dh') : keys.p256dh ?? null);
-  const authRaw = subscription.getKey?.('auth') ?? ('get' in keys ? keys.get('auth') : keys.auth ?? null);
+  const p256dhRaw = readKey(subscription, 'p256dh');
+  const authRaw = readKey(subscription, 'auth');
   if (!endpoint || !p256dhRaw || !authRaw) return null;
 
   let userAgent: string | null = null;
@@ -321,11 +379,12 @@ export function toSubscriptionRecord(subscription: SubscriptionShape): PushSubsc
     userAgent = null;
   }
 
-  const toBase64Url = (buf: ArrayBuffer | string): string => {
-    const bytes = typeof buf === 'string'
-      ? new TextEncoder().encode(buf)
-      : new Uint8Array(buf);
-    return btoa(String.fromCharCode(...bytes))
+  const toBase64Url = (value: ArrayBuffer | string): string => {
+    if (typeof value === 'string') {
+      // `toJSON().keys` ya viene en base64url: re-codificarlo lo arruinaría.
+      return value.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+    return btoa(String.fromCharCode(...new Uint8Array(value)))
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=/g, '');
@@ -683,18 +742,36 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
     'lectura de la suscripción',
   ).catch(() => null);
 
-  // Una suscripción sin `p256dh` o sin `auth` no sirve para enviar nada, y es
-  // irrecuperable por la vía normal: `getSubscription()` la devuelve siempre, así
-  // que un intento anterior que la dejó a medias convertía el alta en un
-  // "suscripción incompleta" permanente con el que el usuario no puede hacer
-  // nada. Por eso, si viene incompleta, se da de baja y se vuelve a crear.
-  const usable = existing ? toSubscriptionRecord(existing) : null;
-  if (existing && !usable) {
-    // Con `try/catch` y no solo `.catch()`: si el navegador no permite darla de
-    // baja, se sigue adelante con la nueva, que es lo que desbloquea al usuario.
-    // Con tope: `unsubscribe()` puede hablar con el push service. Este es el
-    // camino de recuperación del alta, así que colgarse aquí devolvía al usuario
-    // al mismo callejón sin salida que este bloque vino a cerrar.
+  // Comprobar si la suscripción existente usa la clave VAPID actual.
+  // PushSubscription.options.applicationServerKey contiene la clave con la que se creó.
+  // Si no coincide, forzar re-suscripción (las claves p256dh/auth serían para el VAPID antiguo).
+  let forceResubscribe = false;
+  if (existing) {
+    try {
+      const existingKey = existing.options?.applicationServerKey;
+      if (existingKey) {
+        const existingKeyBytes = new Uint8Array(existingKey);
+        const currentKeyBytes = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+        // Comparar byte a byte
+        if (existingKeyBytes.length !== currentKeyBytes.length ||
+            !existingKeyBytes.every((b, i) => b === currentKeyBytes[i])) {
+          forceResubscribe = true;
+        }
+      }
+      // También guardar versión en localStorage para futuras visitas
+      const storedVersion = localStorage.getItem('micasa:vapid-key-version');
+      if (storedVersion && storedVersion !== VAPID_KEY_VERSION) {
+        forceResubscribe = true;
+      }
+      localStorage.setItem('micasa:vapid-key-version', VAPID_KEY_VERSION);
+    } catch {
+      // localStorage no disponible o error leyendo options: no bloquear
+    }
+  }
+
+  // Una suscripción sin `p256dh` o sin `auth` no sirve para enviar nada.
+  const usable = existing && !forceResubscribe ? toSubscriptionRecord(existing) : null;
+  if (existing && (!usable || forceResubscribe)) {
     await darDeBaja(existing);
   }
 
@@ -924,9 +1001,16 @@ export async function syncPushPreferences(
  * `getBirthdayChoice`. El hueco era que en web solo había escritura, y por eso la
  * fila se guardaba bien y nadie la leía nunca: el selector de Ajustes arrancaba
  * siempre en "sin aviso" por mucho que estuviera guardado.
+ *
+ * Devuelve `null` cuando no se puede saber qué hay guardado, y `null` no es lo
+ * mismo que `'none'`. La diferencia importa porque quien llama pinta chips: con un
+ * `'none'` de repliegue, un chip marcado que en realidad nadie eligió invites a
+ * pulsarlo para "confirmarlo", y eso escribe `'none'` encima de una fila que
+ * podía seguir en `both`. `null` deja el selector sin nada marcado, que sí dice la
+ * verdad: todavía no se sabe.
  */
-export async function getStoredBirthdayChoice(user: User | null): Promise<ReminderChoice> {
-  if (!user) return 'none';
+export async function getStoredBirthdayChoice(user: User | null): Promise<ReminderChoice | null> {
+  if (!user) return null;
 
   let value: unknown = null;
   try {
@@ -946,28 +1030,28 @@ export async function getStoredBirthdayChoice(user: User | null): Promise<Remind
     if (error) throw new Error(error.message);
     value = data?.birthday_choice ?? null;
   } catch (error) {
-    // Un fallo aquí cae a 'none' en vez de propagarse, por tres motivos que van
+    // Un fallo aquí cae a `null` en vez de propagarse, por tres motivos que van
     // juntos: quien llama no tiene dónde mostrar un motivo (el selector solo sabe
-    // pintar chips), un rechazo sin capturar ahí dejaba el interruptor de Ajustes
-    // deshabilitado hasta recargar, y sobre todo esta lectura no decide nada:
-    // no escribe, así que la fila de la base sigue siendo la buena y el servidor
-    // sigue avisando como la persona lo dejó. Mostrar el valor guardado cuando
-    // se puede y el conservador cuando no es preferible a dejar la pantalla
-    // inservible. El motivo se anota en consola, que es donde se puede mirar.
+    // pintar chips), un rechazo sin capturado ahí dejaba el interruptor de Ajustes
+    // deshabilitado hasta recargar, y sobre todo esta lectura no decide nada: no
+    // escribe, así que la fila de la base sigue siendo la buena y el servidor
+    // sigue avisando como la persona lo dejó. Decir "no sé" y no "sin aviso"
+    // tampoco pisa nada, y es lo que permite a quien llama no marcar ningún chip.
+    // El motivo se anota en consola, que es donde se puede mirar.
     console.warn('No se pudo leer la preferencia de cumpleaños guardada', errorText(error));
-    return 'none';
+    return null;
   }
 
   // Mismo criterio de validez que `isValidChoice` de la Edge Function, y con la
   // lista compartida en vez de repetida: los cuatro valores de `reminderChoices`
   // y nada más. La columna es `text` con un `check` en la base, pero el cliente
   // no puede dar por hecho que la fila la escribió esta versión del código.
-  return reminderChoices.includes(value as ReminderChoice) ? (value as ReminderChoice) : 'none';
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return 'error desconocido';
+  //
+  // Sin fila (`maybeSingle` devuelve `data: null`) y con valor ilegible se
+  // devuelven las dos cosas como `null`, no como `'none'`. El servidor también
+  // avisa por lo mínimo en cuanto no sabe qué leer, así que los dos lados
+  // coinciden: quien no sabe, no afirma.
+  return reminderChoices.includes(value as ReminderChoice) ? (value as ReminderChoice) : null;
 }
 
 export type TestPushResult =

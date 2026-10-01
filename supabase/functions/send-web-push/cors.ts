@@ -17,6 +17,12 @@
  *
  * - `micasa-demo.vercel.app`: la web de producción (alias de Vercel, el único
  *   despliegue web que hay).
+ * - `micasa-demo-*-richardmartagus-projects.vercel.app`: los deployments de
+ *   preview. Vercel les da una URL nueva en cada despliegue, con un código
+ *   aleatorio en medio, así que listarlos a mano no sirve: se despliega una
+ *   corrección y la siguiente preview vuelve a quedar fuera. El patrón es la
+ *   única comodín admitido, y va acotado al nombre del proyecto y al slug de la
+ *   organización, que solo quien posee esa organización puede registrar.
  * - `micasa.app`: el dominio propio del proyecto. Todavía no sirve la web, pero
  *   es el origen que tendrá cuando se publique, así que entra desde ahora.
  * - `localhost:8080`: la demo local (`npm run demo`).
@@ -29,6 +35,7 @@
  */
 export const DEFAULT_ALLOWED_ORIGINS: readonly string[] = [
   "https://micasa-demo.vercel.app",
+  "https://micasa-demo-*-richardmartagus-projects.vercel.app",
   "https://micasa.app",
   "http://localhost:8080",
   "http://localhost:8081",
@@ -96,6 +103,29 @@ export function resolveAllowedOrigins(raw: string | null | undefined): string[] 
 }
 
 /**
+ * Compila un patrón con comodín a una expresión regular anclada.
+ *
+ * El `*` solo se admite como sustituto de **un fragmento de un único segmento
+ * de host**: `[^.]*`, letras, dígitos y guiones. No cruza un punto. Con eso el
+ * patrón de preview `https://micasa-demo-*-richardmartagus-projects.vercel.app`
+ * acepta `micasa-demo-kyp8fpsqy-richardmartagus-projects.vercel.app` pero no
+ * `micasa-demo-a.b-richardmartagus-projects.vercel.app`, y mucho menos un host
+ * de otro dominio.
+ *
+ * Se escapa todo lo que es metaexpresión y se ancla con `^`/`$`: sin el ancla,
+ * un patrón sería un `search` y `https://micasa-demo-vercel.app.ataque.example`
+ * pasaría por parecido, que es justo el ataque de sufijo que el resto del
+ * fichero se pasa la vida negando.
+ *
+ * `*` se sustituye **después** de escapar, porque escaparlo lo dejaría como
+ * asterisco literal y el patrón no coincidiría con nada.
+ */
+function compileOriginPattern(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped.replace(/\*/g, "[^.]*")}$`, "i");
+}
+
+/**
  * Si a este origen se le puede devolver `Access-Control-Allow-Origin`.
  *
  * Sin cabecera `Origin` devuelve `false` porque no hay a quién darle permiso,
@@ -103,11 +133,22 @@ export function resolveAllowedOrigins(raw: string | null | undefined): string[] 
  * esto para decidir si le da permiso de leer la respuesta, nunca si la atiende.
  * El caso de verdad es `pg_cron`, que llama por `pg_net` sin `Origin` y no es un
  * navegador.
+ *
+ * La comparación es exacta, salvo para los patrones de `DEFAULT_ALLOWED_ORIGINS`
+ * que llevan `*`: un `endsWith` o un `includes` dejaría pasar cualquier
+ * subdominio de Vercel de cualquier cuenta, que es el ataque de sufijo. El
+ * comodín no cambia eso, porque está contenido en un único segmento de host y
+ * anclado a los dos extremos.
  */
 export function isOriginAllowed(origin: string | null, allowed: readonly string[]): boolean {
   if (origin === null) return false;
   const normalized = normalizeOrigin(origin);
-  return allowed.some((candidate) => normalizeOrigin(candidate) === normalized);
+  return allowed.some((candidate) => {
+    const pattern = normalizeOrigin(candidate);
+    if (pattern === normalized) return true;
+    if (!pattern.includes("*")) return false;
+    return compileOriginPattern(pattern).test(normalized);
+  });
 }
 
 /**

@@ -101,6 +101,77 @@ describe('toSubscriptionRecord', () => {
   it('devuelve null si no hay claves', () => {
     expect(toSubscriptionRecord({ endpoint: 'https://x', keys: null })).toBeNull();
   });
+
+  // Regresión del bug que dejó los avisos rotos: `PushSubscription` no tiene
+  // atributo `keys`. Comprobado en Chrome 153 con una suscripción real contra
+  // FCM: `sub.keys` es `undefined` y `Object.getOwnPropertyNames(sub)` está
+  // vacío; las claves solo están en `getKey()` y en `toJSON().keys`. El lector
+  // anterior exigía `subscription.keys`, devolvía `null` siempre y toda suscripción
+  // real acababa en "sin claves" mientras los tests, que sí mockean `keys`,
+  // seguían pasando.
+  it('lee la suscripción real, que no tiene `keys` sino `getKey()`', () => {
+    const p256dh = new TextEncoder().encode('clave-publica').buffer;
+    const auth = new TextEncoder().encode('secreto').buffer;
+    const real = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+      getKey: (name: 'p256dh' | 'auth') => (name === 'p256dh' ? p256dh : auth),
+      toJSON: () => ({ keys: { p256dh: 'ignorada', auth: 'ignorada' } }),
+    };
+
+    const record = toSubscriptionRecord(real);
+
+    expect(record).not.toBeNull();
+    expect(record?.p256dh).toBe('Y2xhdmUtcHVibGljYQ');
+    expect(record?.auth).toBe('c2VjcmV0bw');
+    expect(incompleteReason(real)).toBeNull();
+  });
+
+  it('lee la suscripción solo con `toJSON().keys`, en base64url', () => {
+    const real = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+      toJSON: () => ({
+        keys: {
+          p256dh: 'BOXzAaHrgCPxEpzBsCWL6ZCGoFM2Nfc1EnNPMzMBwsO4XTBWSHbtj-lgOEE4jQ3dIJl1MQhFJ34sLGw-s1mlxRk',
+          auth: '7AbebBG9PLxPkDuIWZ9YXg',
+        },
+      }),
+    };
+
+    const record = toSubscriptionRecord(real);
+
+    // base64url de `toJSON` se copia tal cual: re-codificarlo lo arruinaría.
+    expect(record?.p256dh).toBe(
+      'BOXzAaHrgCPxEpzBsCWL6ZCGoFM2Nfc1EnNPMzMBwsO4XTBWSHbtj-lgOEE4jQ3dIJl1MQhFJ34sLGw-s1mlxRk',
+    );
+    expect(record?.auth).toBe('7AbebBG9PLxPkDuIWZ9YXg');
+  });
+
+  it('una suscripción real sin claves todavía se reporta como tal', () => {
+    const sinClaves = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+      getKey: () => null,
+      toJSON: () => ({ keys: {} }),
+    };
+
+    expect(toSubscriptionRecord(sinClaves)).toBeNull();
+    expect(incompleteReason(sinClaves)).toBe('sin-claves');
+  });
+
+  it('distingue qué clave falta cuando solo falta una', () => {
+    const p256dh = new TextEncoder().encode('clave').buffer;
+    expect(
+      incompleteReason({
+        endpoint: 'https://x',
+        getKey: (name: 'p256dh' | 'auth') => (name === 'p256dh' ? p256dh : null),
+      }),
+    ).toBe('sin-auth');
+    expect(
+      incompleteReason({
+        endpoint: 'https://x',
+        getKey: (name: 'p256dh' | 'auth') => (name === 'auth' ? p256dh : null),
+      }),
+    ).toBe('sin-p256dh');
+  });
 });
 
 describe('presupuestos de tiempo de la activación', () => {
@@ -1219,27 +1290,32 @@ describe('getStoredBirthdayChoice: leer lo que se guardó', () => {
     }
   });
 
-  it('sin fila devuelve sin aviso', async () => {
+  it('sin fila devuelve "no se sabe", no "sin aviso"', async () => {
+    // `null` y no `'none'` a propósito. Un chip "Sin aviso" marcado invites a
+    // pulsarlo para confirmarlo, y esa pulsación escribe `'none'` encima de una
+    // fila que podía seguir en `both`. `null` deja el selector sin marcar.
+    // La Edge Function también avisa por lo mínimo cuando no sabe qué leer, así
+    // que los dos lados coinciden.
     stubPrefs({ data: null, error: null });
 
-    await expect(getStoredBirthdayChoice(user)).resolves.toBe('none');
+    await expect(getStoredBirthdayChoice(user)).resolves.toBeNull();
   });
 
-  it('un valor que no es de la lista cae a sin aviso', async () => {
+  it('un valor que no es de la lista es "no se sabe", no "sin aviso"', async () => {
     // La columna es `text` con un `check` en la base, pero el cliente no puede
     // fiarse de que la fila la escribiera esta versión del código. Un valor
-    // inesperado tiene que llegar al selector como algo elegible, no como texto
-    // suelto que no casa con ningún chip.
+    // inesperado tiene que llegar al selector como "no sé", no como texto suelto
+    // que no casa con ningún chip ni como un "sin aviso" que nadie eligió.
     for (const basura of ['', 'cada-dos-dias', 'Both', 'null']) {
       stubPrefs({ data: { birthday_choice: basura }, error: null });
-      await expect(getStoredBirthdayChoice(user)).resolves.toBe('none');
+      await expect(getStoredBirthdayChoice(user)).resolves.toBeNull();
     }
   });
 
   it('sin sesión no pregunta nada a la base', async () => {
     const db = stubPrefs({ data: { birthday_choice: 'both' }, error: null });
 
-    await expect(getStoredBirthdayChoice(null)).resolves.toBe('none');
+    await expect(getStoredBirthdayChoice(null)).resolves.toBeNull();
     expect(db.from).not.toHaveBeenCalled();
   });
 
@@ -1248,9 +1324,9 @@ describe('getStoredBirthdayChoice: leer lo que se guardó', () => {
 
     // No rechaza: Ajustes no tiene dónde mostrar un motivo, y un rechazo ahí
     // dejaba el interruptor deshabilitado hasta recargar la página.
-    await expect(getStoredBirthdayChoice(user)).resolves.toBe('none');
-    // El motivo sí se anota. Un "sin aviso" silencioso es justo lo que hace
-    // invisible que la lectura falle, que es como nació este bug.
+    await expect(getStoredBirthdayChoice(user)).resolves.toBeNull();
+    // El motivo sí se anota. Un fallo silencioso es justo lo que hace invisible
+    // que la lectura no funcione, que es como nació este bug.
     expect(console.warn).toHaveBeenCalledWith(
       'No se pudo leer la preferencia de cumpleaños guardada',
       'fallo de red',
@@ -1266,10 +1342,58 @@ describe('getStoredBirthdayChoice: leer lo que se guardó', () => {
     const promise = getStoredBirthdayChoice(user);
     await jest.advanceTimersByTimeAsync(PREFS_READ_TIMEOUT_MS);
 
-    await expect(promise).resolves.toBe('none');
+    await expect(promise).resolves.toBeNull();
     expect(console.warn).toHaveBeenCalledWith(
       'No se pudo leer la preferencia de cumpleaños guardada',
       expect.stringContaining('no ha terminado a tiempo'),
+    );
+  });
+
+  it('una respuesta que llega justo antes del tope se acepta', async () => {
+    // Fija el borde del corte. Con el tope en el mismo número que el avance, este
+    // test pasaría tanto si `withTimeout` cortara en `>` como en `>=`, y un corte
+    // un milisegundo antes de tiempo descartaría una respuesta que sí llegó. Los
+    // dos casos se comprueban: este acepta, el de "colgado" corta.
+    jest.useFakeTimers();
+    stubPrefs({ data: { birthday_choice: 'both' }, error: null });
+
+    const promise = getStoredBirthdayChoice(user);
+    await jest.advanceTimersByTimeAsync(PREFS_READ_TIMEOUT_MS - 1);
+
+    await expect(promise).resolves.toBe('both');
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('un fallo de la base que no es Error se anota sin romperse', async () => {
+    // `errorText` recibe `unknown` porque un rechazo puede ser cualquier cosa: un
+    // string, un objeto, un `undefined`. Que ese camino no lance al construir el
+    // aviso de consola es lo que evita que un fallo raro se convierta en un
+    // rechazo sin capturar dentro del propio manejador de fallos.
+    stubPrefs({ data: null, error: { message: undefined } as never });
+    (supabase.from as jest.Mock).mockImplementationOnce(() => {
+      throw 'fallo raro sin Error';
+    });
+
+    await expect(getStoredBirthdayChoice(user)).resolves.toBeNull();
+    expect(console.warn).toHaveBeenCalledWith(
+      'No se pudo leer la preferencia de cumpleaños guardada',
+      'error desconocido',
+    );
+  });
+
+  it('un throw síncrono al construir la consulta cae igual que un rechazo', async () => {
+    // El `supabase.from(...)` se evalúa antes de que exista promesa alguna, así que
+    // un fallo de red o una configuración rota ahí lanza de forma síncrona y no
+    // llega al `catch` de un `await`. Sin envolver la construcción, esa excepción
+    // salía de la función y Ajustes se quedaba esperando.
+    (supabase.from as jest.Mock).mockImplementation(() => {
+      throw new Error('no hay url de supabase');
+    });
+
+    await expect(getStoredBirthdayChoice(user)).resolves.toBeNull();
+    expect(console.warn).toHaveBeenCalledWith(
+      'No se pudo leer la preferencia de cumpleaños guardada',
+      'no hay url de supabase',
     );
   });
 
@@ -1400,16 +1524,21 @@ describe('la clave VAPID del frontend', () => {
     expect(mod(y * y)).toBe(mod(x * x * x + A * x + B));
   });
 
-  it('es la clave que rotamos en el PR #73, y no la anterior', () => {
-    // Con la clave anterior, el navegador Chrome 153 devolvia una suscripcion con
-    // endpoint pero sin `p256dh` ni `auth`, seis veces seguidas. Ese par en
-    // concreto esta en la base, en el Vault, y esta en el bundle. Si alguien
-    // cambia una de las tres sin cambiar las otras dos, los avisos dejan de
-    // firmarse en silencio: es exactamente el fallo que se midio.
+  it('es la clave que esta ahora en el Vault, y no una anterior', () => {
+    // El par vive en tres sitios a la vez: en este bundle, en el Vault de
+    // Supabase y en la configuracion de la Edge Function. Si alguien cambia una
+    // sin cambiar las otras dos, los avisos dejan de firmarse en silencio.
+    //
+    // Nota sobre el diagnostico antiguo: durante mucho tiempo se culpo a la
+    // clave de que Chrome 153 devolviera una suscripcion sin `p256dh` ni `auth`.
+    // La causa real era el lector, que miraba `subscription.keys`, un atributo
+    // que PushSubscription no tiene; la clave no tenia nada que ver.
     expect(VAPID_PUBLIC_KEY).toBe(
-      'BHJV5jOQoaXKdrI90Z7O-7tYh29DANfUB7jSMS8w3M_szTkpfCXaQx7uzoW5IixMuaCHmKJeVvW4Cz_oHaUpmrg',
+      'BE0dUENG6OObo-glDTMYOygHGnpsmwm81wN-ipjZZgOL9wBFyNDoYnGZ8cRwSevW9DEVsNQnF4zFGoA8eQt85FI',
     );
-    // Y la anterior no puede volver a colarse.
+    // Y ninguna de las anteriores puede volver a colarse.
     expect(VAPID_PUBLIC_KEY).not.toMatch(/^BGAx5MQzNUhQM9/);
+    expect(VAPID_PUBLIC_KEY).not.toMatch(/^BHJV5jOQoaXKdrI/);
+    expect(VAPID_PUBLIC_KEY).not.toMatch(/^BIlEd_yFpScEXL/);
   });
 });

@@ -3,6 +3,7 @@ import { assertEquals } from "jsr:@std/assert@1";
 import {
   addDays,
   appointmentQueryUpperBound,
+  birthdayChoiceFor,
   buildAppointmentDispatches,
   buildBirthdayDispatches,
   dedupeKey,
@@ -338,4 +339,30 @@ Deno.test("dedupeKey incluye tipo, referencia, slot y día", () => {
 Deno.test("appointmentQueryUpperBound mira 8 días por delante", () => {
   const now = new Date("2026-03-16T08:05:00Z");
   assertEquals(appointmentQueryUpperBound(now).toISOString(), "2026-03-24T08:05:00.000Z");
+});
+
+Deno.test("birthdayChoiceFor: lo que hay en la fila, y nada más", () => {
+  // Los cuatro valores se respetan tal cual.
+  for (const value of ["none", "day-before", "same-day", "both"] as const) {
+    assertEquals(birthdayChoiceFor({ enabled: true, birthday_choice: value }), value);
+  }
+});
+
+Deno.test("birthdayChoiceFor: sin fila o ilegible avisa de lo mínimo", () => {
+  // El fallo que motivó la función: el repliegue era "both", así que sin fila el
+  // servidor mandaba los dos avisos mientras Ajustes pintaba "sin aviso". Cliente
+  // y servidor afirmaban cosas distintas en el mismo caso.
+  //
+  // La asimetría con `isPushEnabled` es deliberada: el maestro asume activado sin
+  // fila porque llegar al dispatcher ya implica una suscripción viva, o sea un
+  // consentimiento previo. Para el *qué* de los cumpleaños no hay esa señal, así
+  // que se asume lo mínimo.
+  assertEquals(birthdayChoiceFor(null), "none");
+  assertEquals(birthdayChoiceFor(undefined), "none");
+  assertEquals(birthdayChoiceFor({ enabled: true, birthday_choice: null }), "none");
+  assertEquals(birthdayChoiceFor({ enabled: true, birthday_choice: "" }), "none");
+  assertEquals(birthdayChoiceFor({ enabled: true, birthday_choice: "BOTH" }), "none");
+  assertEquals(birthdayChoiceFor({ enabled: true, birthday_choice: "cada-dos-dias" }), "none");
+  // Sin el campo en la fila, que es lo que devuelve una consulta que no lo pide.
+  assertEquals(birthdayChoiceFor({ enabled: true }), "none");
 });

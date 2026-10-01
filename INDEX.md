@@ -1,8 +1,6 @@
 # INDEX — MiCasa
 
-App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill.
-
-> Warning: `/home/richard/MiCasa` contiene una modificación ajena en `app.json`, en rama `develop`. No tocarla.
+App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.** Este índice es la fuente única de "qué hay": no crear documentos paralelos que lo dupliquen.
 
 ## Inventario completo
 
@@ -10,48 +8,97 @@ App móvil Expo + web Astro para gestionar el hogar. Inventario documental: 15 `
 
 | Archivo | Propósito | Estado |
 |---|---|---|
-| [`.opencode/skills/micasa-git/SKILL.md`](.opencode/skills/micasa-git/SKILL.md) | Buenas prácticas de git para este repo: flujo de worktree por rama, comandos destructivos que ya han perdido trabajo, y por qué dependabot mergea en `master` y no en `develop`. | Vigente; leer antes de commitear, pushear, mergear o limpiar ramas. |
+| [`.opencode/skills/micasa-git/SKILL.md`](.opencode/skills/micasa-git/SKILL.md) | Buenas prácticas de git de este repo: worktree por rama, comandos que ya han perdido trabajo, dependabot→`master`. | Vigente; leer antes de commitear/pushear/mergear. |
 | [`AGENTS.md`](AGENTS.md) | Reglas del proyecto, Expo v57, stack, agentes, calidad, deploy y worktrees. | Vigente; leer primero. |
-| [`CLAUDE.md`](CLAUDE.md) | Redirección a reglas de `AGENTS.md`. | Vigente; 1 línea. |
-| [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-09-26. |
-| [`README.md`](README.md) | Descripción del producto, funcionalidades, stack, puesta en marcha, calidad, estructura y modelo de datos. | Vigente. |
-| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global accionable para continuar sesiones. **Empieza por su sección «Pendientes».** | Versionado; actualizado 2026-09-28. |
+| [`CLAUDE.md`](CLAUDE.md) | Redirección a `AGENTS.md`. | Vigente; 1 línea. |
+| [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-09-29. |
+| [`README.md`](README.md) | Producto, funcionalidades, stack, puesta en marcha, calidad, estructura, modelo de datos. | Vigente. |
+| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global para continuar sesiones. **Empezar por «Pendientes»; las sesiones están en orden inverso (la primera «Sesión actual» es la más reciente).** | Actualizado 2026-09-29. |
 
 ### Bugs resueltos o documentados
 
 | Archivo | Propósito | Estado |
 |---|---|---|
-| [`docs/bug-01-listas-boton-portrait.md`](docs/bug-01-listas-boton-portrait.md) | Botón de añadir visible en listas en portrait. | Corregido; test pasa. |
-| [`docs/bug-02-tipos-cita-editables.md`](docs/bug-02-tipos-cita-editables.md) | Tipos de cita editables, borrables y persistidos por casa. | Corregido; test pasa. Decisión security member-wide. |
-| [`docs/bug-03-calendario-android.md`](docs/bug-03-calendario-android.md) | Sincronización de cumpleaños y manejo de permisos Android. | Corregido; falta revisión en dispositivo real. |
+| [`docs/bug-01-listas-boton-portrait.md`](docs/bug-01-listas-boton-portrait.md) | Botón de añadir oculto en listas en portrait. | Corregido; test pasa. |
+| [`docs/bug-02-tipos-cita-editables.md`](docs/bug-02-tipos-cita-editables.md) | Tipos de cita editables, borrables y persistidos por casa. | Corregido; test pasa. |
+| [`docs/bug-03-calendario-android.md`](docs/bug-03-calendario-android.md) | Sincronización de cumpleaños y permisos Android. | Corregido; falta revisión en dispositivo real. |
 | [`docs/bug-04-lista-compra-cascade.md`](docs/bug-04-lista-compra-cascade.md) | RLS y cascade al borrar ítems de listas. | Corregido; test pasa. |
-| [`docs/bug-05-gastos-delete-test.md`](docs/bug-05-gastos-delete-test.md) | Regresión de test al confirmar eliminación de gasto. | Corregido; test pasa. Queda warning no bloqueante de keys. |
+| [`docs/bug-05-gastos-delete-test.md`](docs/bug-05-gastos-delete-test.md) | Regresión de test al confirmar eliminación de gasto. | Corregido; test pasa. |
 | [`docs/bug-06-casas-editar-eliminar.md`](docs/bug-06-casas-editar-eliminar.md) | Edición y eliminación de casas por owner. | Corregido; tests pasan. |
-| [`docs/bug-07-shopping-realtime-delete.md`](docs/bug-07-shopping-realtime-delete.md) | Refresco realtime al borrar ítems/listas. | Corregido y aplicado en producción; verificación manual registrada. |
+| [`docs/bug-07-shopping-realtime-delete.md`](docs/bug-07-shopping-realtime-delete.md) | Refresco realtime al borrar ítems/listas. | Corregido y en producción. |
 
 ### Planes y pendientes
 
 | Archivo | Propósito | Estado |
 |---|---|---|
-| [`docs/calendar-sync-plan.md`](docs/calendar-sync-plan.md) | Plan de sincronización anual de cumpleaños con calendario nativo. | Implementado parcialmente; requiere build nativo y revisión manual. |
-| [`docs/list-filtering-plan.md`](docs/list-filtering-plan.md) | Búsqueda y filtros reutilizables en Gastos, Citas y Cumpleaños. | Completado; security APROBADO y QA PASA en bloques registrados. |
-| [`docs/oauth-google-pendiente.md`](docs/oauth-google-pendiente.md) | Estado y pasos de configuración de OAuth Google. | Código listo; faltan credenciales, configuración dashboard y PR. |
-| [`docs/web-push.md`](docs/web-push.md) | Web Push: recordatorios de citas y cumpleaños enviados por el servidor, con service worker, Edge Function y cron. | Mergeado en `develop` (#54) y desplegado; security APROBADO tras dos rondas. Falta prueba en navegador. |
-| [`docs/usuarios-prueba.md`](docs/usuarios-prueba.md) | Cuentas de prueba en producción para reproducir en navegador real lo que los tests no alcanzan, con sus límites de seguridad. | Vigente. `qa-toggle@micasa.dev`; credenciales en `.env.local`, no en el repo. |
+| [`docs/calendar-sync-plan.md`](docs/calendar-sync-plan.md) | Plan de sincronización anual de cumpleaños con calendario nativo. | Parcial; requiere build nativo. |
+| [`docs/list-filtering-plan.md`](docs/list-filtering-plan.md) | Búsqueda y filtros reutilizables en Gastos, Citas y Cumpleaños. | Completado; APROBADO/PASA. |
+| [`docs/oauth-google-pendiente.md`](docs/oauth-google-pendiente.md) | Estado y pasos de OAuth Google. | Código listo; faltan credenciales y dashboard. |
+| [`docs/pwa-installable.md`](docs/pwa-installable.md) | PWA instalable: manifest, service worker, iconos, decisiones de security. | Desplegado; quedan items en su «Qué falta». |
+| [`docs/usuarios-prueba.md`](docs/usuarios-prueba.md) | Cuentas de prueba en producción y sus límites de seguridad. | Vigente; credenciales en `.env.local`. |
+| [`docs/web-push.md`](docs/web-push.md) | Web Push (recordatorios en web): Edge Function, SW, cron, CORS, VAPID. | Mergeado (#54) y desplegado; CORS de previews mergeado (#83), v11 en prod. Falta prueba en navegador. |
+
+## Mapa de secciones (grep aquí antes de abrir el fichero)
+
+| Dónde | Secciones (`##`) |
+|---|---|
+| `docs/estado-proyecto.md` | Pendientes · CORS (falso positivo) · Riesgos aceptados · Sesiones (inverso) · Reglas de cierre · Plantilla de bloque |
+| `docs/web-push.md` | Qué resuelve · Alcance · Arquitectura · Ficheros · Secretos · Detalles que costaron entender · Auditoría · Verificación · Riesgos · **CORS** · **«Si el botón Enviar falla otra vez»** · Aviso de prueba · Qué falta · Contexto de rama · **Rotar VAPID** |
+| `docs/pwa-installable.md` | Objetivo · Gotcha `web.output: single` · Archivos · Registro del SW · Decisiones security · Verificación · Alcance · Qué falta |
+| `docs/usuarios-prueba.md` | Por qué existen · `qa-toggle@micasa.dev` · Recrear cuenta · Reglas de seguridad |
+| `docs/calendar-sync-plan.md` | Objetivo · Opción seleccionada · Cambios necesarios · Edge cases · Build · Orden · Coste · Riesgos · Preguntas |
+| `docs/list-filtering-plan.md` | Objetivo · Alcance · Componentes · Filtrado por pantalla · Orden de implementación · Fuera de alcance |
+| `docs/oauth-google-pendiente.md` | Pasos de configuración · Archivos tocados |
+| `docs/bug-0X-*.md` | Reporte/Síntoma · Causa raíz · Fix · Test · Nota (nunca leer: bug ya cerrado) |
+| `AGENTS.md` | Expo v57 · Idioma · Acceso a info · Emails · Frontend · Agentes · Flujo por bloque · Git · Reglas duras (worktree, nada abierto) · **Despliegue** · Telegram |
+| `README.md` | Funcionalidades · Stack · Puesta en marcha · Demo · Calidad · Estructura · Modelo de datos |
+
+## Tabla de skills
+
+Viven en `~/.config/opencode/skills/`. **Cargar solo la aplicable al bloque**, nunca varias. Verificar que existe con `ls ~/.config/opencode/skills/<nombre>` antes de citarla aquí.
+
+| Ámbito | Skill |
+|---|---|
+| Cualquier commit/push/merge | [`.opencode/skills/micasa-git`](../.opencode/skills/micasa-git/SKILL.md) — **obligatoria, local a este repo** |
+| Supabase, RLS, Edge Functions | `supabase` |
+| Consultas y esquema Postgres | `supabase-postgres-best-practices` |
+| App Expo / UI móvil | `building-native-ui` |
+| Auth, pantalla de login | `login-design` |
+| Pulido de interfaz o redesign | `impeccable` |
+| Accesibilidad (WCAG) | `accessibility` |
+| Cualquier fetch, carga de datos | `native-data-fetching` |
+| E2E en navegador | `pw-launch` → `pw-test` → `pw-close` |
+| Vercel deploy | `deploy-to-vercel` |
+| Diagramas de arquitectura | `archify` |
+
+Los agentes de `.opencode/agents/` (`back`, `front`, `security`, `qa-test`, `devops`) no son skills: se invocan por la tabla de `AGENTS.md`.
+
+## Fuera de alcance
+
+Decisiones ya tomadas de forma explícita. No re-litigar sin motivo nuevo, y no implementar sin autorización explícita del usuario.
+
+| Tema | Fuera de alcance | Dónde se decidió |
+|---|---|---|
+| Alert en web | `Alert.alert` es no-op en web. En `citas.tsx` (líneas 247, 296 y 352) una cita con recordatorio no agenda ni avisa | `estado-proyecto.md` → «Riesgos aceptados» |
+| Longitud de `user_agent` | Sin check de longitud en la allowlist de VAPID | `estado-proyecto.md` → «Riesgos aceptados» |
+| CORS de previews | No es un pendiente: ya resuelto en el PR #83 | `estado-proyecto.md` → «CORS (falso positivo)» |
+| Filtros reutilizables | Cerrado y mergeado, no reabrir | `list-filtering-plan.md` → «Fuera de alcance» |
+| Bugs 01-07 | Cerrados con test en verde. Los `.md` son el relato de entonces, no el estado: no tienen nota de cierre, así que el test es la fuente | `__tests__/` |
 
 ## Orden de acceso
 
 1. `AGENTS.md`
-2. Este `INDEX.md`
+2. Este `INDEX.md` (mapa de secciones incluido)
 3. `README.md` bajo demanda
-4. `docs/estado-proyecto.md` para estado de sesión
-5. Agentes: consultar tabla de `AGENTS.md`; invocar solo el aplicable.
-6. Código: `grep`/`glob` antes de leer; `src/lib/` contiene lógica pura testeable.
+4. `docs/estado-proyecto.md` → «Pendientes» + sesión más reciente
+5. Agentes: tabla de `AGENTS.md`; invocar solo el aplicable. Skills: tabla de arriba.
+6. Gates antes de commitear: sección «Gates» de `AGENTS.md`.
+7. Código: `grep`/`glob` antes de leer; `src/lib/` = lógica pura testeable.
 
 ## Proyecto
 
-- Móvil: `src/`, Expo Router, paleta Dusk.
-- Web: `web/`, Astro y componentes compartidos.
+- Móvil y web: `src/`, Expo Router, paleta Dusk. La web es el mismo código (`expo export --platform web`) con Workbox encima.
+- No existe `web/`: es la PWA construida desde `src/`.
 - Datos: Supabase, PostgreSQL, RLS y Realtime.
-- Calidad: `npx tsc --noEmit`, `npx expo lint`, `npx jest`.
-- Deploy Vercel: manual con `npm run deploy:vercel`; nunca asumir auto-deploy tras push.
+- Calidad: `npx tsc --noEmit`, `npx expo lint`, `npx jest`, `npm run verify:pwa`.
+- Deploy Vercel: manual con `npm run deploy:vercel` (ver puntero de `AGENTS.md` → nota privada de tokens).

@@ -30,10 +30,6 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
-.env
-
 # autoskills (regenerables con `npx autoskills`)
 .claude/skills/
 .agents/
@@ -53,6 +49,8 @@ example
 /ios
 /android
 .vercel
+
+# local env files — las reglas completas viven aquí, no duplicadas arriba
 .env*
 !.env.example
 
@@ -65,3 +63,8 @@ sw-bundle.js
 # `node_modules/` con barra no cubre un symlink, que es como se enlaza en los
 # worktrees para no reinstalar 1700 paquetes en cada uno.
 node_modules
+
+# Deno no forma parte del toolchain (no hay deno.json y sus tests no corren en CI),
+# así que su lock file es un artefacto local. Trackearlo daría a entender que las
+# dependencias de la Edge Function están fijadas, y no lo están.
+deno.lock

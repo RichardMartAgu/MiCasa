@@ -42,3 +42,20 @@ export function withTimeout<T>(task: Promise<T>, ms: number, reason: string): Pr
     );
   });
 }
+
+/**
+ * Motivo legible de un rechazo, para anotarlo en consola cuando no hay dónde
+ * enseñarlo en pantalla.
+ *
+ * Acepta `unknown` a propósito: un rechazo puede ser un `Error`, un string, un
+ * objeto de una librería o `undefined`, y este helper se llama justo en el camino
+ * donde ya no se puede comprobar nada más.
+ *
+ * Solo se anota en consola, nunca se enseña en pantalla, que es lo que hace que un
+ * mensaje crudo de servidor sea aceptable aquí. Puede contener texto de PostgREST,
+ * con nombres de tabla o de restricción: por eso quien lo use tiene que mirar a qué
+ * se está registrando, y no dar por hecho que solo pasan lecturas.
+ */
+export function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : 'error desconocido';
+}

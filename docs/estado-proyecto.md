@@ -4,12 +4,79 @@
 Viven aquí y no en el chat, que es donde se pierden. Lo que sigue se confirmó después
 de cerrar los bloques; nada de esto es hipótesis.
 
-### 1. Falta CSP en `vercel.json`
+**No hay ninguno abierto.** Los dos que hubo en esta sesión se cerraron:
 
-`vercel.json` lleva `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` y
-`Permissions-Policy`, pero **no hay `Content-Security-Policy`**. La app carga JavaScript
-de un bundle propio, así que una CSP restrictiva es viable. Anotado en
-`docs/pwa-installable.md` (F4) desde el principio y sigue abierto.
+- **CSP en `vercel.json`** — cerrada en el PR #86 (`d292a06`), desplegada y verificada
+  contra producción el 2026-09-29. Se añadió además `scripts/check-csp.mjs`, que
+  falla si la CSP y el origen real de Supabase dejan de coincidir, y va enganchado a
+  `build:web`, a `verify:pwa` y a CI. Ver la sesión de abajo.
+- **Allowlist de CORS de las previews de Vercel** — cerrada por el PR #83. Verificado
+  contra producción, no hay nada pendiente. Ver "CORS: no era un pendiente" más abajo.
+
+---
+
+## CORS: no era un pendiente
+
+Apareció como tarea abierta en varios informes de `security` y `qa-test` durante tres
+rondas de la sesión del 2026-09-29, y acabó en el resumen de la sesión como "pendiente
+de arreglar". **No lo estaba.** El PR #83 ya lo había resuelto.
+
+Medido contra producción el 2026-09-29, preflight contra
+`https://sxgsqvwvugdklycpqxiu.supabase.co/functions/v1/send-web-push`:
+
+| `Origin` | Resultado |
+|---|---|
+| `https://micasa-demo.vercel.app` | 204, permitido |
+| `https://micasa-demo-*-richardmartagus-projects.vercel.app` | 204, permitido |
+| `http://localhost:8081` | 204, permitido |
+| `https://otro-ignorado.com` | **403, denegado** |
+
+La API REST responde `access-control-allow-origin: *`. Y las Redirect URLs de Auth
+tampoco son un problema: el único flujo OAuth del repo es Google, y en
+`sxgsqvwvugdklycpqxiu` ese provider no está habilitado, así que la ruta no se usa
+(`/auth/v1/authorize` responde `Unsupported provider`).
+
+**De dónde salió el falso positivo**, para que no se repita: un 403 con un preflight
+desde el puerto `8099`, que es un puerto de prueba que alguien levantó a mano. Como
+`DEFAULT_ALLOWED_ORIGINS` (`supabase/functions/send-web-push/cors.ts:36`) solo admite
+`localhost:8080` y `8081`, ese origen se deniega, y el 403 se leyó como un fallo de
+producción cuando era del harness. Repetido desde `localhost:8080` el mismo preflight
+devuelve 204 con el ACAO correcto.
+
+**Lección operativa:** un 403 de CORS no dice por sí solo que la allowlist esté mal.
+Hay que mirar el `Origin` que lo produjo. Si viene de un puerto o un host que nadie
+usa en producción, es ruido del propio test. QA ya lo había descartado en su informe
+como artefacto del harness; aquí se recoge para que la siguiente sesión no lo vuelva
+a sacar de la lista.
+
+## Sesión actual — 2026-09-29 (CSP en la web, y cerrar tres PR)
+
+- Objetivo: añadir `Content-Security-Policy` a la web, que era el único hueco que
+  quedaba de los headers de `vercel.json`.
+- Archivos: `vercel.json`, `scripts/check-csp.mjs` (nuevo), `package.json`,
+  `.github/workflows/ci.yml`, `README.md`.
+- Security: **APROBADO**, tras cuatro rondas (REVISAR → REVISAR → REVISAR →
+  BLOQUEADO → APROBADO).
+- QA: **PASA**. Rutas autenticadas con credenciales reales, 0 violaciones, Realtime
+  abierto y Edge Function con 200 bajo la CSP.
+- Commits: `ba6a549`, `efa2454`, `1c9e016`, `8cc1562`, `b1babff`, `22b2043`. Mergeado
+  como `d292a06` (PR #86).
+- Despliegue: manual, `d292a06` en `micasa-demo.vercel.app`. Verificado en producción:
+  login real (`POST /auth/v1/token` 200, `rest/v1/casas` 200), WebSocket de Realtime
+  abierto, `example.com` bloqueado, 0 violaciones de consola, iPhone 13 y Pixel 5 sin
+  scroll horizontal, las 7 rutas SPA con CSP y `sw.js` con su `no-cache`.
+- Variables de Actions creadas (no son secretos, van en el bundle público):
+  `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY`. Las necesita el guard,
+  que en CI no tiene `.env`.
+- Nota: en la ronda 3 de auditoría, el guard seguía pudiendo salir en verde sin
+  comprobar, y en la 4 el step de CI quedaba rojo siempre porque inyectaba solo la URL
+  y el guard trata también la anon key como obligatoria. Los dos eran reales; los
+  detectamos tarde porque las pruebas de CI se hicieron en local con `.env` presente,
+  y ahí el fallo se tapaba. **Replicar el entorno del runner (sin `.env`) es lo que
+  los hizo visibles.**
+- Siguiente: nada abierto. Las vulnerabilidades de dependencias que marca `npm audit`
+  (`tar` critical y sus transversales) son preexistentes y no las introduce este
+  bloque; los PRs de dependabot están cerrados y tratarlas es otro bloque.
 
 ---
 
@@ -41,6 +108,78 @@ Se documenta lo que se comprobó, para que la decisión tenga base:
 En su lugar se puso una barrera: reglas de permisos en `~/.config/opencode/opencode.json`
 que niegan a las herramientas de lectura y a `bash` el acceso a `~/.bashrc`, para que el
 token no vuelva a salir impreso en un log.
+
+## Sesión actual — 2026-09-29 (el botón «Enviar» fallaba en previews de Vercel)
+
+Síntoma: en cualquier `micasa-demo-<código>-richardmartagus-projects.vercel.app` el botón Enviar fallaba; en producción iba bien. Causa: la allowlist de CORS no podía llevar las previews listadas a mano (host nuevo en cada despliegue) y el preflight salía `403` antes del `POST`.
+
+- Fix: fila con patrón anclado `https://micasa-demo-*-richardmartagus-projects.vercel.app` en `cors.ts` (`*` → `[^.]*`, un solo segmento de host, escapado y con `^`/`$`), con test por cada rechazo. PR #83: security APROBADO, qa PASA, mergeado con `--admin` autorizado por el usuario en `57c3209`.
+- Edge Function **v11** desplegada y verificada en prod: preview `204`, producción `204`, orígenes ajenos `403`, cron sin `Origin` `401`. El CLI de Supabase no tiene token; la vía de deploy real está en la nota privada `~/.config/opencode/notas/micasa-deploy.md`, con puntero en `AGENTS.md` (el repo es público, el contenido no sale de ahí).
+- Registro completo del diagnóstico en `docs/web-push.md` → «Si el botón Enviar falla otra vez». `INDEX.md` con mapa de secciones para no abrir `.md` a ciegas. Vercel re-desplegado y verificado (200).
+- Sin verificar: el botón en un navegador real sobre una preview.
+
+## Sesión actual — 2026-09-28 (el interruptor maestro se apagaba con la suscripción viva)
+
+Es la cola de la anterior, y salió de desplegar su fix (#75): con la preferencia de
+cumpleaños ya leyéndose de la base, en web el interruptor maestro se quedaba en `off`
+aunque el navegador tuviera suscripción push activa. **El push nunca dejó de llegar**;
+la Edge Function lee la fila de `push_preferences` directamente, así que lo que mentía
+era la pantalla. Eso es lo que confunde el síntoma: se parece a "no me llegan avisos"
+y no lo es.
+
+La causa fue el orden, y para encontrarlo se compararon los dos despliegues de producción
+bundle a bundle con `vercel curl` (los `*.vercel.app` de despliegue están detrás de Vercel
+SSO; el token de bypass lo genera el propio CLI). `sw.js` resultó idéntico salvo los
+hashes de `precacheAndRoute`, y en `entry.js` de 3 MB lo único funcional que cambiaba era
+la lectura de cumpleaños. El alta de suscripción y el envío no se habían tocado.
+
+El fallo: en web `areNotificationsEnabled()` (`src/lib/notifications.ts:189`) devuelve
+`false` fijo sin consultar nada, y el efecto de preferencias lo pintaba **sin `pushReadSeq`**.
+Ese `Promise.all` se resolvía en microtask, así que escribía primero y la lectura buena
+lo corregía detrás. Al añadirle la consulta de `push_preferences` (5 s) dejó de ser la
+primera: con el worker registrado, `getActiveSubscription` gana por milisegundos y el
+`false` llega encima. Volvía con cada `TOKEN_REFRESHED`, porque el efecto corre otra vez
+con un `user` nuevo.
+
+Y de ahí la lección: **guardar la escritura con `pushReadSeq` no era arreglo**, porque el
+efecto vuelve a correr y toma un número más alto. No era un problema de secuencia sino de
+que en web no había nada que escribir: un `false` constante. En web ese efecto ya no
+escribe el estado maestro; en nativo no cambia, porque allí sí lee AsyncStorage. PR #78,
+`c2bc971`.
+
+Los dos tests nuevos fallan contra el código viejo, y el segundo cubre justo el por dónde
+volvía (el mismo componente recibiendo la sesión después). De paso apareció una fuga de
+mock: el `beforeEach` global no fijaba defecto para `mockGetActiveSubscription` y
+`clearAllMocks` no borra implementaciones, así que un test pasaba sin comprobar lo que
+decía y el siguiente se quedaba esperando un interruptor que ya no llegaba.
+
+### El despliegue no se puso solo, y por casi nadie lo nota
+
+`npm run deploy:vercel` terminó en `✓ Ready` y **no era el mismo bundle que el `dist/`
+local**: Vercel compila en su propio entorno, así que el hash del entry nunca coincide
+con el local. Al comprobarlo se vio que `micasa-demo.vercel.app` seguía sirviendo el
+despliegue anterior. No era caché de la edge —`vercel alias ls` mostró que el rollback
+había dejado el dominio público apuntando al despliegue viejo, y el nuevo solo había
+tomado el alias con sufijo de equipo. Se corrigió con
+`npx vercel alias set <despliegue> micasa-demo.vercel.app`.
+
+Dos cosas que salieron de mirar, y que conviene no volver a asumir:
+
+- **Un `✓ Ready` no es un despliegue en producción.** Después de un rollback, hay que
+  comprobar el alias, no el estado del despliegue. El `age: 0` en la respuesta confirma
+  que la edge se purgó al cambiar el alias.
+- **Un bundle viejo pedido a un despliegue nuevo da 404**, no HTML (la corrección de
+  `vercel.json` de la sesión del service worker). Es la razón de que esto sea un 404
+  visible y no una app rota en silencio: en el momento de la comprobación el HTML que
+  servía la edge era antiguo, y su bundle sí pedía un fichero que ya no estaba.
+
+Pendiente que sale de aquí, y es el mismo suelo del bloque anterior:
+`areNotificationsEnabled()` sigue devolviendo `false` fijo en web, así que el interruptor
+es una foto del montaje y no una vista viva: si la suscripción desaparece con la pantalla
+abierta, no vuelve a `false` hasta recargar. Bloque propio, y security dejó además dos
+decisiones abiertas para el usuario: si un fallo de red al leer la suscripción debe pintar
+"apagado" (sentido peligroso, porque el servidor sigue mandando los avisos) y si el
+interruptor debe representar este navegador o el maestro del servidor.
 
 ## Sesión actual — 2026-09-28 (la preferencia de cumpleaños de Ajustes no se leía en web)
 
@@ -226,7 +365,10 @@ Lo que se descartó por el camino: `skipWaiting()` en `install` + recarga en `co
 
 ## Warning
 
-`/home/richard/MiCasa` contiene una modificación ajena en `app.json`, en rama `develop`. No tocar ni incluir ese archivo en esta feature.
+Este aviso se retiró el 2026-09-29: la modificación de `app.json` que describía ya no
+está en el árbol, así que el aviso solo hacía ruido: invitaba a no tocar un fichero que
+no había que tocar porque estaba limpio. Si vuelve a aparecer una modificación
+ajena en `develop`, se documenta aquí en el momento; no de forma preventiva.
 
 ## Plantilla para cerrar bloque
 
