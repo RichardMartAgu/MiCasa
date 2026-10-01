@@ -65,6 +65,41 @@ jobs:
       - name: Test
         run: npm test
 
+      # `supabase/` está excluido de `tsconfig.json`, así que ni `npm run
+      # typecheck` ni Jest miran nada de dentro de la Edge Function: lo que se
+      # rompe ahí llega verde a `develop`. Estos dos pasos son los únicos que lo
+      # cubren, y por eso van juntos:
+      #
+      # `deno test` corre los tests de la función Y typechequea lo que alcanzan.
+      # Pero solo eso: no ve los ficheros que ningún test importa, y el caso real
+      # es `index.ts`, el que levanta el servidor. Por eso está `deno check`
+      # aparte, que sí recorre el directorio entero.
+      #
+      # `deno lint` no está, a propósito: hoy tiene 8 avisos preexistentes en
+      # esta carpeta y sale con código 1, así que metido aquí dejaría en rojo
+      # todos los pushes hasta arreglar ruido viejo.
+      #
+      # La versión va fijada, y no a latest: una minor de Deno que cambiara el
+      # resolver o el typechecker pondría en rojo PRs que no han tocado la
+      # función. Se sube aquí a mano. Para replicarlo en local,
+      # `npm run test:functions`.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Typecheck de la Edge Function
+        run: deno check --node-modules-dir=none supabase/functions/send-web-push/
+
+      - name: Test de la Edge Function
+        run: deno test --allow-env --allow-read --node-modules-dir=none supabase/functions/send-web-push/
+
+      # Si a `deno.lock` le falta una entrada, Deno la añade y sigue. En el
+      # runner eso se pierde: el job pasa en verde y el lock del repo se queda
+      # corto para el siguiente. Es el mismo problema que ya historiaron con el
+      # lock de npm, y por eso se avisa en lugar de dejar que pase.
+      - name: Lock de Deno sin cambios
+        run: git diff --exit-code -- supabase/functions/send-web-push/deno.lock
+
       # Puerta de vulnerabilidades, solo sobre lo que se instala en producción.
       # `--omit=dev` porque las herramientas de build (jest, @expo/cli,
       # workbox-cli) viven en devDependencies y arrastran advisories moderate
