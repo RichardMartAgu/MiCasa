@@ -25,7 +25,6 @@ import {
   type ContactRow,
   type NowDispatch,
   type PushPreference,
-  type ReminderType,
   type TargetedDispatch,
 } from "./reminders.ts";
 

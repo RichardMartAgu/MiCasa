@@ -408,7 +408,8 @@ describe('CitasScreen', () => {
     alertSpy.mockRestore();
   });
 
-  it('avisa si recordatorio sin notif activadas y no agenda si cancela', async () => {    jest.replaceProperty(Platform, 'OS', 'android');
+  it('avisa si recordatorio sin notif activadas y no agenda si cancela', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
     mockAreNotificationsEnabled.mockResolvedValue(false);
     mockAskEnableNotifications.mockResolvedValue('cancelled');
     mockAddAppointment.mockResolvedValue({

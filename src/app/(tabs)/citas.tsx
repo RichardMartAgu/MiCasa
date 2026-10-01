@@ -296,6 +296,7 @@ export default function CitasScreen() {
       // el sync por realtime reintentará
     }
   }
+
   async function handleDelete(id: string) {
     if (!currentCasa) return;
     const ok = await confirmDialog(
