@@ -6,13 +6,31 @@ on:
   pull_request:
     branches: [develop, master]
 
+# El job no usa el token para nada: solo lee el repo. Bajar el permiso por
+# defecto (que en un repo público es amplio) no rompe ningún step y acota el
+# radio de cualquier dependencia que se ejecute dentro.
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      # Las tres van pineadas a SHA, y a propósito: `@v7` no es un tag inmutable sino
+      # una rama del mantenedor, así que se mueve sola. `checkout` es la que
+      # recibe el token, o sea que era la peor de las tres para dejarla suelta.
+      # Dependabot ya rastrea `github-actions`, así que los SHA no se quedan
+      # viejos solos.
+      #
+      # `persist-credentials: false` porque `checkout` deja el `GITHUB_TOKEN` en
+      # `.git/config` y después corren `npm test` y `deno test`, que ejecutan
+      # código arbitrario con lectura del disco. Ningún step de este workflow
+      # necesita el token: todo lo que hacen es leer ficheros.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -64,6 +82,83 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # `supabase/` está excluido de `tsconfig.json`, así que ni `npm run
+      # typecheck` ni Jest miran nada de dentro de la Edge Function: lo que se
+      # rompe ahí llega verde a `develop`. Estos dos pasos son los únicos que lo
+      # cubren, y por eso van juntos:
+      #
+      # `deno test` corre los tests de la función Y typechequea lo que alcanzan.
+      # Pero solo eso: no ve los ficheros que ningún test importa, y el caso real
+      # es `index.ts`, el que levanta el servidor. Por eso está `deno check`
+      # aparte, que sí recorre el directorio entero.
+      #
+      # `deno lint` no está, a propósito: hoy tiene 8 avisos preexistentes en
+      # esta carpeta y sale con código 1, así que metido aquí dejaría en rojo
+      # todos los pushes hasta arreglar ruido viejo.
+      #
+      # La versión va fijada, y no a latest: una minor de Deno que cambiara el
+      # resolver o el typechecker pondría en rojo PRs que no han tocado la
+      # función. Se sube aquí a mano. En local los equivalentes son
+      # `npm run check:functions` y `npm run test:functions`, que van con
+      # `npx -y deno` y por tanto con la última: aquí prima que dos ejecuciones
+      # del mismo día resuelvan lo mismo.
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.6
+
+      # `--frozen` para los dos. Sin él, si al lock le falta una entrada, Deno
+      # la resuelve contra el registro y la escribe: el código se ejecuta
+      # **antes** de que el paso del lock avise. Con `--frozen` falla ahí mismo,
+      # antes de ejecutar nada.
+      #
+      # El lock de Deno de esta carpeta está commiteado, y este paso vigila que
+      # siga estándolo y sin cambios.
+      #
+      # `git status --porcelain` y no `git diff --exit-code`, y por un motivo que
+      # importa: `git diff` compara el working tree contra el índice, así que si
+      # el fichero dejara de estar trackeado no habría nada que comparar y el
+      # paso saldría en verde. `git status --porcelain` sí ve el `??` de un
+      # fichero sin trackear, y así el caso que de verdad rompe el paso también
+      # sale rojo.
+      #
+      # Este lock **sí** está trackeado. El `deno.lock` de `.gitignore` es el de
+      # la raíz, que contiene el árbol de Expo y no ejecuta nadie; y a un
+      # fichero ya trackeado esa regla no le aplica. Si algún día alguien lo
+      # quita del índice "porque así estaba", este paso lo dice.
+      - name: Lock de Deno sin cambios
+        run: |
+          if [ -n "$(git status --porcelain -- supabase/functions/send-web-push/deno.lock)" ]; then
+            echo "::error::supabase/functions/send-web-push/deno.lock ha cambiado o ha dejado de estar trackeado. Súbelo en el mismo PR que el cambio que lo justificó."
+            git status --porcelain -- supabase/functions/send-web-push/deno.lock
+            exit 1
+          fi
+
+      # Los dos pasos corren **desde dentro de la carpeta**, y no porque sea más
+      # cómodo. Deno sube desde el directorio actual buscando el raíz del
+      # workspace, y en la raíz del repo hay un `package.json` con todo Expo: sin
+      # esto quería reconciliar el árbol entero y `--frozen` fallaba siempre en
+      # un checkout limpio, porque el lock de la raíz no está commiteado. Es lo
+      # que pasó en el primer push de este PR, y no se ve en local si tienes ese
+      # lock tirado por ahí.
+      - name: Typecheck de la Edge Function
+        working-directory: supabase/functions/send-web-push
+        run: deno check --frozen --node-modules-dir=none .
+
+      # `--allow-env` no lo pide ningún test: los 34 inyectan su propio `ENV`.
+      # Lo pide `npm:web-push`, que lee `process.env` al importarse, así que sin
+      # este permiso importar el paquete revienta. Es decir, el permiso ata la
+      # suite a lo que haga ese paquete con el entorno, no a lo que haga MiCasa.
+      # Aquí no hay secretos: el único `env:` del workflow lleva `vars.*`.
+      #
+      # `--allow-read` acotado a `.`, que es esta carpeta: un test lee el fuente
+      # de `handler.ts` y sin `=` el permiso sería todo el disco del runner.
+      #
+      # Sin `--allow-net` a propósito, y es una barrera: un test que intentara
+      # hablar con Supabase falla en vez de exfiltrar.
+      - name: Test de la Edge Function
+        working-directory: supabase/functions/send-web-push
+        run: deno test --frozen --allow-env --allow-read=. --node-modules-dir=none .
 
       # Puerta de vulnerabilidades, solo sobre lo que se instala en producción.
       # `--omit=dev` porque las herramientas de build (jest, @expo/cli,

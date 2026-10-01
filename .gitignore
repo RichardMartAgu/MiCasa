@@ -64,7 +64,9 @@ sw-bundle.js
 # worktrees para no reinstalar 1700 paquetes en cada uno.
 node_modules
 
-# Deno no forma parte del toolchain (no hay deno.json y sus tests no corren en CI),
-# así que su lock file es un artefacto local. Trackearlo daría a entender que las
-# dependencias de la Edge Function están fijadas, y no lo están.
-deno.lock
+# Este lock es el de la RAÍZ, que contiene el árbol de Expo y no ejecuta nadie:
+# un artefacto local. El de la Edge Function
+# (`supabase/functions/send-web-push/deno.lock`) está commiteado a propósito y
+# CI lo verifica, porque sus tests sí corren allí y sus dependencias sí están
+# fijadas. A un fichero ya trackeado esta regla no le aplica.
+/deno.lock
