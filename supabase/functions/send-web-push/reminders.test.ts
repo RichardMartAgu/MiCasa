@@ -25,6 +25,10 @@ import {
   type Context,
 } from "./reminders.ts";
 
+/** Usuario y bucket de ejemplo para la clave de idempotencia de `mode=now`. */
+const USUARIO = "11111111-1111-4111-8111-111111111111";
+const BUCKET = 29_000_000;
+
 const MADRID = "Europe/Madrid";
 const MEXICO = "America/Mexico_City";
 const TOKYO = "Asia/Tokyo";
@@ -294,8 +298,45 @@ Deno.test("cumpleaños con choice none no genera nada", () => {
   );
 });
 
+Deno.test("el 29 de febrero se avisa el 1 de marzo en los años que no son bisiestos", () => {
+  // El cambio de comportamiento que motiva el arreglo. Antes, comparando mes-día,
+  // la fecha 02-29 no llegaba a existir como día real en 2026 y este cumpleaños no
+  // recibía aviso ningún año que no fuera bisiesto. Ahora cae el 1 de marzo, que es
+  // lo mismo que hace la app con `new Date(2026, 1, 29)`.
+  const contacto = { id: "c1", name: "Rareza", birth_date: "1992-02-29" };
+
+  // El mismo día: el aviso de "hoy" sale con la fecha del 1 de marzo.
+  const hoy = buildBirthdayDispatches([contacto], "same-day", ctx("2026-03-01T08:05:00Z", MADRID));
+  assertEquals(hoy.length, 1);
+  assertEquals(hoy[0].slot, "same-day");
+  assertEquals(hoy[0].localDay, "2026-03-01");
+  assertEquals(hoy[0].title, "Cumpleaños hoy: Rareza");
+
+  // Y el día antes también: el 28 de febrero se avisa de lo que cae mañana.
+  const ayer = buildBirthdayDispatches([contacto], "day-before", ctx("2026-02-28T08:05:00Z", MADRID));
+  assertEquals(ayer.length, 1);
+  assertEquals(ayer[0].slot, "day-before");
+  assertEquals(ayer[0].localDay, "2026-02-28");
+
+  // Con "both" los dos, y ninguno se cuela en un día que no toca.
+  const ambos = buildBirthdayDispatches([contacto], "both", ctx("2026-02-28T08:05:00Z", MADRID));
+  assertEquals(ambos.length, 1);
+  assertEquals(buildBirthdayDispatches([contacto], "both", ctx("2026-03-05T08:05:00Z", MADRID)), []);
+});
+
+Deno.test("en un año bisiesto el 29 de febrero se avisa el 29 de febrero", () => {
+  // La normalización solo mueve la fecha en los años que no la tienen: en 2028 el
+  // 29 de febrero existe y es ese el día que toca.
+  const contacto = { id: "c1", name: "Rareza", birth_date: "1992-02-29" };
+  const hoy = buildBirthdayDispatches([contacto], "same-day", ctx("2028-02-29T08:05:00Z", MADRID));
+  assertEquals(hoy.length, 1);
+  assertEquals(hoy[0].localDay, "2028-02-29");
+  // Y el 1 de marzo de ese año ya no avisa de nada: el cumpleaños fue ayer.
+  assertEquals(buildBirthdayDispatches([contacto], "same-day", ctx("2028-03-01T08:05:00Z", MADRID)), []);
+});
+
 Deno.test("cumpleaños en 29 de febrero se ignoran si no coincide el día", () => {
-  // 2026 no es bisiesto, así que el 29/02 no existe como fecha local válida.
+  // Y el caso que no cambia: en un día cualquiera de marzo no hay nada que avisar.
   const dispatch = buildBirthdayDispatches(
     [{ id: "c1", name: "Rareza", birth_date: "2000-02-29" }],
     "same-day",
@@ -393,13 +434,55 @@ Deno.test("nextBirthdayDay: la siguiente fecha en la que cae el mes y el día", 
   assertEquals(nextBirthdayDay("1990-03-17", "2026-03-16"), "2026-03-17");
 });
 
-Deno.test("nextBirthdayDay: un 29 de febrero cae en el próximo año bisiesto", () => {
-  // 2026 y 2027 no son bisiestos, así que el 29/02 solo existe en 2028.
-  assertEquals(nextBirthdayDay("1992-02-29", "2026-03-16"), "2028-02-29");
-  // Y si ya estamos en un año bisiesto, ese mismo año.
+Deno.test("nextBirthdayDay: un 29 de febrero cae el 1 de marzo si el año no lo tiene", () => {
+  // La convención que decide el usuario: "la próxima vez que aparece esa fecha en el
+  // calendario", que es el 1 de marzo. Es la que ya usa la app con
+  // `new Date(2026, 1, 29)`, y por eso el aviso del cron y el push de confirmación
+  // dicen lo mismo y caen el mismo día. Antes esta función saltaba al próximo año
+  // bisiesto (2028) mientras la app agendaba el 1 de marzo de 2027.
+  assertEquals(nextBirthdayDay("1992-02-29", "2026-06-20"), "2027-03-01");
+  // Antes del 1 de marzo todavía no ha llegado.
+  assertEquals(nextBirthdayDay("1992-02-29", "2026-02-28"), "2026-03-01");
+  // El 28 exacto: el día anterior, el 1 de marzo es mañana y por tanto el próximo.
+  assertEquals(nextBirthdayDay("1992-02-29", "2026-03-01"), "2026-03-01");
+  // Pasado el 1 de marzo, el siguiente es el del año que viene.
+  assertEquals(nextBirthdayDay("1992-02-29", "2026-03-02"), "2027-03-01");
+  // En un año bisiesto el día sí existe, y no se mueve.
   assertEquals(nextBirthdayDay("1992-02-29", "2028-01-05"), "2028-02-29");
-  // Un 29 de febrero ya pasado en un bisiesto salta cuatro años.
-  assertEquals(nextBirthdayDay("1992-02-29", "2028-03-16"), "2032-02-29");
+  assertEquals(nextBirthdayDay("1992-02-29", "2028-02-28"), "2028-02-29");
+  assertEquals(nextBirthdayDay("1992-02-29", "2028-02-29"), "2028-02-29");
+  // Y en un bisiesto ya pasado, salta al 1 de marzo del año siguiente.
+  assertEquals(nextBirthdayDay("1992-02-29", "2028-03-01"), "2029-03-01");
+});
+
+Deno.test("nextBirthdayDay: una fecha que no es 29/02 no se mueve", () => {
+  // El caso normal no puede cambiar con el arreglo del 29 de febrero.
+  assertEquals(nextBirthdayDay("1990-10-05", "2026-03-16"), "2026-10-05");
+  assertEquals(nextBirthdayDay("1990-03-01", "2026-02-28"), "2026-03-01");
+  assertEquals(nextBirthdayDay("1990-12-31", "2026-12-31"), "2026-12-31");
+  assertEquals(nextBirthdayDay("1990-01-01", "2026-12-31"), "2027-01-01");
+});
+
+Deno.test("nextBirthdayDay: nunca devuelve una fecha pasada", () => {
+  // Se barre un día de cada mes entre 2024 y 2032 (con bisiestos y centuries
+  // dentro) para las tres formas que importan: un 29/02, un 1 de marzo y una fecha
+  // normal. La comparación de cadenas de "YYYY-MM-DD" ordena como lo cronológico,
+  // así que esto ata que la función no pueda quedarse atrás ni un día.
+  const nacimientos = ["1992-02-29", "1992-03-01", "1992-05-17"];
+  for (let year = 2024; year <= 2032; year++) {
+    for (let month = 1; month <= 12; month++) {
+      for (const dia of [1, 15, 28]) {
+        const hoy = `${year}-${String(month).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+        for (const nacimiento of nacimientos) {
+          const siguiente = nextBirthdayDay(nacimiento, hoy);
+          assert(siguiente !== null, `${nacimiento} desde ${hoy}`);
+          assert(siguiente >= hoy, `${nacimiento} desde ${hoy} devolvio ${siguiente}`);
+          // Y nunca se aleja más de un año: la normalización solo salta de marzo.
+          assert(siguiente <= addDays(hoy, 366), `${nacimiento} desde ${hoy} devolvio ${siguiente}`);
+        }
+      }
+    }
+  }
 });
 
 Deno.test("nextBirthdayDay: una fecha que no existe no inventa un cumpleaños", () => {
@@ -411,6 +494,17 @@ Deno.test("nextBirthdayDay: una fecha que no existe no inventa un cumpleaños", 
   assertEquals(nextBirthdayDay("1990-13-05", "2026-03-16"), null);
   assertEquals(nextBirthdayDay("1990-10", "2026-03-16"), null);
   assertEquals(nextBirthdayDay("1990-10-05", "16-03-2026"), null);
+  // Un 30 de febrero no existe en ningún año. Normalizarlo al 1 o al 2 de marzo
+  // inventaría un cumpleaños que la app tampoco enseña: su `safeDate` descarta la
+  // fila entera.
+  assertEquals(nextBirthdayDay("1990-02-30", "2026-03-16"), null);
+  assertEquals(nextBirthdayDay("1990-04-31", "2026-03-16"), null);
+  // Un 29 de febrero en un año que no lo tiene tampoco: la app no puede mostrarlo,
+  // así que esta Edge tampoco inventa la fecha.
+  assertEquals(nextBirthdayDay("1991-02-29", "2026-03-16"), null);
+  assertEquals(nextBirthdayDay("1900-02-29", "2026-03-16"), null);
+  // El mismo contacto en un año bisiesto sí vale: es la fila buena.
+  assertEquals(nextBirthdayDay("1992-02-29", "2026-03-16"), "2027-03-01");
 });
 
 Deno.test("isValidTimeZone: solo pasa lo que Intl entiende", () => {
@@ -645,13 +739,12 @@ Deno.test("nowDedupeKey no puede coincidir con la clave del cron", () => {
   // Se calculan las dos claves a la vez para el mismo evento, no solo se asserta
   // el prefijo: es la colisión concreta la que importa, y una clave podría llevar
   // el prefijo y aun así chocar.
-  const hoy = "2026-03-16";
   for (const type of ["appointment", "birthday"] as const) {
     for (const refId of ["a1", "c1"]) {
       for (const slot of ["day-before", "same-day"] as const) {
         for (const localDay of ["2026-03-16", "2026-03-17", "2026-10-05"]) {
           const cron = dedupeKey({ type, refId, slot, localDay, title: "t", body: "b", url: "/" });
-          const ahora = nowDedupeKey({ type, refId, title: "t", body: "b", url: "/" }, hoy);
+          const ahora = nowDedupeKey(USUARIO, BUCKET);
           assert(cron !== ahora, `colision: ${type} ${refId} ${slot} ${localDay}`);
         }
       }
@@ -659,12 +752,16 @@ Deno.test("nowDedupeKey no puede coincidir con la clave del cron", () => {
   }
 });
 
-Deno.test("nowDedupeKey está acotada al día local", () => {
-  // Un doble toque el mismo día no debe notificar dos veces, pero sí debe poder
-  // volver a avisar al día siguiente.
-  const dispatch = { type: "birthday" as const, refId: "c1", title: "t", body: "b", url: "/" };
-  assertEquals(nowDedupeKey(dispatch, "2026-03-16"), "now:birthday:c1:2026-03-16");
-  assert(nowDedupeKey(dispatch, "2026-03-16") !== nowDedupeKey(dispatch, "2026-03-17"));
+Deno.test("nowDedupeKey está acotada al bucket y al usuario", () => {
+  // El bucket es lo que hace de enfriamiento, y va por usuario: lo que hay que
+  // impedir es el bucle de peticiones, no dos avisos del mismo evento.
+  assertEquals(nowDedupeKey("u1", 29_000_000), "now:u1:29000000");
+  // Mismo bucket, misma clave: el `23505` del segundo intento es lo que corta la
+  // vuelta siguiente.
+  assertEquals(nowDedupeKey("u1", 29_000_000), nowDedupeKey("u1", 29_000_000));
+  assert(nowDedupeKey("u1", 29_000_000) !== nowDedupeKey("u1", 29_000_001));
+  // Dos cuentas distintas no se estorban: el enfriamiento es por usuario.
+  assert(nowDedupeKey("u1", 29_000_000) !== nowDedupeKey("u2", 29_000_000));
   // Y cabe en el `check` de la columna (char_length <= 200).
-  assert(nowDedupeKey(dispatch, "2026-03-16").length <= 200);
+  assert(nowDedupeKey(USUARIO, BUCKET).length <= 200);
 });

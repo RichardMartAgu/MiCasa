@@ -357,6 +357,14 @@ export function buildAppointmentDispatches(
  * Recordatorios de cumpleaños. Se compara el mes y el día del cumpleaños con el día
  * local del evento, igual que el día local de una cita, de modo que ambos
  * comparten la misma noción de "mañana" y "hoy".
+ *
+ * La comparación va por `dayInYear` y no por una igualdad de mes-día, y esa es la
+ * diferencia que hace que los cumpleaños del 29 de febrero se avisen. Comparando
+ * mes-día, la fecha 02-29 no llega a existir como día real en un año que no es
+ * bisiesto y el aviso no salía nunca; normalizando, esos cumpleaños caen el 1 de
+ * marzo, que es el día que les toca. Es un cambio de comportamiento deliberado:
+ * antes de esto, un contacto nacido el 29/02 no recibía ningún aviso en los años
+ * no bisiestos, y con esto sí. La misma convención usa la app y `nextBirthdayDay`.
  */
 export function buildBirthdayDispatches(
   contacts: ContactRow[],
@@ -371,10 +379,10 @@ export function buildBirthdayDispatches(
   for (const contact of contacts) {
     if (!contact.birth_date) continue;
     const monthDay = contact.birth_date.slice(5, 10);
-    if (!/^\d{2}-\d{2}$/.test(monthDay)) continue;
+    if (!isMonthDay(monthDay)) continue;
 
     for (const candidate of candidatesFor(today, choice)) {
-      if (candidate.eventDay.slice(5) !== monthDay) continue;
+      if (dayInYear(Number(candidate.eventDay.slice(0, 4)), monthDay) !== candidate.eventDay) continue;
 
       const fireAt = nineAmUtc(candidate.fireDay, context.timeZone);
       if (!fireAt || !withinWindow(fireAt, context.window)) continue;
@@ -480,32 +488,69 @@ export function formatMonthDay(day: string): string {
   return `${Number(day.slice(8, 10))} de ${name}`;
 }
 
+/** "2026-03-01" a partir de un `Date` en UTC. */
+function toIsoDay(date: Date): string {
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${String(date.getUTCFullYear()).padStart(4, "0")}-${month}-${day}`;
+}
+
 /**
- * La siguiente fecha (YYYY-MM-DD) en la que cae el mes y día de `birthDate`, a
- * partir de `today` incluida.
+ * La fecha que ocupa un mes-día en el calendario de `year`, o sea con la
+ * normalización de `Date`: el 29 de febrero sigue siendo el 29 en un año bisiesto y
+ * cae el 1 de marzo en los que no lo son.
  *
- * Un 29 de febrero solo existe en años bisiestos: `Date.UTC` normaliza el 29/02 al
- * 1/03 en un año que no lo tiene, y esa vuelta de tuerca delata el año inválido, así
- * que se salta al siguiente año bisiesto. Es la misma noción de "cumpleaños" que
- * usa `buildBirthdayDispatches` (que compara mes y día), y por eso las dos cosas
- * caen el mismo año o ninguna.
+ * Esa normalización ES la convención, no un accidente: es lo mismo que hace la app
+ * con `new Date(año, 1, 29)`, así que un 29/02 avisa el 1 de marzo en vez de
+ * desaparecer hasta el siguiente año bisiesto. Antes esta Edge saltaba al próximo
+ * bisiesto (2028) y la app agendaba el 1 de marzo de 2027: el push de confirmación
+ * decía una cosa y el aviso de verdad salía otro día, o nunca.
+ *
+ * El año se fija con `setUTCFullYear` y no con el argumento de `Date.UTC` porque
+ * ese argumento interpreta los años de dos cifras como 19xx: un año 0095 salía
+ * 1995, que es un cumpleaños inventado a 1900 años vista.
+ */
+function dayInYear(year: number, monthDay: string): string {
+  const probe = new Date(Date.UTC(2000, Number(monthDay.slice(0, 2)) - 1, Number(monthDay.slice(3, 5))));
+  probe.setUTCFullYear(year);
+  return toIsoDay(probe);
+}
+
+/** ¿El mes-día tiene forma de mes-día y cabe en un mes? No comprueba el año. */
+function isMonthDay(monthDay: string): boolean {
+  if (!/^\d{2}-\d{2}$/.test(monthDay)) return false;
+  const month = Number(monthDay.slice(0, 2));
+  const day = Number(monthDay.slice(3, 5));
+  return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
+/**
+ * La siguiente fecha (YYYY-MM-DD) en la que se cumple el mes y día de `birthDate`,
+ * a partir de `today` incluida.
+ *
+ * Con la normalización de `dayInYear`, un 29 de febrero se cumple el 1 de marzo de
+ * los años que no lo tienen, que es la fecha que usa la app (ver
+ * `src/lib/birthdays.ts`). Solo se prueban este año y el siguiente porque la
+ * normalización nunca mueve la fecha hacia atrás de enero: con eso basta, y así es
+ * imposible devolver algo pasado por haber buscado un año de más.
+ *
+ * La fecha de nacimiento sí tiene que existir en su propio año: un 30 de febrero no
+ * existe en ninguno y un 29/02 de un año que no lo tiene no es un cumpleaños que la
+ * app pueda enseñar (`safeDate` lo descarta). Normalizar en silencio esos casos
+ * inventaría una fecha que el cliente nunca muestra.
  */
 export function nextBirthdayDay(birthDate: string, today: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) return null;
   const monthDay = birthDate.slice(5, 10);
-  if (!/^\d{2}-\d{2}$/.test(monthDay)) return null;
+  if (!isMonthDay(monthDay)) return null;
+  if (dayInYear(Number(birthDate.slice(0, 4)), monthDay) !== birthDate) return null;
 
-  const month = Number(monthDay.slice(0, 2)) - 1;
-  const day = Number(monthDay.slice(3, 5));
   const startYear = Number(today.slice(0, 4));
 
-  // 8 años cubren cualquier ciclo bisiesto, incluidos los que saltan un
-  // centenario (2096 -> 2104).
-  for (let year = startYear; year <= startYear + 8; year++) {
-    const probe = new Date(Date.UTC(year, month, day));
-    if (probe.getUTCMonth() !== month || probe.getUTCDate() !== day) continue;
-    const candidate = `${String(year).padStart(4, "0")}-${monthDay}`;
+  for (let year = startYear; year <= startYear + 1; year++) {
+    const candidate = dayInYear(year, monthDay);
+    // Cadenas "YYYY-MM-DD": ordenan igual que cronológicamente.
     if (candidate >= today) return candidate;
   }
   return null;
@@ -587,11 +632,14 @@ export function buildNowBirthdayDispatch(input: {
  * confirmación se comería el recordatorio, y el usuario se quedaría sin el aviso
  * que le importa a cambio del que solo le confirma lo que acaba de hacer.
  *
- * El día local cierra la clave para que un doble toque no notifique dos veces,
- * y para acotar cuántas filas puede crear un usuario.
+ * El bucket va por USUARIO y no por referencia, y es lo que frena el bucle: lo que
+ * hay que impedir son peticiones repetidas sin nada que entregar (cada una cuesta
+ * una validación de sesión, dos llamadas a Vault y varias consultas), no dos avisos
+ * del mismo evento. `bucket` viene del reloj del llamador, no de aquí, para que este
+ * módulo siga sin leer la hora.
  */
-export function nowDedupeKey(dispatch: NowDispatch, localDay: string): string {
-  return `now:${dispatch.type}:${dispatch.refId}:${localDay}`;
+export function nowDedupeKey(userId: string, bucket: number): string {
+  return `now:${userId}:${bucket}`;
 }
 
 /** Fin de la ventana de consulta de citas: hoy más el horizonte. */

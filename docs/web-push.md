@@ -43,7 +43,8 @@ El service worker (`sw-src.js`) solo precachea el shell y atiende `push` y `noti
 | `supabase/functions/send-web-push/index.ts` | Arranque de la función: `Deno.serve` y las tipografías del runtime. |
 | `supabase/functions/send-web-push/handler.ts` | La Edge Function: autenticación, consultas, envío, mantenimiento de suscripciones y CORS. |
 | `supabase/functions/send-web-push/reminders.ts` | Lógica pura de recordatorios (fechas, zonas horarias, texto) y de las confirmaciones del modo `now`. Sin I/O: **no importa nada de `@supabase/supabase-js`**. |
-| `supabase/functions/send-web-push/reminders.test.ts` | 43 tests con `deno test`. |
+| `supabase/functions/send-web-push/reminders.test.ts` | 49 tests con `deno test`. |
+| `supabase/functions/send-web-push/handler.test.ts` | 8 tests con `deno test`, contra un doble de base de datos: enfriamientos, fallos de lectura y poda de `push_log`. |
 | `supabase/functions/send-web-push/cors.ts` | Lógica pura de CORS: allowlist de orígenes y cabeceras. Sin I/O ni `Deno.env`. |
 | `supabase/functions/send-web-push/cors.test.ts` | 19 tests con `deno test`, 4 de ellos contra el handler real. |
 | `supabase/config.toml` | Declara `verify_jwt = false` solo para `send-web-push`. |
@@ -197,7 +198,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X OPTIONS \
 | otro proyecto / otro dominio / sufijo montado | `403` |
 | `POST` sin `Origin` (cron) | `401` |
 
-Y los tests: `npx -y deno test --allow-env --allow-read --node-modules-dir=auto supabase/functions/send-web-push/` → 54/54.
+Y los tests: `npx -y deno test --allow-env --allow-read --node-modules-dir=none supabase/functions/send-web-push/` → 83/83 (49 de recordatorios + 19 de CORS + 8 del handler + 7 de suscripciones inservibles).
 
 ## Cómo correr los tests de la función
 
@@ -222,7 +223,7 @@ Cómo está protegido:
 
 - Se autentica con el **JWT de la sesión** de quien lo pulsa, no con el secreto del dispatcher. La función lo valida con `db.auth.getUser(token)` y solo busca suscripciones de ese `user_id`.
 - El contenido es fijo. No hay forma de usarlo para avisar a otra cuenta ni de elegir el texto.
-- Enfriamiento de 5 minutos, apoyado en la clave única de `push_log` (`test:<userId>:<bucket>`) para que funcione entre réplicas de la función. Si no queda ninguna suscripción activa se libera la reserva, para que un reintento no espere.
+- Enfriamiento de 5 minutos, apoyado en la clave única de `push_log` (`test:<userId>:<bucket>`) para que funcione entre réplicas de la función. Si la lista de suscripciones se lee bien y está vacía se libera la reserva, para que un reintento no espere; si no se pudo ni leer, la reserva se queda, porque decir "no tienes suscripciones" sería mentira.
 - `renotify: true` a diferencia de los recordatorios: dos pruebas seguidas deben sonar, que es justo lo que se quiere comprobar.
 - Solo se muestra en web y cuando el navegador soporta push.
 - Necesita CORS: es una llamada entre orígenes con cabecera `Authorization`, y sin CORS el navegador no la deja salir. Ver la sección **CORS**; desplegado en producción desde la v11 (2026-09-29).
@@ -235,7 +236,8 @@ La app llama a este modo al acabar de crear una cita o un contacto con fecha, y 
 
 **No es el recordatorio.** El recordatorio lo sigue mandando el cron, a las 09:00 locales del día anterior o del mismo día. Esto solo confirma que el evento quedó anotado. La distinción no es cosmética, es lo que sostiene el diseño:
 
-- **La clave de idempotencia va en su propio espacio de nombres**: `now:<tipo>:<refId>:<día local>`, contra `${tipo}:${refId}:${slot>:<día local>}` del cron. Con la clave del cron, la confirmación insertaría la fila que el cron necesita para el recordatorio de verdad, el cron vería el `23505` y se saltaría el aviso: el usuario se quedaría **sin el recordatorio** a cambio de un "ya está avisado". Hay un test que calcula las dos claves a la vez para el mismo evento y asserta que no chocan.
+- **La clave de idempotencia va en su propio espacio de nombres**: `now:<userId>:<bucket de un minuto>`, contra `${tipo}:${refId}:<slot>:<día local>` del cron. Con la clave del cron, la confirmación insertaría la fila que el cron necesita para el recordatorio de verdad, el cron vería el `23505` y se saltaría el aviso: el usuario se quedaría **sin el recordatorio** a cambio de un "ya está avisado". Hay un test que calcula las dos claves a la vez para el mismo evento y asserta que no chocan.
+- **El bucket va por usuario, no por referencia**, y dura un minuto. Lo que hay que impedir es que alguien con sesión repita la llamada en bucle sin tener nada que recibir: cada vuelta cuesta una validación de sesión, dos llamadas a Vault y las lecturas de `push_preferences`, `casa_members`, contactos y suscripciones. Un minuto no estorba al uso real (crear un cumpleaños y corregir la casa) y sigue parando el bucle. Como la reserva **no se suelta** aunque nadie reciba nada, el segundo intento del mismo minuto recibe el `23505` y responde `ok` con `skipped` y `retryInSeconds`: el efecto pedido está cubierto, o no se puede cumplir y se reintenta en el minuto siguiente.
 - **El texto dice la fecha de verdad**, no "mañana" ni "hoy". El texto del cron (`Cita mañana: Dentista`) habría sido mentira con tres meses de antelación. Para las citas es `Es el 20 de marzo a las 11:00.` y para los cumpleaños `Es el 5 de octubre.`, seguidos de `Te avisaremos el día antes y el mismo día.` según la preferencia.
 
 Por eso un cumpleaños **fuera de la ventana de día antes / mismo día también se confirma**. La primera versión exigía que el cumpleaños cayera hoy o mañana, así que un contacto creado con un cumpleaños dentro de tres meses no enviaba nada: la función no hacía nada en el caso normal de uso.
@@ -245,11 +247,29 @@ Cómo está protegido:
 - Se autentica con el **JWT de la sesión**, igual que `?mode=test`, y vive **antes** del gate del secreto del cron. Con el gate delante respondería `401` siempre, que es el bug que mató al botón de Ajustes.
 - La fila se lee con el **mismo filtro de visibilidad que el dispatcher**: miembro de la casa, y para citas además el autor. Un exmiembro conserva sus filas en `appointments` (solo se le borra de `casa_members`), así que sin ese filtro seguiría recibiendo los títulos y horas de una casa a la que ya no pertenece. En los cumpleaños el filtro es `casa_id IN (casas del usuario)`, **no** `user_id`: `contacts.user_id` es `on delete set null` y filtrar por él rompía el caso normal de una casa compartida.
 - **Respeta el consentimiento**: con el interruptor maestro apagado responde `403` y no envía, y si la preferencia no se puede leer falla cerrado. Confirmar que quedó avisado también es un push, así que no es una excepción al interruptor.
-- Un fallo al leer las preferencias es `500`, y "no hay recordatorio que confirmar" es `404`: no es lo mismo "tu cumpleaños no tiene aviso" que "hemos tenido un fallo".
-- La reserva de `push_log` se suelta si no se entregó a nadie, y también si el envío lanza; un error de base de datos que no sea `23505` aborta **sin** enviar, que es el duplicado que `push_log` existe para evitar.
+- Un fallo al leer las preferencias es `500`, y "no hay recordatorio que confirmar" es `404`: no es lo mismo "tu cumpleaños no tiene aviso" que "hemos tenido un fallo". Lo mismo con las casas (`500` si no se pudo leer `casa_members`, `404` si de verdad no tiene ninguna) y con las suscripciones (`500` si la lectura falló, `404` si la lista salió vacía). Confundir un fallo con un vacío hacía que la función afirmara algo falso en la cara y, en el caso de las suscripciones, que soltara la reserva.
+- La reserva de `push_log` **no se suelta** si no se entregó a nadie: es ella la que hace de enfriamiento y soltarla era lo que dejaba el bucle abierto. Solo se suelta si el envío lanza una excepción inesperada, porque ahí no llegó a haber intento. Un error de base de datos que no sea `23505` aborta **sin** enviar, que es el duplicado que `push_log` existe para evitar.
 - El `timezone` llega del cliente y se valida con `isValidTimeZone` antes de usarse; si no es una zona que `Intl` entienda, se usa la de la suscripción activa del usuario y, en último caso, `Europe/Madrid`.
 
 `src/lib/web-push.ts` la envuelve en `sendNowPush(type, id)`, que **no** acepta `slot`: el servidor sabe lo que quedó programado desde la fila y desde `push_preferences`, y un slot elegido por el cliente podría mentir sobre eso.
+
+## Los cumpleaños del 29 de febrero
+
+Un 29 de febrero solo existe en años bisiestos, así que hay que decidir **qué día se avisa**. La convención es **"la próxima vez que esa fecha aparece en el calendario"**: el 1 de marzo en los años que no son bisiestos, y el 29 de febrero en los que lo son. Es la que ya usa la app (`new Date(2026, 1, 29)` normaliza al 1 de marzo) y la que implementan `nextBirthdayDay` y `buildBirthdayDispatches` con la misma normalización.
+
+Antes esta Edge hacía lo contrario: `nextBirthdayDay` saltaba al próximo año bisiesto (2028) y el recordatorio comparaba mes-día, con lo que la fecha 02-29 no llegaba a existir como día real y **no se avisaba nunca** en un año no bisiesto. El efecto era que el push de confirmación decía "Es el 1 de marzo" mientras el aviso de verdad se mandaba en 2028, o no se mandaba.
+
+Con la normalización, esos cumpleaños **empiezan a avisarse el 1 de marzo**. Es un cambio de comportamiento deliberado, no una regresión. Dos detalles de la implementación:
+
+- La fecha de nacimiento tiene que existir en su propio año. Un 30 de febrero, o un 29/02 de un año no bisiesto, no son cumpleaños que la app pueda enseñar (`safeDate` los descarta), así que esta Edge tampoco inventa la fecha: devuelve `null` y el llamador responde 404.
+- Los días en que el 29/02 sí cae, y el 1 de marzo de un año bisiesto, no cambian: en 2028 el cumpleaños es el 28 y el 1 de marzo ya no avisa de nada.
+
+## La poda de `push_log`
+
+`push_log` guarda una fila por aviso enviado y se poda por antigüedad (`LOG_RETENTION_DAYS`, 30 días) **al principio de `runDispatch`, antes de leer nada**. Estaba al final, después del retorno temprano de "no hay nada que repartir", y como `dispatches` solo existe dentro de la ventana de catchup de 3 h alrededor de las 09:00 locales, la poda se ejecutaba casi siempre a la carrera: fuera de esa ventana la tabla no se podaba nunca. Y el modo `now` escribe filas `now:*` a cualquier hora del día, con lo que crecía sin techo justo en las horas en las que el cron no tenía nada que repartir.
+
+Moverla antes es seguro: nadie lee `push_log` para diagnosticar. En el repo los únicos accesos a esa tabla son `insert`, `delete` y `update`.
+
 
 ## Qué falta
 
