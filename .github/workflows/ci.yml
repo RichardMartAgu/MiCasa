@@ -95,27 +95,36 @@ jobs:
         with:
           deno-version: v2.9.6
 
-      # `--frozen` para los dos. Sin él, si al lock le falta una entrada, Deno
+# `--frozen` para los dos. Sin él, si al lock le falta una entrada, Deno
       # la resuelve contra el registro y la escribe: el código se ejecuta
       # **antes** de que el paso del lock avise. Con `--frozen` falla ahí mismo,
-      # antes de ejecutar nada. Comprobado: sin lock, sin `--frozen` sale 0 y
-      # crea el lock; con `--frozen` sale 1.
+      # antes de ejecutar nada.
+      #
+      # Los dos pasos corren **desde dentro de la carpeta**, y no porque sea más
+      # cómodo. Deno sube desde el directorio actual buscando el raíz del
+      # workspace, y en la raíz del repo hay un `package.json` con todo Expo: sin
+      # esto quería reconciliar el árbol entero y `--frozen` fallaba siempre en
+      # un checkout limpio, porque el lock de la raíz no está commiteado. Es lo
+      # que pasó en el primer push de este PR, y no se ve en local si tienes ese
+      # lock tirado por ahí.
       - name: Typecheck de la Edge Function
-        run: deno check --frozen --node-modules-dir=none supabase/functions/send-web-push/
+        working-directory: supabase/functions/send-web-push
+        run: deno check --frozen --node-modules-dir=none .
 
-      # `--allow-env` no lo pide ningún test: los 34 Injectan su propio `ENV`.
+      # `--allow-env` no lo pide ningún test: los 34 inyectan su propio `ENV`.
       # Lo pide `npm:web-push`, que lee `process.env` al importarse, así que sin
       # este permiso importar el paquete revienta. Es decir, el permiso ata la
       # suite a lo que haga ese paquete con el entorno, no a lo que haga MiCasa.
       # Aquí no hay secretos: el único `env:` del workflow lleva `vars.*`.
       #
-      # `--allow-read` acotado a la carpeta: un test lee el fuente de `handler.ts`
-      # y sin `=` el permiso sería todo el disco del runner.
+      # `--allow-read` acotado a `.`, que es esta carpeta: un test lee el fuente
+      # de `handler.ts` y sin `=` el permiso sería todo el disco del runner.
       #
       # Sin `--allow-net` a propósito, y es una barrera: un test que intentara
       # hablar con Supabase falla en vez de exfiltrar.
       - name: Test de la Edge Function
-        run: deno test --frozen --allow-env --allow-read=supabase/functions/send-web-push --node-modules-dir=none supabase/functions/send-web-push/
+        working-directory: supabase/functions/send-web-push
+        run: deno test --frozen --allow-env --allow-read=. --node-modules-dir=none .
 
       # El lock de Deno de esta carpeta está commiteado, y este paso vigila que
       # siga estándolo y sin cambios.
