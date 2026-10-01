@@ -1108,3 +1108,84 @@ export async function sendTestPush(): Promise<TestPushResult> {
   }
   return { ok: false, error: typeof body.error === 'string' ? body.error : 'error inesperado' };
 }
+
+/**
+ * Confirma que una cita o un cumpleaños recién creado queda avisado, con un aviso
+ * inmediato y aparte del recordatorio que manda el cron.
+ *
+ * El servidor compone el texto y sabe qué se ha programado (lo lee de la fila y de
+ * `push_preferences`), así que aquí no se manda ni el texto ni el slot: mandarlos
+ * desde el cliente dejaría que la confirmación dijera una cosa y el recordatorio
+ * otra.
+ *
+ * Es un canal distinto del de las notificaciones locales: en nativo no hay
+ * suscripciones de Web Push, y en web las notificaciones locales no existen. Por
+ * eso sale temprano en nativo, y por eso no se pide permiso ni se mira
+ * `areNotificationsEnabled()`: ambas cosas serían ciertas solo en el sitio donde
+ * esta función no hace nada.
+ *
+ * Devuelve `{ ok: false }` sin lanzar en cuanto algo no cuadra, y quien la llama
+ * tiene que ignorar el resultado: el registro se guardó igual, y un push que no
+ * sale no es motivo para enseñarle un error a alguien que ya ha hecho lo que quería.
+ *
+ * `retryInSeconds` es parte del contrato y se rellena en todos los caminos en los
+ * que no salió ningún push, no solo en el 404 de "sin suscripciones": también viaja
+ * en el 200 de la petición que se come el enfriamiento, porque para quien reintenta
+ * los dos son el mismo problema. Los dos call sites actuales lo ignoran (los dos
+ * hacen fire-and-forget), pero el contrato queda completo para que el siguiente que
+ * quiera decir "espera N segundos" no tenga que adivinarlo ni mirar el servidor.
+ */
+export async function sendNowPush(
+  type: 'appointment' | 'birthday',
+  id: string,
+): Promise<{ ok: boolean; delivered?: number; error?: string; retryInSeconds?: number }> {
+  if (Platform.OS !== 'web') return { ok: false, error: 'solo funciona en web' };
+
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) return { ok: false, error: 'sesión no válida' };
+
+  const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+  const params = new URLSearchParams({ mode: 'now', type, id, timezone: detectTimeZone() });
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/functions/v1/send-web-push?${params.toString()}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+    });
+  } catch {
+    return { ok: false, error: 'sin conexión' };
+  }
+
+  // El cuerpo puede no ser JSON: un 502 del proxy o una caída a mitad de camino.
+  // Sin este try, un `json()` que revienta convertía un problema de red en una
+  // excepción sin capturar, y en una llamada `void` eso es un rechazo mudo.
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await response.json()) as Record<string, unknown>;
+  } catch {
+    return { ok: false, error: 'respuesta ilegible' };
+  }
+
+  // El cuerpo dice las dos cosas que importan para reintentar: por qué no salió
+  // nada y cuánto queda. Se leen juntas y fuera del `!response.ok`, porque el
+  // servidor responde 200 también cuando la petición se come el enfriamiento
+  // (`skipped`): tratarlo como un error de red perdería el motivo y la espera. El
+  // status sigue mandando en la éxito, por si un proxy devolviera un cuerpo ajeno
+  // con `ok: true`.
+  const error = typeof body.error === 'string' ? body.error : 'error inesperado';
+  const retryInSeconds =
+    typeof body.retryInSeconds === 'number' ? body.retryInSeconds : undefined;
+
+  if (response.ok && body.ok === true) {
+    return {
+      ok: true,
+      delivered: typeof body.delivered === 'number' ? body.delivered : 0,
+    };
+  }
+  return { ok: false, error, retryInSeconds };
+}

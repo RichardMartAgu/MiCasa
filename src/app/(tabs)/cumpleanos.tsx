@@ -37,9 +37,11 @@ import { syncBirthdays } from '@/lib/calendar-sync';
 import { confirmDialog } from '@/lib/confirm';
 import { safeDate, toISODate } from '@/lib/date';
 import { filterContacts } from '@/lib/filter';
-import { getBirthdayChoice, scheduleBirthdays } from '@/lib/notifications';
+import { getBirthdayChoice, scheduleBirthday, scheduleBirthdays } from '@/lib/notifications';
+import type { ReminderChoice } from '@/lib/notification-schedule';
 import type { Contact } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
+import { sendNowPush } from '@/lib/web-push';
 
 export default function CumpleanosScreen() {
   const { user } = useAuth();
@@ -129,6 +131,22 @@ export default function CumpleanosScreen() {
     }
   }
 
+  /**
+   * La preferencia de cumpleaños, y `"none"` si no se puede leer.
+   *
+   * Existe porque `handleSave` la necesita DESPUÉS de cerrar el modal: si la
+   * lectura fallara y la excepción se propagara, el usuario vería un error
+   * habiendo guardado correctamente, que es peor que no agendar nada. El sync por
+   * realtime reintenta la agenda igual.
+   */
+  async function getBirthdayChoiceSafely(): Promise<ReminderChoice> {
+    try {
+      return await getBirthdayChoice();
+    } catch {
+      return 'none';
+    }
+  }
+
   async function handleSave() {
     const nameCheck = validateTitle(name);
     const dateCheck = validateDate(toISODate(birthDate));
@@ -150,6 +168,11 @@ export default function CumpleanosScreen() {
     )
       return;
 
+    // Se guarda antes de limpiar el estado porque las dos ramas de guardado
+    // devuelven contratos distintos, y envolver el de edición para que se pareciera
+    // al de creación dejaba el resto del flujo decidiendo por un `data: undefined`
+    // inventado.
+    const editingId = editingContactId;
     setSaving(true);
     const input = {
       name,
@@ -157,9 +180,24 @@ export default function CumpleanosScreen() {
       relationship: relationship.trim() || null,
       phone: phone.trim() || null,
     };
-    const error = editingContactId
-      ? await updateContact(editingContactId, input)
-      : await addContact({ ...input, casa_id: currentCasa.id, user_id: user.id });
+
+    if (editingId) {
+      const error = await updateContact(editingId, input);
+      setSaving(false);
+      if (error) {
+        Alert.alert('Error', error.message);
+        return;
+      }
+      setName('');
+      setRelationship('');
+      setPhone('');
+      setEditingContactId(null);
+      setModalVisible(false);
+      void rescheduleBirthdays();
+      return;
+    }
+
+    const { error, data } = await addContact({ ...input, casa_id: currentCasa.id, user_id: user.id });
     setSaving(false);
     if (error) {
       Alert.alert('Error', error.message);
@@ -170,7 +208,21 @@ export default function CumpleanosScreen() {
     setPhone('');
     setEditingContactId(null);
     setModalVisible(false);
-    void rescheduleBirthdays();
+
+    // Contacto nuevo: se agenda solo el suyo en vez de reprogramar la lista entera.
+    // La lista de contactos llega por realtime y puede no incluirlo todavía, así que
+    // `rescheduleBirthdays()` en este momento se saltaría justo el que se acaba de
+    // añadir. En la edición da igual: el contacto ya estaba en la lista.
+    if (data) {
+      const choice = await getBirthdayChoiceSafely();
+      if (choice !== 'none') {
+        void scheduleBirthday(data, choice);
+        // Aviso de que ya queda avisado. Es un canal distinto del de las
+        // notificaciones locales y solo existe en web, y no puede fallar el
+        // guardado: el registro ya está y el cron avisará igual.
+        void sendNowPush('birthday', data.id).catch(() => {});
+      }
+    }
   }
 
   async function handleDelete(id: string) {

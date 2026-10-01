@@ -25,6 +25,7 @@ import {
   getActiveSubscription,
   getStoredBirthdayChoice,
   PERMISSION_TIMEOUT_MS,
+  sendNowPush,
   sendTestPush,
   syncPushPreferences,
   toSubscriptionRecord,
@@ -1497,6 +1498,230 @@ describe('sendTestPush: el contrato con la Edge Function', () => {
     stubFetch(async () => stubResponse({ ok: true, delivered: 'muchos' }));
 
     await expect(sendTestPush()).resolves.toEqual({ ok: true, delivered: 0 });
+  });
+});
+
+describe('sendNowPush: confirmar que una cita o un cumpleaños queda avisado', () => {
+  // Modelado sobre la suite de `sendTestPush`, que es el otro camino autenticado por
+  // sesión contra la misma Edge Function. La diferencia clave es que aquí NO se manda
+  // el texto ni el slot: el servidor compone el texto y lee de la fila y de
+  // `push_preferences` qué se ha programado, y un slot elegido por el cliente podría
+  // mentir sobre eso.
+  const originalFetch = global.fetch;
+  const originalOs = Platform.OS;
+  const originalUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  // Se fija aquí y no se lee del `.env`, que está gitignored y no existe en un
+  // clon recién hecho: un test que depende de un fichero local no falla donde
+  // toca, falla en la máquina de quien lo escribió.
+  const URL_BASE = 'https://proyecto.supabase.co';
+
+  beforeEach(() => {
+    Platform.OS = 'web';
+    process.env.EXPO_PUBLIC_SUPABASE_URL = URL_BASE;
+    (supabase.auth.getSession as jest.Mock).mockResolvedValue({
+      data: { session: { access_token: 'jwt' } },
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    Platform.OS = originalOs;
+    if (originalUrl === undefined) delete process.env.EXPO_PUBLIC_SUPABASE_URL;
+    else process.env.EXPO_PUBLIC_SUPABASE_URL = originalUrl;
+  });
+
+  function stubFetch(impl: () => Promise<unknown>) {
+    // Los `calls` se leen en las aserciones de esta suite, así que el tipo de
+    // argumentos no puede quedar en la tupla vacía que infiere `jest.fn(impl)`.
+    const fetchMock = jest.fn(impl) as unknown as jest.Mock<
+      Promise<unknown>,
+      [input: RequestInfo | URL, init?: RequestInit]
+    >;
+    global.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  function stubResponse(body: unknown, ok = true) {
+    return { ok, json: async () => body } as Response;
+  }
+
+  it('usa EXPO_PUBLIC_SUPABASE_URL y no VITE_', async () => {
+    // `VITE_SUPABASE_URL` no existe en este proyecto: habría sido `undefined`, y
+    // `new URL('/functions/v1/...', undefined)` revienta. La función no habría
+    // podido funcionar nunca.
+    const fetchMock = stubFetch(async () => stubResponse({ ok: true, delivered: 1 }));
+
+    await sendNowPush('birthday', 'c1');
+
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url.startsWith(URL_BASE)).toBe(true);
+    expect(url).not.toContain('undefined');
+  });
+
+  it('manda mode, type, id y timezone, y NO manda slot', async () => {
+    const fetchMock = stubFetch(async () => stubResponse({ ok: true, delivered: 1 }));
+
+    await sendNowPush('appointment', 'a1');
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname).toBe('/functions/v1/send-web-push');
+    expect(url.searchParams.get('mode')).toBe('now');
+    expect(url.searchParams.get('type')).toBe('appointment');
+    expect(url.searchParams.get('id')).toBe('a1');
+    // El servidor sabe qué se ha programado; un slot del cliente podría mentir.
+    expect(url.searchParams.has('slot')).toBe(false);
+    expect(url.searchParams.get('timezone')).toBeTruthy();
+  });
+
+  it('autentica con el JWT de la sesión', async () => {
+    const fetchMock = stubFetch(async () => stubResponse({ ok: true, delivered: 1 }));
+
+    await sendNowPush('birthday', 'c1');
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer jwt');
+  });
+
+  it('sin sesión no sale ni la petición', async () => {
+    (supabase.auth.getSession as jest.Mock).mockResolvedValue({ data: { session: null } });
+    const fetchMock = stubFetch(async () => stubResponse({ ok: true, delivered: 1 }));
+
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({
+      ok: false,
+      error: 'sesión no válida',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('en nativo no hace nada: ahí no hay suscripciones de Web Push', async () => {
+    // Las pantallas que llaman a esto corren en las dos plataformas, y en nativo el
+    // aviso va por `expo-notifications`. Salir sin hacer la llamada ahorra una
+    // petición por cada cita y cada cumpleaños que se crea en el móvil.
+    for (const os of ['ios', 'android'] as const) {
+      Platform.OS = os;
+      const fetchMock = stubFetch(async () => stubResponse({ ok: true, delivered: 1 }));
+
+      await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({
+        ok: false,
+        error: 'solo funciona en web',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it('devuelve cuántos navegadores lo han recibido', async () => {
+    stubFetch(async () => stubResponse({ ok: true, delivered: 2 }));
+
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({ ok: true, delivered: 2 });
+  });
+
+  it('propaga el motivo del servidor, que es lo que explica el fallo', async () => {
+    // "sin suscripciones activas" y "los avisos están apagados" son motivos que el
+    // servidor ha decidido, y no conviene sustituirlos por un genérico.
+    stubFetch(async () => stubResponse({ ok: false, error: 'sin suscripciones activas' }, false));
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({
+      ok: false,
+      error: 'sin suscripciones activas',
+    });
+
+    stubFetch(async () => stubResponse({ ok: false, error: 'los avisos estan apagados' }, false));
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({
+      ok: false,
+      error: 'los avisos estan apagados',
+    });
+  });
+
+  it('una respuesta ilegible no lanza, que en un void sería un rechazo mudo', async () => {
+    // Un 502 del proxy o una caída a mitad de camino. Sin este try, `json()` que
+    // revienta convertía un problema de red en una excepción sin capturar.
+    stubFetch(async () => ({ ok: true, json: async () => { throw new SyntaxError('no json'); } }));
+
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({
+      ok: false,
+      error: 'respuesta ilegible',
+    });
+  });
+
+  it('sin conexión se distingue de los otros fallos', async () => {
+    stubFetch(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({
+      ok: false,
+      error: 'sin conexión',
+    });
+  });
+
+  it('un cuerpo sin forma de error no rompe', async () => {
+    stubFetch(async () => stubResponse({}, false));
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({
+      ok: false,
+      error: 'error inesperado',
+    });
+
+    // Y con `ok: true` pero sin `ok` en el cuerpo, tampoco: el servidor puede
+    // responder 200 con algo que no sea un visto bueno.
+    stubFetch(async () => stubResponse({ entregado: 1 }));
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({
+      ok: false,
+      error: 'error inesperado',
+    });
+  });
+
+  it('un delivered que no es número cuenta cero', async () => {
+    stubFetch(async () => stubResponse({ ok: true, delivered: 'muchos' }));
+
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({ ok: true, delivered: 0 });
+  });
+
+  // Los tres de aquí son la razón por la que el parser lee `error` y
+  // `retryInSeconds` FUERA del `!response.ok`. Sin ellos, este bloque entero se
+  // puede borrar y la suite sigue en verde: se comprobó mutando el fichero.
+
+  it('el enfriamiento llega en un 200 y no se pierde por mirar solo el status', async () => {
+    // El servidor responde 200 también cuando la petición se come el enfriamiento
+    // (`skipped`). Si el motivo y la espera se leyeran solo dentro del
+    // `!response.ok`, aquí volvería 'error inesperado' sin segundos: quien
+    // reintenta no sabría ni por qué ni cuánto esperar.
+    stubFetch(async () =>
+      stubResponse(
+        { ok: false, skipped: true, error: 'ya se confirmo en este minuto', retryInSeconds: 42 },
+        true,
+      ),
+    );
+
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({
+      ok: false,
+      error: 'ya se confirmo en este minuto',
+      retryInSeconds: 42,
+    });
+  });
+
+  it('un 404 dice cuánto queda para reintentar, no solo que hay que esperar', async () => {
+    // El otro camino que trae `retryInSeconds`: nadie tiene suscripciones activas.
+    stubFetch(async () =>
+      stubResponse({ ok: false, error: 'sin suscripciones activas', retryInSeconds: 37 }, false),
+    );
+
+    await expect(sendNowPush('appointment', 'a1')).resolves.toEqual({
+      ok: false,
+      error: 'sin suscripciones activas',
+      retryInSeconds: 37,
+    });
+  });
+
+  it('unos segundos que no son número no se pasan como espera', async () => {
+    // `retryInSeconds` sin validar sería peor que no traerlo: quien lo leyera se
+    // saltaría una espera con un valor de otro tipo.
+    stubFetch(async () =>
+      stubResponse({ ok: false, error: 'sin suscripciones activas', retryInSeconds: 'mucho' }, false),
+    );
+
+    const result = await sendNowPush('birthday', 'c1');
+    expect(result).toEqual({ ok: false, error: 'sin suscripciones activas' });
+    expect(result.retryInSeconds).toBeUndefined();
   });
 });
 

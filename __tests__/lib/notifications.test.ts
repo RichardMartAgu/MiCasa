@@ -12,6 +12,7 @@ import {
   getBirthdayChoice,
   requestPermissions,
   scheduleAppointment,
+  scheduleBirthday,
   scheduleBirthdays,
   setBirthdayChoice,
   setNotificationsEnabled,
@@ -269,6 +270,117 @@ describe('scheduleBirthdays', () => {
     mockSchedule.mockClear();
     await scheduleBirthdays([contact], 'none');
     expect(mockCancel).toHaveBeenCalledTimes(2);
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it('se salta un contacto con fecha ilegible sin tumbar al resto de la lista', async () => {
+    // El `continue` de esta función. No es la misma rama que la de `scheduleBirthday`,
+    // que hace `return`: aquí una fecha inválida no puede dejar sin agendar a los
+    // demás contactos de la lista, que es justo lo que llega por realtime y por la
+    // edición. Un solo contacto bueno mezclado con uno malo, y el bueno se agenda.
+    const ilegible: Contact = { ...contact, id: 'otro', birth_date: 'no-es-una-fecha' };
+
+    await scheduleBirthdays([ilegible, contact], 'both');
+
+    // Solo los dos avisos del contacto bueno, ninguno del otro.
+    expect(mockSchedule).toHaveBeenCalledTimes(2);
+    const map = JSON.parse((await AsyncStorage.getItem('notification_map_v1')) ?? '{}');
+    expect(map['birthday:c1:day-before'].identifiers).toEqual(['notif-id-1']);
+    expect(map['birthday:c1:same-day'].identifiers).toEqual(['notif-id-2']);
+    expect(map['birthday:otro:day-before']).toBeUndefined();
+    expect(map['birthday:otro:same-day']).toBeUndefined();
+  });
+});
+
+describe('scheduleBirthday', () => {
+  // Se llama al crear un contacto, en vez de `scheduleBirthdays` con la lista
+  // entera: la lista llega por realtime y en el momento del guardado puede no
+  // incluir el contacto nuevo, así que reprogramarla toda se saltaría justo ese.
+  it('agenda solo ese contacto y no toca los avisos de los demás', async () => {
+    await scheduleBirthdays([{ ...contact, id: 'otro' }], 'both');
+    mockSchedule.mockClear();
+    mockCancel.mockClear();
+
+    await scheduleBirthday(contact, 'both');
+
+    expect(mockSchedule).toHaveBeenCalledTimes(2);
+    // Solo se reagenda este contacto, y los avisos del otro se quedan como estaban
+    // con sus mismos identificadores: es lo que la distingue de `scheduleBirthdays`,
+    // que cancela y rearma la lista entera. Por eso es la que se puede llamar al
+    // crear un contacto sin que se caigan los avisos de los demás.
+    const map = JSON.parse((await AsyncStorage.getItem('notification_map_v1')) ?? '{}');
+    expect(map['birthday:c1:day-before'].identifiers).toEqual(['notif-id-3']);
+    expect(map['birthday:c1:same-day'].identifiers).toEqual(['notif-id-4']);
+    expect(map['birthday:otro:day-before'].identifiers).toEqual(['notif-id-1']);
+    expect(map['birthday:otro:same-day'].identifiers).toEqual(['notif-id-2']);
+  });
+
+  it('los dos slots van a claves distintas, con el identificador de cada uno', async () => {
+    // El bug que selló `slotForBirthday`: los dos avisos caían en la misma clave y
+    // el segundo pisaba el identificador del primero, que se quedaba sin poder
+    // cancelar. Aquí se agenda con un cumpleaños de 1990 y el reloj en 2026, que es
+    // el caso real; con el fixture de siempre (nacimiento y reloj en el mismo año)
+    // el fallo no se veía.
+    const nacidoEnLosNoventa: Contact = {
+      ...contact,
+      birth_date: '1990-05-10',
+    };
+    jest.setSystemTime(new Date(2026, 5, 20, 8, 0));
+
+    await scheduleBirthday(nacidoEnLosNoventa, 'both');
+
+    const map = JSON.parse((await AsyncStorage.getItem('notification_map_v1')) ?? '{}');
+    expect(map['birthday:c1:day-before'].identifiers).toEqual(['notif-id-1']);
+    expect(map['birthday:c1:same-day'].identifiers).toEqual(['notif-id-2']);
+  });
+
+  it('el aviso del día antes lleva el texto de "mañana"', async () => {
+    // El texto se componía con el slot, así que el mismo error de etiquetado
+    // ponía "Cumpleaños hoy" en un aviso que saltaba el día anterior.
+    const nacidoEnLosNoventa: Contact = { ...contact, birth_date: '1990-05-10' };
+    jest.setSystemTime(new Date(2026, 5, 20, 8, 0));
+
+    await scheduleBirthday(nacidoEnLosNoventa, 'both');
+
+    const contenidos = mockSchedule.mock.calls.map((c) => c[0].content as { title: string });
+    expect(contenidos.some((c) => c.title === 'Cumpleaños mañana: Ana')).toBe(true);
+    expect(contenidos.some((c) => c.title === 'Cumpleaños hoy: Ana')).toBe(true);
+  });
+
+  it('cancela los avisos anteriores del mismo contacto antes de reagendar', async () => {
+    await scheduleBirthday(contact, 'both');
+    mockCancel.mockClear();
+    mockSchedule.mockClear();
+
+    await scheduleBirthday(contact, 'same-day');
+
+    // Los dos identificadores previos se cancelan, aunque solo se reagende uno.
+    expect(mockCancel).toHaveBeenCalledWith('notif-id-1');
+    expect(mockCancel).toHaveBeenCalledWith('notif-id-2');
+    expect(mockSchedule).toHaveBeenCalledTimes(1);
+  });
+
+  it('con "sin aviso" no agenda nada', async () => {
+    await scheduleBirthday(contact, 'none');
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it('con las notificaciones apagadas no hace nada', async () => {
+    mockStorage.set('notifications_enabled', 'false');
+    await scheduleBirthday(contact, 'both');
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it('en web no hace nada: ahí los avisos van por Web Push', async () => {
+    jest.replaceProperty(Platform, 'OS', 'web');
+    await scheduleBirthday(contact, 'both');
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it('una fecha de cumpleaños ilegible no agenda nada', async () => {
+    // `safeDate` devuelve null y el aviso se salta. Antes de la validación, un
+    // `new Date('lo que sea')` inválido se colaba en el cálculo de las fechas.
+    await scheduleBirthday({ ...contact, birth_date: 'no-es-una-fecha' }, 'both');
     expect(mockSchedule).not.toHaveBeenCalled();
   });
 });

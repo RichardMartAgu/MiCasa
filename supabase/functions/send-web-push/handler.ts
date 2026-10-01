@@ -13,10 +13,17 @@ import {
   birthdayChoiceFor,
   buildAppointmentDispatches,
   buildBirthdayDispatches,
+  buildNowAppointmentDispatch,
+  buildNowBirthdayDispatch,
   dedupeKey,
   isPushEnabled,
+  isValidChoice,
+  isValidTimeZone,
+  localDayUtc,
+  nowDedupeKey,
   type AppointmentRow,
   type ContactRow,
+  type NowDispatch,
   type PushPreference,
   type TargetedDispatch,
 } from "./reminders.ts";
@@ -171,13 +178,36 @@ function groupByUserAndTimezone(subs: SubscriptionRow[]): Group[] {
 
 type Db = SupabaseClient;
 
+/** Fábrica del cliente de la función. Sustituible en los tests; ver `HandlerDeps`. */
+type DbFactory = (supabaseUrl: string, serviceRoleKey: string) => Db;
+
+function defaultCreateDb(supabaseUrl: string, serviceRoleKey: string): Db {
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+/** Lo que los tests sustituyen: con qué base de datos y con qué reloj. */
+export interface HandlerDeps {
+  createDb?: DbFactory;
+  now?: () => number;
+}
+
 /**
- * Casas de las que el usuario sigue siendo miembro. Alguien expulsado de una
- * casa conserva sus filas en `appointments` (solo se borra su `casa_members`),
- * así que sin este filtro seguiría recibiendo los títulos y horas de las citas
- * de esa casa por push, aunque la UI ya no se las muestra.
+ * Casas de las que el usuario sigue siendo miembro, o `null` si no se pudo leer.
+ *
+ * El filtro está porque alguien expulsado de una casa conserva sus filas en
+ * `appointments` (solo se borra su `casa_members`), así que sin esto seguiría
+ * recibiendo por push los títulos y horas de las citas de esa casa, aunque la UI
+ * ya no se las muestra.
+ *
+ * `null` no es lo mismo que `[]`: un fallo transitorio al leer `casa_members` no
+ * significa que el usuario no pertenezca a ninguna casa, y confundirlos hacía que
+ * quien llama afirmara algo falso (un 404 diciendo que no tienes casas cuando lo
+ * que pasó es que la base de datos no respondió). Falla hacia el lado seguro —no se
+ * avisa de nada—, pero el motivo tiene que poder distinguirse.
  */
-async function fetchCasaIds(db: Db, userId: string): Promise<string[]> {
+async function fetchCasaIds(db: Db, userId: string): Promise<string[] | null> {
   const { data, error } = await db
     .from("casa_members")
     .select("casa_id")
@@ -185,7 +215,7 @@ async function fetchCasaIds(db: Db, userId: string): Promise<string[]> {
 
   if (error) {
     console.error("send-web-push: no se pudieron leer las casas del usuario", error);
-    return [];
+    return null;
   }
   return ((data ?? []) as { casa_id: string }[]).map((m) => m.casa_id);
 }
@@ -197,7 +227,7 @@ async function fetchAppointments(
   casaIds: string[],
   now: Date,
   from: Date,
-): Promise<AppointmentRow[]> {
+): Promise<AppointmentRow[] | null> {
   if (casaIds.length === 0) return [];
 
   const { data, error } = await db
@@ -209,12 +239,15 @@ async function fetchAppointments(
     .gte("starts_at", from.toISOString())
     .lte("starts_at", appointmentQueryUpperBound(now).toISOString());
 
-  if (error) console.error("send-web-push: no se pudieron leer las citas", error);
+  if (error) {
+    console.error("send-web-push: no se pudieron leer las citas", error);
+    return null;
+  }
   return (data ?? []) as AppointmentRow[];
 }
 
 /** Contactos con fecha de nacimiento de todas las casas del usuario. */
-async function fetchBirthdayContacts(db: Db, casaIds: string[]): Promise<ContactRow[]> {
+async function fetchBirthdayContacts(db: Db, casaIds: string[]): Promise<ContactRow[] | null> {
   if (casaIds.length === 0) return [];
 
   const { data, error } = await db
@@ -223,7 +256,10 @@ async function fetchBirthdayContacts(db: Db, casaIds: string[]): Promise<Contact
     .in("casa_id", casaIds)
     .not("birth_date", "is", null);
 
-  if (error) console.error("send-web-push: no se pudieron leer los contactos", error);
+  if (error) {
+    console.error("send-web-push: no se pudieron leer los contactos", error);
+    return null;
+  }
   return (data ?? []) as ContactRow[];
 }
 
@@ -264,19 +300,39 @@ async function buildDispatches(
     if (!isPushEnabled(pref)) continue;
 
     const casaIds = await fetchCasaIds(db, group.userId);
-    if (casaIds.length === 0) continue;
+    // `null` y `[]` se saltan el grupo los dos, y a propósito: el dispatcher no
+    // tiene a quién responderle un 500, y no avisar es lo seguro cuando no se sabe
+    // qué casas tiene.
+    if (casaIds === null || casaIds.length === 0) continue;
 
     const appointments = await fetchAppointments(db, group.userId, casaIds, now, from);
-    out.push(...buildAppointmentDispatches(appointments, context).map((d) => ({ ...d, ...target })));
+    if (appointments !== null) {
+      out.push(...buildAppointmentDispatches(appointments, context).map((d) => ({ ...d, ...target })));
+    }
 
     const choice = birthdayChoiceFor(pref);
     if (choice !== "none") {
       const contacts = await fetchBirthdayContacts(db, casaIds);
-      out.push(...buildBirthdayDispatches(contacts, choice, context).map((d) => ({ ...d, ...target })));
+      if (contacts !== null) {
+        out.push(...buildBirthdayDispatches(contacts, choice, context).map((d) => ({ ...d, ...target })));
+      }
     }
   }
 
   return out;
+}
+
+/** Resultado de intentar entregar un payload a las suscripciones de un usuario. */
+interface SendResult {
+  delivered: number;
+  removed: number;
+  /**
+   * No se pudieron LEER las suscripciones. No es lo mismo que no tener ninguna, y
+   * quien llama depende de la diferencia: con la lectura fallida no se puede decir
+   * "no tienes suscripciones activas" porque no se sabe, y sueltar la reserva de
+   * `push_log` dejaría el aviso reintentable en bucle con un motivo falso.
+   */
+  readFailed: boolean;
 }
 
 /** Envía un payload ya construido a las suscripciones de un usuario. */
@@ -284,8 +340,8 @@ async function sendToUser(
   db: Db,
   secrets: PushSecrets,
   userId: string,
-  payload: { title: string; body: string; tag: string; url: string },
-): Promise<{ delivered: number; removed: number }> {
+  payload: { title: string; body: string; data: { type: string; id: string; url: string } },
+): Promise<SendResult> {
   // Configurar las claves VAPID aquí y no en quien llama: `sendToUser` es el
   // único sitio que despacha, y hay dos caminos que llegan (el dispatcher y el
   // aviso de prueba). Configurarlas solo en el dispatcher dejaba al aviso de
@@ -300,7 +356,7 @@ async function sendToUser(
 
   if (error) {
     console.error("send-web-push: no se pudieron leer las suscripciones del usuario", error);
-    return { delivered: 0, removed: 0 };
+    return { delivered: 0, removed: 0, readFailed: true };
   }
 
   let delivered = 0;
@@ -315,9 +371,13 @@ async function sendToUser(
           body: payload.body,
           icon: "/icon-192.png",
           badge: "/icon-192.png",
-          tag: payload.tag,
+          // El service worker vuelve a componer el `tag` a partir de `data.type` e
+          // `data.id` (ver sw-src.js), así que aquí van los dos de verdad: si
+          // `type` fuera siempre "test", el aviso de confirmación se pintaría como
+          // genérico y, además, se apilaría con los avisos de prueba.
+          tag: `${payload.data.type}:${payload.data.id}`,
           renotify: true,
-          data: { type: "test", url: payload.url },
+          data: payload.data,
         }),
         { TTL: 300, urgency: "normal" },
       );
@@ -337,7 +397,18 @@ async function sendToUser(
   }
 
   if (dead.length > 0) await db.from("push_subscriptions").delete().in("id", dead);
-  return { delivered, removed: dead.length };
+  return { delivered, removed: dead.length, readFailed: false };
+}
+
+/**
+ * Segundos que faltan para que empiece el siguiente bucket de enfriamiento.
+ *
+ * Se devuelve en el cuerpo de la respuesta y no solo en un log: quien llama
+ * necesita poder decirle a la persona cuánto tiene que esperar, y adivinarlo en el
+ * cliente es justo lo que un enfriamiento mal medido hace frustrante.
+ */
+function secondsToNextBucket(now: number, bucket: number, bucketMs: number): number {
+  return Math.ceil(((bucket + 1) * bucketMs - now) / 1000);
 }
 
 /**
@@ -350,7 +421,12 @@ async function sendToUser(
  * El enfriamiento se apoya en la clave única de `push_log` en vez de en un
  * marca de tiempo: así funciona entre réplicas de la función sin estado propio, y
  * no hay que tocar `push_preferences` (escribir ahí el instante del envío
- * reactivaría el interruptor maestro de quien lo pulses).
+ * reactivaría el interruptor maestro de quien lo pulse).
+ *
+ * La fila no se suelta en ninguna de las tres salidas —duplicada, lectura fallida
+ * y lista vacía—, y por eso el enfriamiento se aplica también en el estado
+ * trivial de un navegador sin suscripciones. Esa es justo la razón de existir del
+ * enfriamiento, así que soltarla en el caso vacío lo dejaba sin efecto.
  */
 const TEST_PUSH_COOLDOWN_MS = 5 * 60_000;
 
@@ -358,8 +434,9 @@ async function runTestPush(
   db: Db,
   secrets: PushSecrets,
   userId: string,
+  now: number,
 ): Promise<Record<string, unknown>> {
-  const bucket = Math.floor(Date.now() / TEST_PUSH_COOLDOWN_MS);
+  const bucket = Math.floor(now / TEST_PUSH_COOLDOWN_MS);
   const { error: claimError } = await db
     .from("push_log")
     .insert({ user_id: userId, dedupe_key: `test:${userId}:${bucket}` });
@@ -372,36 +449,328 @@ async function runTestPush(
     return {
       ok: false,
       error: "demasiado rapido",
-      retryInSeconds: Math.ceil(
-        ((bucket + 1) * TEST_PUSH_COOLDOWN_MS - Date.now()) / 1000,
-      ),
+      retryInSeconds: secondsToNextBucket(now, bucket, TEST_PUSH_COOLDOWN_MS),
     };
   }
 
   const result = await sendToUser(db, secrets, userId, {
     title: "MiCasa: aviso de prueba",
     body: "Si lees esto, los avisos de verdad te llegaran con el movil bloqueado.",
-    tag: `test:${userId}`,
-    url: "/",
+    data: { type: "test", id: userId, url: "/" },
   });
 
+  // La reserva se queda puesta si no se pudo ni leer la lista: soltarla dejaría el
+  // botón reintentable en bucle con un motivo falso en la cara.
+  if (result.readFailed) {
+    return { ok: false, error: "no se pudieron leer tus suscripciones" };
+  }
+
   if (result.delivered === 0) {
-    // Se libera la reserva para que un reintento inmediato no espere 5 minutos.
-    await db
-      .from("push_log")
-      .delete()
-      .eq("user_id", userId)
-      .eq("dedupe_key", `test:${userId}:${bucket}`);
+    // Aquí la reserva se QUEDA, y antes se soltaba. Con cero suscripciones —el
+    // estado trivial de un navegador sin el push activo— el enfriamiento no se
+    // aplicaba nunca, que es justo el caso para el que existe: "por si alguien lo
+    // pulsa en bucle" (ver `sendTestPush` en la app). Soltarla convertía
+    // `?mode=test` en el mismo bucle sin límite que ya se cerró en `mode=now`.
+    //
+    // Se acepta que quien active el push en otro momento espere cinco minutos: es
+    // preferible a devolverle un botón que se puede martillear sin coste para
+    // nadie. Bajar el enfriamiento no sería la manera de arreglarlo, porque reabre
+    // el bucle; si de verdad hace falta poder reintentar antes, tiene que ser con
+    // otro mecanismo, no soltando la fila.
     return { ok: false, error: "sin suscripciones activas en este navegador" };
   }
 
   return { ok: true, delivered: result.delivered, removedSubscriptions: result.removed };
 }
 
+/**
+ * Zona horaria con la que se compone el aviso.
+ *
+ * La que manda el cliente es la de lo que el usuario está viendo ahora mismo, así
+ * que se prefiere si `Intl` la entiende. Si no, se cae a la de su suscripción
+ * activa (que es con la que el cron le manda las cosas) y, en último caso, a la
+ * del proyecto. Nunca se usa el valor crudo sin comprobar: es entrada del cliente.
+ */
+async function resolveUserTimeZone(
+  db: Db,
+  userId: string,
+  requested: string | null,
+): Promise<string> {
+  if (isValidTimeZone(requested)) return requested;
+
+  const { data } = await db
+    .from("push_subscriptions")
+    .select("timezone")
+    .eq("user_id", userId)
+    .eq("active", true)
+    .limit(1)
+    .maybeSingle();
+
+  const stored = (data as { timezone?: unknown } | null)?.timezone;
+  return isValidTimeZone(stored) ? stored : DEFAULT_VAPID_SUBJECT_TIMEZONE;
+}
+
+/** Zona por defecto del proyecto. Es la de `casa` en la mayoría de cuentas. */
+const DEFAULT_VAPID_SUBJECT_TIMEZONE = "Europe/Madrid";
+
+/**
+ * Aviso de confirmación que pide el cliente al acabar de crear una cita o un
+ * cumpleaños: "esto ya queda avisado".
+ *
+ * No es el recordatorio. El recordatorio lo sigue mandando el cron, y por eso la
+ * clave de esta confirmation lleva el prefijo `now:` (ver `nowDedupeKey`): con la
+ * clave del cron, esta función se comería el aviso de verdad.
+ *
+ * Se autentica por la sesión, no por el secreto del cron, así que solo puede
+ * avisar a quien lo pide. Y no puede avisar de lo que el cron no avisaría: la fila
+ * se lee con el mismo filtro de visibilidad que usa `buildDispatches` (miembro de
+ * la casa, y para citas además el autor). Un exmiembro de una casa conserva sus
+ * filas en `appointments` porque solo se le borra de `casa_members`, así que sin
+ * ese filtro seguiría recibiendo los títulos y horas de una casa a la que ya no
+ * pertenece, aunque la UI ya no se los muestre.
+ */
+/**
+ * Los `id` de `appointments` y `contacts` son `uuid`. Comprobarlo aquí evita que un
+ * valor con otra forma llegue a la consulta: PostgREST responde con un error de
+ * sintaxis, que sin esto se devolvería como un 500 ("no se pudo leer la cita") cuando
+ * de verdad es una petición mal formada. Y corta antes de que un `searchParams`
+ * arbitrariamente largo llegue a la base de datos.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Enfriamiento de la confirmación, en buckets por usuario.
+ *
+ * Un minuto, y no los cinco del aviso de prueba, porque el uso real de este camino
+ * es humano: confirmar la cita o el cumpleaños que acabas de crear, una o dos veces.
+ * Con cinco minutos, guardar un cumpleaños y corregir la casa se comía el aviso sin
+ * motivo. Y con un minuto tampoco frena lo que hay que frenar, que es el bucle:
+ * mil peticiones por minuto siguen siendo mil, pero ninguna pasa de la primera
+ * fila de `push_log`.
+ *
+ * Y no es solo un enfriamiento. La fila se pide antes de validar el tipo, el id y
+ * antes de cualquier consulta de negocio (ver `runNowPush`), así que el bucket
+ * acota el trabajo de TODAS las peticiones de este modo, incluidas las que ni
+ * siquiera llegan a preguntar por una referencia.
+ */
+const NOW_PUSH_COOLDOWN_MS = 60_000;
+
+async function runNowPush(
+  db: Db,
+  secrets: PushSecrets,
+  userId: string,
+  params: URLSearchParams,
+  now: number,
+): Promise<{ body: Record<string, unknown>; status: number }> {
+  const fail = (error: string, status: number) => ({ body: { ok: false, error }, status });
+
+  // La reserva va PRIMERO, antes de validar el tipo, el id y antes de cualquier
+  // consulta de negocio. Antes iba al final, después de leer preferencias, zona,
+  // casas y la referencia, y eso dejaba trece salidas tempranas —casi todas 4xx
+  // de validación— que no escribían nada. Con lo que el bucle más barato que
+  // quedaba era `?mode=now&type=appointment&id=<uuid aleatorio>`: un 404 de "esa
+  // cita no existe" después de haber pagado la validación de sesión, las dos
+  // llamadas a Vault y la consulta de la referencia, con cero filas escritas y sin
+  // enfriamiento. Mismo perfil de coste que el bucle ya cerrado, y más barato
+  // porque no necesita ni un contacto real.
+  //
+  // El precio de moverlo es que ahora un 400 o un 403 de validación también quema
+  // el bucket. Se acepta a conciencia: los dos sitios que llaman a este camino
+  // hacen fire-and-forget y tiran el retorno, así que para la UX no cambia nada; a
+  // cambio ninguna petición repite su trabajo sin pagar al menos un insert.
+  //
+  // Y no se suelta nunca en este camino: ni con `delivered === 0`, ni con
+  // `readFailed`, ni con un fallo inesperado, ni con ninguna de las salidas
+  // tempranas. Soltarla en cualquiera de ellas devuelve el bucle.
+  const bucket = Math.floor(now / NOW_PUSH_COOLDOWN_MS);
+  const retryInSeconds = secondsToNextBucket(now, bucket, NOW_PUSH_COOLDOWN_MS);
+  // Lo que esta fila significa ya no es "esta referencia quedó confirmada" sino
+  // "este usuario pidió una confirmación dentro de este minuto". Por eso la
+  // variable se llama reserva y no `key` de confirmación: es una reserva de usuario
+  // y minuto, y no un registro de lo que se confirmó ni de lo que se va a confirmar.
+  const reserva = nowDedupeKey(userId, bucket);
+  const { error: claimError } = await db
+    .from("push_log")
+    .insert({ user_id: userId, dedupe_key: reserva });
+
+  if (claimError) {
+    // 23505 = este usuario ya tiene una reserva viva en este minuto. No sale ningún
+    // push y no es un fallo del cliente: reintentar en bucle no produce un aviso
+    // nuevo, solo más peticiones.
+    //
+    // Por eso `ok` es false y no true: antes devolvía `ok: true` con
+    // `delivered: 0`, que se contradicen —nada salió y algo se dice que salió— y que
+    // además se leía como que el aviso estaba confirmado. El motivo y los segundos
+    // que faltan viajan con él para que quien lo use pueda decir qué hacer, que es
+    // lo mismo que hace `sendTestPush` con "demasiado rapido". El prefijo `now:` de
+    // la clave es lo que garantiza que esto no choca con el recordatorio del cron.
+    if (claimError.code === "23505") {
+      return {
+        body: { ok: false, skipped: true, error: "ya se confirmo en este minuto", retryInSeconds },
+        status: 200,
+      };
+    }
+    // Cualquier otro error es de la base de datos, no una duplicidad. Aquí sí se
+    // aborta: seguir significaría enviar sin haber reservado nada, que es el
+    // duplicado que `push_log` existe para evitar.
+    console.error("send-web-push: no se pudo reservar la confirmacion", claimError);
+    return fail("no se pudo registrar el aviso", 500);
+  }
+
+  const type = params.get("type");
+  const refId = params.get("id");
+  if (type !== "appointment" && type !== "birthday") return fail("tipo invalido", 400);
+  if (refId === null || !UUID_PATTERN.test(refId)) return fail("id invalido", 400);
+
+  // Consentimiento. El interruptor maestro frena TODO lo que sale por push, y este
+  // camino no es una excepción: si el usuario lo apagó en Ajustes, confirmar que
+  // quedó avisado también es un push. Sin preferences se asume activado, igual que
+  // en el dispatcher, porque llegar aquí ya implica una sesión viva.
+  const { data: prefs, error: prefsError } = await db
+    .from("push_preferences")
+    .select("birthday_choice, enabled")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (prefsError) {
+    // Fallo cerrado, por el mismo motivo que en `buildDispatches`: con la otra
+    // opción, un error transitorio de la base reactivaba los avisos de un usuario
+    // que los tenía apagados.
+    console.error("send-web-push: no se pudieron leer las preferencias", prefsError);
+    return fail("no se pudieron leer tus preferencias", 500);
+  }
+
+  // Sin cast: `PushPreference` modela la fila sin validar `birthday_choice`, que es
+  // lo que permite mirar un valor ilegible sin que el compilador lo llame imposible.
+  const pref = (prefs ?? null) as PushPreference | null;
+  if (!isPushEnabled(pref)) return fail("los avisos estan apagados", 403);
+  if (type === "birthday" && birthdayChoiceFor(pref) === "none") {
+    return fail("no tienes aviso de cumpleanos activado", 403);
+  }
+
+  const timeZone = await resolveUserTimeZone(db, userId, params.get("timezone"));
+  const today = localDayUtc(new Date(now), timeZone);
+
+  // Mismo criterio de visibilidad que `buildDispatches`.
+  const casaIds = await fetchCasaIds(db, userId);
+  if (casaIds === null) return fail("no se pudieron leer tus casas", 500);
+  if (casaIds.length === 0) return fail("no perteneces a ninguna casa", 404);
+
+  let dispatch: NowDispatch | null = null;
+
+  if (type === "appointment") {
+    const { data, error } = await db
+      .from("appointments")
+      .select("id, title, starts_at, reminder_choice")
+      .eq("id", refId)
+      .eq("user_id", userId)
+      .in("casa_id", casaIds)
+      .maybeSingle();
+
+    if (error) {
+      console.error("send-web-push: no se pudo leer la cita", error);
+      return fail("no se pudo leer la cita", 500);
+    }
+    if (!data) return fail("esa cita no existe", 404);
+
+    const appointment = data as AppointmentRow;
+    dispatch = buildNowAppointmentDispatch({
+      refId: appointment.id,
+      title: appointment.title,
+      startsAt: appointment.starts_at,
+      choice: isValidChoice(appointment.reminder_choice) ? appointment.reminder_choice : "none",
+      timeZone,
+    });
+  } else {
+    const { data, error } = await db
+      .from("contacts")
+      .select("id, name, birth_date")
+      .eq("id", refId)
+      .in("casa_id", casaIds)
+      .maybeSingle();
+
+    if (error) {
+      console.error("send-web-push: no se pudo leer el contacto", error);
+      return fail("no se pudo leer el contacto", 500);
+    }
+    if (!data) return fail("ese contacto no existe", 404);
+
+    const contact = data as ContactRow;
+    dispatch = buildNowBirthdayDispatch({
+      refId: contact.id,
+      name: contact.name,
+      birthDate: contact.birth_date,
+      choice: birthdayChoiceFor(pref),
+      today,
+    });
+  }
+
+  // La fila existe y es visible, pero no hay recordatorio que confirmar. No es un
+  // error: el cliente solo lo llama cuando el usuario eligió un recordatorio. La
+  // reserva de arriba se queda; el bucket ya está gastado.
+  if (!dispatch) return fail("no hay recordatorio que confirmar", 404);
+
+  try {
+    const result = await sendToUser(db, secrets, userId, {
+      title: dispatch.title,
+      body: dispatch.body,
+      data: { type: dispatch.type, id: dispatch.refId, url: dispatch.url },
+    });
+
+    if (result.readFailed) {
+      // La reserva se queda: no sabemos si había a quién avisar, y soltarla
+      // devolvería el bucle con un motivo falso en cada vuelta.
+      return fail("no se pudieron leer tus suscripciones", 500);
+    }
+
+    if (result.delivered === 0) {
+      // Nadie lo recibió (típicamente: sin suscripciones en este navegador). La
+      // reserva NO se suelta: es ella la que hace de enfriamiento, y ahora además
+      // es lo único que separa dos peticiones de este camino, porque se pide antes
+      // de validar nada.
+      return {
+        body: {
+          ok: false,
+          error: "sin suscripciones activas",
+          retryInSeconds,
+        },
+        status: 404,
+      };
+    }
+
+    return {
+      body: { ok: true, delivered: result.delivered, removedSubscriptions: result.removed },
+      status: 200,
+    };
+  } catch (error) {
+    // `sendToUser` ya captura los fallos por suscripción, así que llegar aquí es
+    // un fallo inesperado. La reserva se queda igualmente: ahora se pide antes de
+    // validar nada, así que soltarla aquí volvería a abrir el bucle que la fila
+    // cierra. El precio es un minuto sin poder reintentar y una fila de más, y lo
+    // paga un camino que casi no se recorre; soltarla lo pagaría todo el mundo.
+    console.error("send-web-push: fallo en el aviso de confirmacion", error);
+    return fail("no se pudo enviar el aviso", 500);
+  }
+}
+
 /** Reparte y envía todos los recordatorios pendientes. */
-async function runDispatch(db: Db, secrets: PushSecrets): Promise<Record<string, unknown>> {
-  const now = new Date();
-  const windowStart = new Date(now.getTime() - CATCHUP_MINUTES * 60_000);
+async function runDispatch(db: Db, secrets: PushSecrets, now: number): Promise<Record<string, unknown>> {
+  const instante = new Date(now);
+  const windowStart = new Date(instante.getTime() - CATCHUP_MINUTES * 60_000);
+
+  // La poda va PRIMERO, antes de leer nada. Estaba al final, y `dispatches` solo
+  // existe dentro de la ventana de catchup alrededor de las 09:00 locales, así que
+  // con la poda detrás del `return` de "no hay nada que repartir" se quedaba sin
+  // ejecutar casi siempre: fuera de esa ventana la tabla no se podaba nunca. Y
+  // `mode=now` escribe filas `now:*` a cualquier hora del día, con lo que crecía
+  // sin techo justo en las horas en las que el cron no tenía nada que repartir.
+  //
+  // Nadie lee `push_log` para diagnosticar: en el repo solo hay `insert`, `delete` y
+  // `update` sobre esa tabla, así que podar antes no le quita nada a nadie.
+  await db
+    .from("push_log")
+    .delete()
+    .lt("sent_at", new Date(instante.getTime() - LOG_RETENTION_DAYS * 86_400_000).toISOString());
 
   const { data: subs, error: subsError } = await db
     .from("push_subscriptions")
@@ -414,7 +783,7 @@ async function runDispatch(db: Db, secrets: PushSecrets): Promise<Record<string,
   }
 
   const groups = groupByUserAndTimezone((subs ?? []) as SubscriptionRow[]);
-  const dispatches = await buildDispatches(db, groups, now, windowStart);
+  const dispatches = await buildDispatches(db, groups, instante, windowStart);
 
   if (dispatches.length === 0) {
     return { ok: true, dispatched: 0, sent: 0, skipped: 0, window: CATCHUP_MINUTES };
@@ -506,11 +875,6 @@ async function runDispatch(db: Db, secrets: PushSecrets): Promise<Record<string,
       .eq("id", failure.id);
   }
 
-  await db
-    .from("push_log")
-    .delete()
-    .lt("sent_at", new Date(now.getTime() - LOG_RETENTION_DAYS * 86_400_000).toISOString());
-
   return {
     ok: true,
     users: groups.length,
@@ -527,8 +891,17 @@ async function runDispatch(db: Db, secrets: PushSecrets): Promise<Record<string,
  *
  * `env` se inyecta para que los tests puedan pasar un entorno vacío y no
  * depender de los secretos que tenga la máquina. Por defecto es `Deno.env`.
+ *
+ * `deps` inyecta el cliente de Supabase y el reloj. Los tests lo necesitan: sin un
+ * doble de base de datos no hay forma de comprobar qué consulta sale cuando una
+ * falla, y sin un reloj fijo el bucket de enfriamiento depende del instante en que
+ * el test corre. En producción no se pasa nada y se usan los de verdad.
  */
-export async function handle(req: Request, env: EnvReader = Deno.env): Promise<Response> {
+export async function handle(
+  req: Request,
+  env: EnvReader = Deno.env,
+  deps: HandlerDeps = {},
+): Promise<Response> {
   // Si `WEB_PUSH_ALLOWED_ORIGINS` está definida, su lista sustituye a la de por
   // defecto (ver `resolveAllowedOrigins`).
   const allowedOrigins = resolveAllowedOrigins(env.get("WEB_PUSH_ALLOWED_ORIGINS"));
@@ -561,36 +934,48 @@ export async function handle(req: Request, env: EnvReader = Deno.env): Promise<R
     return json({ error: "no autorizado" }, 401);
   }
 
-  const db = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const createDb = deps.createDb ?? defaultCreateDb;
+  const clock = deps.now ?? Date.now;
+
+  const db = createDb(supabaseUrl, serviceRoleKey);
 
   const subject = env.get("VAPID_SUBJECT") ?? DEFAULT_VAPID_SUBJECT;
 
-  // Aviso de prueba: lo pide el usuario con su propia sesión, no el dispatcher.
+  const mode = new URL(req.url).searchParams.get("mode");
+
+  // Modos que se autentican con la sesión del usuario: el aviso de prueba de
+  // Ajustes y la confirmación de una cita o cumpleaños recién creado.
   //
-  // Esta rama va ANTES del gate del secreto del cron, y no por descuido: ese
-  // gate protege al dispatcher, que tiene alcance global, y el aviso de prueba
-  // no lo tiene porque solo puede avisar a quien se acaba de autenticar. Con el
-  // gate delante, el botón de Ajustes no tenía forma de mandar el secreto (no
-  // debe viajar en un bundle) y respondía 401 siempre: estaba muerto.
+  // Este grupo va ANTES del gate del secreto del cron, y no por descuido: ese gate
+  // protege al dispatcher, que tiene alcance global, y estos dos no lo tienen
+  // porque solo pueden avisar a quien se acaba de autenticar. Con el gate delante,
+  // el botón de Ajustes no tenía forma de mandar el secreto (no debe viajar en un
+  // bundle) y respondía 401 siempre: estaba muerto.
   //
-  // El orden que sí importa es otro: primero se valida la sesión y solo después
-  // se leen las claves VAPID de Vault, para que una petición sin sesión válida
-  // no llegue a tocar ningún secreto.
-  if (new URL(req.url).searchParams.get("mode") === "test") {
+  // El orden que sí importa es otro: primero se valida la sesión y solo después se
+  // leen las claves VAPID de Vault, para que una petición sin sesión válida no
+  // llegue a tocar ningún secreto.
+  if (mode === "test" || mode === "now") {
     const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
     if (token.length === 0) return json({ error: "falta la sesion" }, 401);
 
     const { data: userData, error: userError } = await db.auth.getUser(token);
     if (userError || !userData?.user) return json({ error: "sesion no valida" }, 401);
 
-    const testVapid = await readVapidKeys(db, env);
-    if (!testVapid) return json({ error: "no autorizado" }, 401);
+    const userVapid = await readVapidKeys(db, env);
+    if (!userVapid) return json({ error: "no autorizado" }, 401);
 
-    // `cronSecret` vacío a propósito: este camino no lo usa, y así no se
+    // `cronSecret` vacío a propósito: estos caminos no lo usan, y así no se
     // construye un valor que luego se lee sin querer.
-    return json(await runTestPush(db, { cronSecret: "", subject, ...testVapid }, userData.user.id));
+    const userSecrets: PushSecrets = { cronSecret: "", subject, ...userVapid };
+    const userId = userData.user.id;
+
+    if (mode === "now") {
+      const result = await runNowPush(db, userSecrets, userId, new URL(req.url).searchParams, clock());
+      return json(result.body, result.status);
+    }
+
+    return json(await runTestPush(db, userSecrets, userId, clock()));
   }
 
   // Antes de autenticar solo se lee el secreto del cron, y se hace por entorno
@@ -614,14 +999,14 @@ export async function handle(req: Request, env: EnvReader = Deno.env): Promise<R
 
   const sync = new URL(req.url).searchParams.get("sync") === "1";
   if (sync) {
-    return json(await runDispatch(db, secrets));
+    return json(await runDispatch(db, secrets, clock()));
   }
 
   // pg_net aborta la llamada a los 5 s, y el arranque en frío de la función ya
   // consume más que eso. Por eso el cron solo encola: el trabajo real sigue en
   // segundo plano con waitUntil. `?sync=1` existe para depurar a mano.
   EdgeRuntime.waitUntil(
-    runDispatch(db, secrets).catch((error) => {
+    runDispatch(db, secrets, clock()).catch((error) => {
       console.error("send-web-push: fallo en el reparto", error);
     }),
   );

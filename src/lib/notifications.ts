@@ -13,6 +13,7 @@ import {
   choiceFromReminderAt,
   notificationKey,
   reminderChoices,
+  slotForBirthday,
   slotForDate,
   type ReminderChoice,
 } from './notification-schedule';
@@ -265,6 +266,52 @@ export async function scheduleAppointment(
   });
 }
 
+/**
+ * Programa los avisos de un solo contacto, sin tocar los demás.
+ *
+ * Es lo que se llama al crear un contacto, en vez de `scheduleBirthdays` con la
+ * lista entera: la lista llega por realtime y en el momento del guardado puede no
+ * incluir el contacto que se acaba de crear, así que reprogramarla toda se saltaría
+ * justo el nuevo. En la edición da igual, y por eso ahí se sigue llamando la de la
+ * lista.
+ */
+export async function scheduleBirthday(
+  contact: Contact,
+  choice: ReminderChoice,
+): Promise<void> {
+  if (Platform.OS === 'web') return;
+  if (!(await areNotificationsEnabled())) return;
+  await enqueue(async () => {
+    const map = await readMap();
+    const keys = [
+      notificationKey('birthday', contact.id, 'day-before'),
+      notificationKey('birthday', contact.id, 'same-day'),
+    ];
+    await cancelIdentifiers(await cancelKeys(map, keys));
+    const birth = safeDate(contact.birth_date);
+    if (birth === null) return;
+    const now = new Date();
+    const dates = birthdayNotificationDates(birth, choice, now);
+    const fingerprint = birthdayFingerprint(contact, choice);
+    for (const trigger of dates) {
+      const slot = slotForBirthday(trigger, birth, now);
+      const identifier = await Notifications.scheduleNotificationAsync({
+        content: buildBirthdayContent(contact, slot),
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: trigger,
+          channelId: CHANNEL_ID,
+        },
+      });
+      map[notificationKey('birthday', contact.id, slot)] = {
+        identifiers: [identifier],
+        fingerprint,
+      };
+    }
+    await writeMap(map);
+  });
+}
+
 export async function scheduleBirthdays(
   contacts: Contact[],
   choice: ReminderChoice,
@@ -282,7 +329,7 @@ export async function scheduleBirthdays(
       const dates = birthdayNotificationDates(birth, choice, now);
       const fingerprint = birthdayFingerprint(contact, choice);
       for (const trigger of dates) {
-        const slot = slotForDate(trigger, birth);
+        const slot = slotForBirthday(trigger, birth, now);
         const identifier = await Notifications.scheduleNotificationAsync({
           content: buildBirthdayContent(contact, slot),
           trigger: {
@@ -400,7 +447,7 @@ export async function syncAll(
       }
       if (matched) continue;
       for (const trigger of dates) {
-        const slot = slotForDate(trigger, birth);
+        const slot = slotForBirthday(trigger, birth, now);
         const identifier = await Notifications.scheduleNotificationAsync({
           content: buildBirthdayContent(contact, slot),
           trigger: {

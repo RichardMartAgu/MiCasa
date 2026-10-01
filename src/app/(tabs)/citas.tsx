@@ -56,6 +56,7 @@ import {
   cancelEntityKey,
   scheduleAppointment,
 } from '@/lib/notifications';
+import { sendNowPush } from '@/lib/web-push';
 import type { Appointment, AppointmentKindRow } from '@/lib/types';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
@@ -233,9 +234,12 @@ export default function CitasScreen() {
     };
     let error: { message: string } | null = null;
     let saved: Appointment | null = null;
-    if (editingAppointmentId) {
-      error = await updateAppointment(editingAppointmentId, input);
-      const base = appointments.find((a) => a.id === editingAppointmentId);
+    // Se guarda antes de limpiar el estado: `editingAppointmentId` se pone a null
+    // más abajo, y decidir con él después solo funciona por el retraso del estado.
+    const editingId = editingAppointmentId;
+    if (editingId) {
+      error = await updateAppointment(editingId, input);
+      const base = appointments.find((a) => a.id === editingId);
       if (!error && base) saved = { ...base, ...input };
     } else {
       const result = await addAppointment({ ...input, casa_id: currentCasa.id, user_id: user.id });
@@ -259,6 +263,15 @@ export default function CitasScreen() {
 
     if (saved) {
       void scheduleAppointmentAfterSave(saved, reminderChoice);
+      // Solo al crear: al editar la cita ya está anotada, así que no hay nada que
+      // confirmar. Y solo si hay recordatorio, que es lo que el servidor
+      // comprueba antes de confirmar nada.
+      if (!editingId && choice !== 'none') {
+        // No puede fallar el guardado: la cita ya está y el cron avisará igual.
+        // Es además un canal distinto del de las notificaciones locales, y solo
+        // existe en web, así que no se mira `areNotificationsEnabled()`.
+        void sendNowPush('appointment', saved.id).catch(() => {});
+      }
     }
   }
 

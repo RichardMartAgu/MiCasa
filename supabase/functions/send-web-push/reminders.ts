@@ -2,7 +2,9 @@
  * Lógica pura de recordatorios de la Edge Function `send-web-push`.
  *
  * Sin I/O: solo fechas, zonas horarias y texto. Así se puede testear con
- * `deno test` sin tocar Supabase ni la red.
+ * `deno test` sin tocar Supabase ni la red. Por eso este fichero NO importa nada
+ * de `@supabase/supabase-js`: leer una fila es trabajo de `handler.ts`, y aquí solo
+ * entra lo que se puede comprobar sin base de datos.
  *
  * Es el espejo de `src/lib/notification-schedule.ts` de la app: mismos horarios
  * (09:00 local) y mismos slots (día antes / mismo día). Si cambia uno, cambia el
@@ -110,7 +112,29 @@ function zoneOffsetMs(instant: Date, timeZone: string): number | null {
 }
 
 /**
- * Instante UTC que en la zona `timeZone` son las 09:00 del día local indicado.
+ * ¿Es un identificador de zona horaria que `Intl` entiende?
+ *
+ * La zona llega del cliente, así que no se puede confiar en ella. Un valor basura no
+ * revienta (los formateadores ya devuelven "" ante una zona inválida), pero sí
+ * haría que el texto saliera sin fecha o con una fecha equivocada, y el usuario
+ * leería un aviso que no cuadra. Mejor rechazarla y usar la zona de su suscripción.
+ *
+ * El tope de 64 caracteres no es arbitrario: es el `check` de la columna
+ * `push_subscriptions.timezone`, y por tanto el peor caso que puede venir de
+ * nuestra propia base de datos.
+ */
+export function isValidTimeZone(timeZone: unknown): timeZone is string {
+  if (typeof timeZone !== "string" || timeZone.length === 0 || timeZone.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Instancia UTC que en la zona `timeZone` son las 09:00 del día local indicado.
  * Devuelve null si la zona no es válida.
  */
 export function nineAmUtc(localDay: string, timeZone: string): Date | null {
@@ -333,6 +357,14 @@ export function buildAppointmentDispatches(
  * Recordatorios de cumpleaños. Se compara el mes y el día del cumpleaños con el día
  * local del evento, igual que el día local de una cita, de modo que ambos
  * comparten la misma noción de "mañana" y "hoy".
+ *
+ * La comparación va por `dayInYear` y no por una igualdad de mes-día, y esa es la
+ * diferencia que hace que los cumpleaños del 29 de febrero se avisen. Comparando
+ * mes-día, la fecha 02-29 no llega a existir como día real en un año que no es
+ * bisiesto y el aviso no salía nunca; normalizando, esos cumpleaños caen el 1 de
+ * marzo, que es el día que les toca. Es un cambio de comportamiento deliberado:
+ * antes de esto, un contacto nacido el 29/02 no recibía ningún aviso en los años
+ * no bisiestos, y con esto sí. La misma convención usa la app y `nextBirthdayDay`.
  */
 export function buildBirthdayDispatches(
   contacts: ContactRow[],
@@ -347,10 +379,10 @@ export function buildBirthdayDispatches(
   for (const contact of contacts) {
     if (!contact.birth_date) continue;
     const monthDay = contact.birth_date.slice(5, 10);
-    if (!/^\d{2}-\d{2}$/.test(monthDay)) continue;
+    if (!isMonthDay(monthDay)) continue;
 
     for (const candidate of candidatesFor(today, choice)) {
-      if (candidate.eventDay.slice(5) !== monthDay) continue;
+      if (dayInYear(Number(candidate.eventDay.slice(0, 4)), monthDay) !== candidate.eventDay) continue;
 
       const fireAt = nineAmUtc(candidate.fireDay, context.timeZone);
       if (!fireAt || !withinWindow(fireAt, context.window)) continue;
@@ -373,6 +405,254 @@ export function buildBirthdayDispatches(
 /** Clave de idempotencia: un aviso por referencia, slot y día local. */
 export function dedupeKey(dispatch: Dispatch): string {
   return `${dispatch.type}:${dispatch.refId}:${dispatch.slot}:${dispatch.localDay}`;
+}
+
+/**
+ * Avisa de confirmación del modo `now`: el usuario acaba de crear una cita o un
+ * cumpleaños y la función le confirma que el recordatorio queda anotado.
+ *
+ * Deliberadamente NO es un `Dispatch`: no lleva `slot` ni `localDay` porque no es
+ * un recordatorio. No salta el día antes ni el mismo día, salta ahora, y por eso
+ * tampoco puede compartir la clave de idempotencia del cron (ver `nowDedupeKey`).
+ */
+export interface NowDispatch {
+  type: ReminderType;
+  refId: string;
+  title: string;
+  body: string;
+  url: string;
+}
+
+/** Cómo se cuenta en español lo que va a avisar, según la preferencia. */
+const CHOICE_PHRASE: Record<Exclude<ReminderChoice, "none">, string> = {
+  "day-before": "Te avisaremos el día antes.",
+  "same-day": "Te avisaremos el mismo día.",
+  both: "Te avisaremos el día antes y el mismo día.",
+};
+
+/**
+ * "12 de marzo a las 10:00" / "12 de marzo", o "" si la zona no es válida.
+ * Se usa para que la confirmación diga la fecha REAL del evento: el texto no puede
+ * decir "mañana" si el cumpleaños es dentro de tres meses.
+ */
+export function formatWhen(instant: Date | string, timeZone: string): string {
+  const day = formatDayMonth(instant, timeZone);
+  if (day.length === 0) return "";
+  const time = formatTime(instant, timeZone);
+  return time.length > 0 ? `${day} a las ${time}` : day;
+}
+
+/** "10 de mayo". Devuelve "" si la zona horaria no la entiende `Intl`. */
+export function formatDayMonth(instant: Date | string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat("es-ES", {
+      timeZone,
+      day: "numeric",
+      month: "long",
+    }).format(new Date(instant));
+  } catch {
+    return "";
+  }
+}
+
+const MONTH_NAMES = [
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
+];
+
+/**
+ * "5 de octubre" a partir de un día `YYYY-MM-DD`.
+ *
+ * Sin zona horaria y a propósito, porque un cumpleaños es un día del calendario, no
+ * un instante. Formatearlo como instante desplazaba el texto de dos maneras: a las
+ * 00:00Z en Madrid salía "5 de octubre a las 02:00" (una hora que el cumpleaños no
+ * tiene), y en cualquier zona al este de UTC+12 el día se corría al siguiente. El
+ * texto acaba en la notificación del móvil de alguien, y decir "mañana" o una hora
+ * que no existe es peor que no decir fecha.
+ */
+export function formatMonthDay(day: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return "";
+  const month = Number(day.slice(5, 7)) - 1;
+  const name = MONTH_NAMES[month];
+  if (name === undefined) return "";
+  return `${Number(day.slice(8, 10))} de ${name}`;
+}
+
+/** "2026-03-01" a partir de un `Date` en UTC. */
+function toIsoDay(date: Date): string {
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${String(date.getUTCFullYear()).padStart(4, "0")}-${month}-${day}`;
+}
+
+/**
+ * La fecha que ocupa un mes-día en el calendario de `year`, o sea con la
+ * normalización de `Date`: el 29 de febrero sigue siendo el 29 en un año bisiesto y
+ * cae el 1 de marzo en los que no lo son.
+ *
+ * Esa normalización ES la convención, no un accidente: es lo mismo que hace la app
+ * con `new Date(año, 1, 29)`, así que un 29/02 avisa el 1 de marzo en vez de
+ * desaparecer hasta el siguiente año bisiesto. Antes esta Edge saltaba al próximo
+ * bisiesto (2028) y la app agendaba el 1 de marzo de 2027: el push de confirmación
+ * decía una cosa y el aviso de verdad salía otro día, o nunca.
+ *
+ * El año se fija con `setUTCFullYear` y no con el argumento de `Date.UTC` porque
+ * ese argumento interpreta los años de dos cifras como 19xx: un año 0095 salía
+ * 1995, que es un cumpleaños inventado a 1900 años vista.
+ */
+function dayInYear(year: number, monthDay: string): string {
+  const probe = new Date(Date.UTC(2000, Number(monthDay.slice(0, 2)) - 1, Number(monthDay.slice(3, 5))));
+  probe.setUTCFullYear(year);
+  return toIsoDay(probe);
+}
+
+/** ¿El mes-día tiene forma de mes-día y cabe en un mes? No comprueba el año. */
+function isMonthDay(monthDay: string): boolean {
+  if (!/^\d{2}-\d{2}$/.test(monthDay)) return false;
+  const month = Number(monthDay.slice(0, 2));
+  const day = Number(monthDay.slice(3, 5));
+  return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
+/**
+ * La siguiente fecha (YYYY-MM-DD) en la que se cumple el mes y día de `birthDate`,
+ * a partir de `today` incluida.
+ *
+ * Con la normalización de `dayInYear`, un 29 de febrero se cumple el 1 de marzo de
+ * los años que no lo tienen, que es la fecha que usa la app (ver
+ * `src/lib/birthdays.ts`). Solo se prueban este año y el siguiente porque la
+ * normalización nunca mueve la fecha hacia atrás de enero: con eso basta, y así es
+ * imposible devolver algo pasado por haber buscado un año de más.
+ *
+ * La fecha de nacimiento sí tiene que existir en su propio año: un 30 de febrero no
+ * existe en ninguno y un 29/02 de un año que no lo tiene no es un cumpleaños que la
+ * app pueda enseñar (`safeDate` lo descarta). Normalizar en silencio esos casos
+ * inventaría una fecha que el cliente nunca muestra.
+ */
+export function nextBirthdayDay(birthDate: string, today: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) return null;
+  const monthDay = birthDate.slice(5, 10);
+  if (!isMonthDay(monthDay)) return null;
+  if (dayInYear(Number(birthDate.slice(0, 4)), monthDay) !== birthDate) return null;
+
+  const startYear = Number(today.slice(0, 4));
+
+  for (let year = startYear; year <= startYear + 1; year++) {
+    const candidate = dayInYear(year, monthDay);
+    // Cadenas "YYYY-MM-DD": ordenan igual que cronológicamente.
+    if (candidate >= today) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Última frase del cuerpo: cuándo es y qué va a pasar.
+ *
+ * `when` llega ya formateado porque una cita es un instante (día y hora) y un
+ * cumpleaños es solo un día del calendario, y los dos no se pueden tratar igual: ver
+ * `formatWhen` y `formatMonthDay`.
+ */
+function confirmationBody(when: string, choice: Exclude<ReminderChoice, "none">): string {
+  const lead = when.length > 0 ? `Es el ${when}. ` : "";
+  return truncate(`${lead}${CHOICE_PHRASE[choice]}`);
+}
+
+/**
+ * Confirmación de una cita recién creada. `null` si no hay recordatorio que
+ * confirmar, que para el llamador es un 404 y no un error.
+ */
+export function buildNowAppointmentDispatch(input: {
+  refId: string;
+  title: string;
+  startsAt: string;
+  choice: ReminderChoice;
+  timeZone: string;
+}): NowDispatch | null {
+  if (input.choice === "none") return null;
+  return {
+    type: "appointment",
+    refId: input.refId,
+    title: `Cita: ${truncate(input.title, 60)}`,
+    body: confirmationBody(formatWhen(input.startsAt, input.timeZone), input.choice),
+    url: "/citas",
+  };
+}
+
+/**
+ * Confirmación de un cumpleaños recién creado. `null` si no hay recordatorio que
+ * confirmar.
+ *
+ * No lleva `timeZone` a propósito, y no es un descuido: un cumpleaños es un día del
+ * calendario, así que la fecha se formatea sin zona (ver `formatMonthDay`). Si se
+ * aceptara una zona, el texto dependería de ella sin motivo.
+ *
+ * A diferencia del recordatorio del cron, esta función NO exige que el cumpleaños
+ * caiga hoy o mañana. La fecha se resuelve hacia adelante, así que un contacto
+ * creado con un cumpleaños dentro de tres meses también se confirma, diciendo la
+ * fecha de verdad. Antes solo se construía el aviso si el cumpleaños caía en la
+ * ventana de día antes / mismo día, lo que dejaba esta función sin efecto en el
+ * caso normal de uso.
+ */
+export function buildNowBirthdayDispatch(input: {
+  refId: string;
+  name: string;
+  birthDate: string | null;
+  choice: ReminderChoice;
+  today: string;
+}): NowDispatch | null {
+  if (input.choice === "none") return null;
+  const next = input.birthDate ? nextBirthdayDay(input.birthDate, input.today) : null;
+  if (next === null) return null;
+  return {
+    type: "birthday",
+    refId: input.refId,
+    title: `Cumpleaños: ${truncate(input.name, 60)}`,
+    body: confirmationBody(formatMonthDay(next), input.choice),
+    url: "/cumpleanos",
+  };
+}
+
+/**
+ * Clave de idempotencia del modo `now`, en un espacio de nombres PROPIO.
+ *
+ * El prefijo `now:` no es decorativo: `dedupeKey` devuelve
+ * `${type}:${refId}:${slot}:${localDay}`, que es exactamente la fila que el cron
+ * inserta para el recordatorio real. Si las dos compartieran clave, la
+ * confirmación se comería el recordatorio, y el usuario se quedaría sin el aviso
+ * que le importa a cambio del que solo le confirma lo que acaba de hacer.
+ *
+ * El bucket va por USUARIO y no por referencia, y es lo que frena el bucle: lo que
+ * hay que impedir son peticiones repetidas sin nada que entregar (cada una cuesta
+ * una validación de sesión, dos llamadas a Vault y varias consultas), no dos avisos
+ * del mismo evento. `bucket` viene del reloj del llamador, no de aquí, para que este
+ * módulo siga sin leer la hora.
+ *
+ * Lo que la fila significa, escrito aquí para que no se lea de otra manera: NO es
+ * "esta referencia quedó confirmada", es "este usuario pidió una confirmación dentro
+ * de este minuto". La reserva se pide antes de validar el tipo, el id y antes de
+ * consultar nada (ver `runNowPush`), así que hasta un `id` que no existe deja fila.
+ *
+ * El canje de ese espacio de nombres por usuario es deliberado y tiene un precio
+ * concreto: guardar un cumpleaños y una cita dentro del mismo minuto hace que la
+ * SEGUNDA respuesta sea "omitida" sin mandar push, porque la clave ya está ocupada.
+ * Es aceptable porque los dos call sites hacen fire-and-forget e ignoran el
+ * retorno —la UI no se entera—, y porque el caso real es una persona creando una
+ * cosa y guardando la otra un momento después. Con la clave por referencia, el
+ * bucle volvería a entrar por la vía de un `id` que no existe.
+ */
+export function nowDedupeKey(userId: string, bucket: number): string {
+  return `now:${userId}:${bucket}`;
 }
 
 /** Fin de la ventana de consulta de citas: hoy más el horizonte. */
