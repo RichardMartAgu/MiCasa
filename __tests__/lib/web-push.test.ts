@@ -1675,6 +1675,54 @@ describe('sendNowPush: confirmar que una cita o un cumpleaños queda avisado', (
 
     await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({ ok: true, delivered: 0 });
   });
+
+  // Los tres de aquí son la razón por la que el parser lee `error` y
+  // `retryInSeconds` FUERA del `!response.ok`. Sin ellos, este bloque entero se
+  // puede borrar y la suite sigue en verde: se comprobó mutando el fichero.
+
+  it('el enfriamiento llega en un 200 y no se pierde por mirar solo el status', async () => {
+    // El servidor responde 200 también cuando la petición se come el enfriamiento
+    // (`skipped`). Si el motivo y la espera se leyeran solo dentro del
+    // `!response.ok`, aquí volvería 'error inesperado' sin segundos: quien
+    // reintenta no sabría ni por qué ni cuánto esperar.
+    stubFetch(async () =>
+      stubResponse(
+        { ok: false, skipped: true, error: 'ya se confirmo en este minuto', retryInSeconds: 42 },
+        true,
+      ),
+    );
+
+    await expect(sendNowPush('birthday', 'c1')).resolves.toEqual({
+      ok: false,
+      error: 'ya se confirmo en este minuto',
+      retryInSeconds: 42,
+    });
+  });
+
+  it('un 404 dice cuánto queda para reintentar, no solo que hay que esperar', async () => {
+    // El otro camino que trae `retryInSeconds`: nadie tiene suscripciones activas.
+    stubFetch(async () =>
+      stubResponse({ ok: false, error: 'sin suscripciones activas', retryInSeconds: 37 }, false),
+    );
+
+    await expect(sendNowPush('appointment', 'a1')).resolves.toEqual({
+      ok: false,
+      error: 'sin suscripciones activas',
+      retryInSeconds: 37,
+    });
+  });
+
+  it('unos segundos que no son número no se pasan como espera', async () => {
+    // `retryInSeconds` sin validar sería peor que no traerlo: quien lo leyera se
+    // saltaría una espera con un valor de otro tipo.
+    stubFetch(async () =>
+      stubResponse({ ok: false, error: 'sin suscripciones activas', retryInSeconds: 'mucho' }, false),
+    );
+
+    const result = await sendNowPush('birthday', 'c1');
+    expect(result).toEqual({ ok: false, error: 'sin suscripciones activas' });
+    expect(result.retryInSeconds).toBeUndefined();
+  });
 });
 
 describe('la clave VAPID del frontend', () => {

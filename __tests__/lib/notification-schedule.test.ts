@@ -258,6 +258,55 @@ describe('slotForBirthday', () => {
     expect(sameDay).toBe('birthday:c1:same-day');
     expect(dayBefore).not.toBe(sameDay);
   });
+
+  // El 29 de febrero importa aquí por una razón distinta: `new Date(2026, 1, 29)`
+  // no es el 28 ni el 29 de marzo, es el 1 de marzo. O sea que en un año que no es
+  // bisiesto el "próximo cumpleaños" que calcula `nextBirthday` cae un día más
+  // tarde de lo que un calendario esperaría, y el aviso del día antes tiene que
+  // salir el 28 de febrero igualmente. Si esto se rompe, el aviso se agenda un día
+  // tarde o se pierde el identificador por la clave compartida.
+
+  it('29-feb en un año que no es bisiesto: el aviso del día antes es el 28-feb', () => {
+    // Nacimiento real: 2024 sí es bisiesto. Ahora, enero de 2026: el próximo
+    // cumpleaños es `new Date(2026, 1, 29)`, que es el 1 de marzo de 2026.
+    const birth = new Date(2024, 1, 29);
+    const now = new Date(2026, 0, 10);
+
+    expect(slotForBirthday(new Date(2026, 1, 28, 9, 0), birth, now)).toBe('day-before');
+    expect(slotForBirthday(new Date(2026, 2, 1, 9, 0), birth, now)).toBe('same-day');
+  });
+
+  it('29-feb en un año bisiesto: el aviso del día antes es el 28-feb y el de hoy el 29', () => {
+    const birth = new Date(2024, 1, 29);
+    const now = new Date(2024, 0, 10);
+
+    expect(slotForBirthday(new Date(2024, 1, 28, 9, 0), birth, now)).toBe('day-before');
+    expect(slotForBirthday(new Date(2024, 1, 29, 9, 0), birth, now)).toBe('same-day');
+  });
+
+  it('los dos avisos de un 29-feb tampoco se pisan entre sí', () => {
+    // El bug original con la fecha más difícil: si los dos slots colapsaran en la
+    // misma clave del mapa, el del día antes se guardaría con el texto "Cumpleaños
+    // hoy" y su identificador se perdería, así que `cancelKeys` no podría
+    // cancelarlo y dispararía igual.
+    const birth = new Date(2024, 1, 29);
+    const now = new Date(2026, 0, 10);
+
+    const dayBefore = notificationKey(
+      'birthday',
+      'c1',
+      slotForBirthday(new Date(2026, 1, 28, 9, 0), birth, now),
+    );
+    const sameDay = notificationKey(
+      'birthday',
+      'c1',
+      slotForBirthday(new Date(2026, 2, 1, 9, 0), birth, now),
+    );
+
+    expect(dayBefore).toBe('birthday:c1:day-before');
+    expect(sameDay).toBe('birthday:c1:same-day');
+    expect(dayBefore).not.toBe(sameDay);
+  });
 });
 
 describe('fingerprints', () => {
