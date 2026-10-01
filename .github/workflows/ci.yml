@@ -81,8 +81,10 @@ jobs:
       #
       # La versión va fijada, y no a latest: una minor de Deno que cambiara el
       # resolver o el typechecker pondría en rojo PRs que no han tocado la
-      # función. Se sube aquí a mano. Para replicarlo en local,
-      # `npm run test:functions`.
+      # función. Se sube aquí a mano. En local los equivalentes son
+      # `npm run check:functions` y `npm run test:functions`, que van con
+      # `npx -y deno` y por tanto con la última: aquí prima que dos ejecuciones
+      # del mismo día resuelvan lo mismo.
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.9.6
@@ -90,13 +92,27 @@ jobs:
       - name: Typecheck de la Edge Function
         run: deno check --node-modules-dir=none supabase/functions/send-web-push/
 
+      # `--allow-env` no lo pide ningún test: los 34 Injectan su propio `ENV`.
+      # Lo pide `npm:web-push`, que lee `process.env` al importarse, así que sin
+      # este permiso importar el paquete revienta. Es decir, el permiso ata la
+      # suite a lo que haga ese paquete con el entorno, no a lo que haga MiCasa.
+      # Aquí no hay secretos: el único `env:` del workflow lleva `vars.*`.
+      #
+      # `--allow-read` acotado a la carpeta: un test lee el fuente de `handler.ts`
+      # y sin `=` el permiso sería todo el disco del runner.
+      #
+      # Sin `--allow-net` a propósito, y es una barrera: un test que intentara
+      # hablar con Supabase falla en vez de exfiltrar.
       - name: Test de la Edge Function
-        run: deno test --allow-env --allow-read --node-modules-dir=none supabase/functions/send-web-push/
+        run: deno test --allow-env --allow-read=supabase/functions/send-web-push --node-modules-dir=none supabase/functions/send-web-push/
 
-      # Si a `deno.lock` le falta una entrada, Deno la añade y sigue. En el
-      # runner eso se pierde: el job pasa en verde y el lock del repo se queda
-      # corto para el siguiente. Es el mismo problema que ya historiaron con el
-      # lock de npm, y por eso se avisa en lugar de dejar que pase.
+# Si a `deno.lock` le falta una entrada, Deno la añade y sigue. En el runner eso
+      # se pierde: el job queda verde y el lock se queda corto para el siguiente.
+      #
+      # Este lock sí está commiteado, aunque `.gitignore` mencione `deno.lock`:
+      # esa regla es para el lock de la raíz, que contiene el árbol de Expo y no
+      # lo ejecuta nadie. Al estar ya trackeado, la regla no le afecta. Es un
+      # paso con teeth, comprobado: introduces una línea y sale con código 1.
       - name: Lock de Deno sin cambios
         run: git diff --exit-code -- supabase/functions/send-web-push/deno.lock
 
