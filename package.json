@@ -75,7 +75,7 @@
     "lint": "expo lint",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:functions": "cd supabase/functions/send-web-push && npx -y deno test --frozen --allow-env --allow-read=. --node-modules-dir=none .",
+    "test:functions": "cd supabase/functions/send-web-push && npx -y deno test --frozen --allow-env --node-modules-dir=none .",
     "check:functions": "cd supabase/functions/send-web-push && npx -y deno check --frozen --node-modules-dir=none .",
     "typecheck": "tsc --noEmit",
     "build:sw": "esbuild sw-src.js --bundle --format=iife --target=es2020 --outfile=sw-bundle.js",

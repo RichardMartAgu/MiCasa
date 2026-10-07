@@ -86,31 +86,97 @@ interface PushSecrets {
  * service role ni la lectura de la clave VAPID privada.
  */
 /**
- * Si esta suscripción no puede volver a funcionar nunca.
+ * ¿Este error deja la suscripción inservible para siempre?
  *
- * Un 404 o un 410 del servicio de push significa que el endpoint caducó, y eso ya
- * lo treatment el llamador. Lo que no estaba tratado es el otro caso permanent: unas
- * claves que el navegador no puede haber dado de verdad. Medido: una fila con
- * `p256dh` de nueve caracteres, suficiente para pasar cualquier validación de
- * forma pero imposible de cifrar, hacia que `web-push` lanzara un `TypeError` al
- * descifrar. Esa fila no se borraba nunca: el botón de aviso de prueba fallaba con
- * un error de criptografía en la cara de la persona, y el reparto la reintentaba
- * cada cinco minutos para siempre.
+ * El caso que motivó el fichero: en producción había una fila con `p256dh` de nueve
+ * caracteres. Pasa cualquier validación de forma —es base64url, no hay espacios, no
+ * está vacía— y es imposible de cifrar, así que esa fila no se borraba nunca. El
+ * botón de aviso de prueba fallaba con un error de criptografía en la cara de la
+ * persona, y el reparto la reintentaba cada cinco minutos para siempre.
  *
- * Se distinguen de un fallo de red, que sí es transitorio: aquí el error es de
- * tipo, no de estado, y viene de leer las claves.
+ * El listón es deliberadamente altísimo, y por una razón que costó un incidente:
+ * borrar una fila no lo revierte nada del lado del servidor. Solo se recupera si
+ * esa persona apaga y enciende el push a mano, sin ningún aviso de que toque. Así
+ * que un falso positivo le cuesta a alguien real todos sus avisos, y un falso
+ * negativo cuesta un reintento más. Ante la duda, la suscripción se conserva.
+ *
+ * Se distinguen de un fallo de red, que sí es transitorio: aquí el error describe
+ * datos que no van a mejorar solos.
+ *
+ * Solo se borra cuando el mensaje NOMBRA el material de la suscripción. Un error
+ * genérico del criptográfico no clasifica, porque no se puede atribuir: el mismo
+ * "error:1E08010C:DECODER routines::unsupported" lo produce una clave VAPID del
+ * servidor mal puesta, y eso es configuración compartida por todos.
+ *
+ * Los literales son de `encryption-helper.js` y de `web-push-lib.js` en
+ * web-push@3.6.7:
+ *   'The subscription p256dh value should be 65 bytes long.'
+ *   'The subscription auth key should be at least 16 bytes long.'
+ *   'To send a message with a payload, the subscription must have \'auth\' and \'p256dh\' keys.'
+ *
+ * Ninguno es un `TypeError`: web-push lanza `Error` plano para todo lo que no es
+ * respuesta HTTP. Una versión anterior exigía `instanceof TypeError` y dejaba este
+ * predicado como código muerto, con el caso real —el `p256dh` de nueve caracteres—
+ * pasando por el contador en vez de por aquí. Cinco ejecuciones después la
+ * suscripción quedaba apagada, que es peor que reintentar: se perdían los avisos
+ * sin dejar rastro en ningún log.
  */
+// Los dos literales de `encryption-helper.js` que NO están aquí, a propósito:
+// 'No user public key provided for encryption.' y 'No user auth provided for
+// encryption.' Hoy son inalcanzables: `sendNotification` llama a
+// `generateRequestDetails` ANTES de cifrar, y ahí ya lanza el mensaje de
+// 'auth' y 'p256dh' que sí está en la lista. Se anotan porque si un upgrade de
+// `web-push` reordenara el cifrado antes de la validación, entrarían por la vía del
+// contador y apagarían suscripciones a los cinco ciclos, en silencio. Quien suba
+// la versión del paquete tiene que volver a comprobar este orden.
+const UNUSABLE_SUBSCRIPTION_MARKERS: readonly string[] = [
+  // `encryption-helper.js`.
+  "subscription p256dh value",
+  "subscription auth key",
+  // `web-push-lib.js`, que valida la suscripción ANTES de cifrar y con literales
+  // distintos. Sin estos, una suscripción con `p256dh` o `auth` vacíos —que
+  // `encryption-helper` ni llega a ver— caía en el contador y a los cinco ciclos
+  // quedaba apagada sin dejar rastro.
+  "subscription must have 'auth' and 'p256dh' keys",
+  "subscription endpoint must be a string",
+  "subscription with at least an endpoint",
+];
+
 export function isUnusableSubscription(error: unknown): boolean {
-  if (!(error instanceof TypeError)) return false;
-  const message = String((error as Error).message ?? "").toLowerCase();
-  return message.includes("base64") || message.includes("decode") || message.includes("key");
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  if (isVapidConfigurationError(message)) return false;
+  return UNUSABLE_SUBSCRIPTION_MARKERS.some((marker) => message.includes(marker));
 }
+
+/**
+ * ¿El mensaje no se puede atribuir a la suscripción sino a la configuración?
+ *
+ * Hace falta por dos motivos. Uno: un mensaje de `vapid-helper.js` que contenga
+ * un marcador no debe confundirse con material de suscripción. Dos, y el importante:
+ * ampliar la lista de arriba en el futuro no debe poder reintroducir el fallo por
+ * el camino corto, que es borrar la flota entera por una VAPID mal puesta.
+ */
+function isVapidConfigurationError(lowerMessage: string): boolean {
+  // Solo se comprueba que el mensaje nombre VAPID, y nada más. El caso difícil —
+  // una clave VAPID de 65 bytes que revienta en `createECDH` con un mensaje
+  // indistinguible del criptográfico— se resuelve en la OTRA dirección: la lista
+  // de marcadores no incluye palabras del criptográfico, así que ese error nunca
+  // clasifica.
+  //
+  // Se probó mantener aquí también el filtro criptográfico, y es un error: dos
+  // mecanismos que se compensan. Al quitar cualquiera de los dos, el otro tapaba
+  // el fallo y la suite seguía en verde, que es justo cuando un mecanismo se
+  // queda sin comprobar.
+  return lowerMessage.includes("vapid");
+}
+
 
 async function readSecret(db: Db, name: string, fallback: string): Promise<string> {
   if (fallback.length > 0) return fallback;
   const { data, error } = await db.rpc("push_service_secret", { secret_name: name });
   if (error) {
-    console.error(`send-web-push: no se pudo leer el secreto ${name} de Vault`, error);
+    console.error(`send-web-push: no se pudo leer el secreto ${name} de Vault`, String(error));
     return "";
   }
   return typeof data === "string" ? data : "";
@@ -165,9 +231,27 @@ interface Group {
   subs: SubscriptionRow[];
 }
 
-function groupByUserAndTimezone(subs: SubscriptionRow[]): Group[] {
+function groupByUserAndTimezone(subs: SubscriptionRow[], zonasInvalidasVistas: Set<string>): Group[] {
   const groups = new Map<string, Group>();
   for (const sub of subs) {
+    // Una zona que `Intl` no entiende se queda fuera del reparto, y no se intenta
+    // avisar con ella. `push_subscriptions.timezone` solo tiene un `check` de 64
+    // caracteres, así que el valor viene de la base y no de una validación: sin
+    // este filtro, `Intl` lanzaba `RangeError` dentro de `buildDispatches` y tumbaba
+    // el lote entero. No recibía nadie ese ciclo —tampoco las casas que no tienen
+    // nada que ver con esa fila— y con `sync=1` además devolvía un 500.
+    //
+    // Se descarta la fila y se avisa una vez por ejecución, porque una suscripción
+    // con la zona rota seguiría intentándolo en cada reparto mientras nadie mire.
+    if (!isValidTimeZone(sub.timezone)) {
+      if (!zonasInvalidasVistas.has(sub.id)) {
+        zonasInvalidasVistas.add(sub.id);
+        console.error(
+          `send-web-push: suscripción con zona horaria no válida, se omite sub=${sub.id}`,
+        );
+      }
+      continue;
+    }
     const key = `${sub.user_id}|${sub.timezone}`;
     const existing = groups.get(key);
     if (existing) existing.subs.push(sub);
@@ -175,6 +259,7 @@ function groupByUserAndTimezone(subs: SubscriptionRow[]): Group[] {
   }
   return [...groups.values()];
 }
+
 
 type Db = SupabaseClient;
 
@@ -187,10 +272,26 @@ function defaultCreateDb(supabaseUrl: string, serviceRoleKey: string): Db {
   });
 }
 
-/** Lo que los tests sustituyen: con qué base de datos y con qué reloj. */
+/**
+ * Lo mínimo de `web-push` que usa la función. Existe para poder sustituirlo en un
+ * test: `setVapidDetails` guarda el remitente en estado de módulo, así que si el
+ * módulo real se usa en un test la configuración de un test se fuga al siguiente
+ * y no hay forma de afirmar que se llamó antes de enviar.
+ */
+export interface WebPushLike {
+  setVapidDetails(subject: string, publicKey: string, privateKey: string): void;
+  sendNotification(
+    subscription: { endpoint: string; keys: { p256dh: string; auth: string } },
+    payload: string,
+    options: { TTL: number; urgency: string },
+  ): Promise<unknown>;
+}
+
+/** Lo que los tests sustituyen: con qué base de datos, con qué reloj y con qué push. */
 export interface HandlerDeps {
   createDb?: DbFactory;
   now?: () => number;
+  push?: WebPushLike;
 }
 
 /**
@@ -214,7 +315,7 @@ async function fetchCasaIds(db: Db, userId: string): Promise<string[] | null> {
     .eq("user_id", userId);
 
   if (error) {
-    console.error("send-web-push: no se pudieron leer las casas del usuario", error);
+    console.error("send-web-push: no se pudieron leer las casas del usuario", String(error));
     return null;
   }
   return ((data ?? []) as { casa_id: string }[]).map((m) => m.casa_id);
@@ -240,7 +341,7 @@ async function fetchAppointments(
     .lte("starts_at", appointmentQueryUpperBound(now).toISOString());
 
   if (error) {
-    console.error("send-web-push: no se pudieron leer las citas", error);
+    console.error("send-web-push: no se pudieron leer las citas", String(error));
     return null;
   }
   return (data ?? []) as AppointmentRow[];
@@ -257,7 +358,7 @@ async function fetchBirthdayContacts(db: Db, casaIds: string[]): Promise<Contact
     .not("birth_date", "is", null);
 
   if (error) {
-    console.error("send-web-push: no se pudieron leer los contactos", error);
+    console.error("send-web-push: no se pudieron leer los contactos", String(error));
     return null;
   }
   return (data ?? []) as ContactRow[];
@@ -289,7 +390,7 @@ async function buildDispatches(
       // Fallo cerrado: si no se puede leer la preferencia, no se envía nada. Con
       // la otra opción, un error transitorio de la base reactivaba los avisos de
       // un usuario que los tenía apagados.
-      console.error("send-web-push: no se pudieron leer las preferencias", prefsError);
+      console.error("send-web-push: no se pudieron leer las preferencias", String(prefsError));
       continue;
     }
 
@@ -308,6 +409,7 @@ async function buildDispatches(
     const appointments = await fetchAppointments(db, group.userId, casaIds, now, from);
     if (appointments !== null) {
       out.push(...buildAppointmentDispatches(appointments, context).map((d) => ({ ...d, ...target })));
+
     }
 
     const choice = birthdayChoiceFor(pref);
@@ -333,20 +435,86 @@ interface SendResult {
    * `push_log` dejaría el aviso reintentable en bucle con un motivo falso.
    */
   readFailed: boolean;
+  /**
+   * Algún envío falló por la configuración del servidor y no por la suscripción.
+   * Quien llama lo necesita para no responder "no tienes suscripciones" a alguien
+   * que sí las tiene: es la diferencia entre un motivo verdad y uno inventado.
+   */
+  infraFailed: boolean;
+}
+
+/**
+ * Configura las claves VAPID del módulo `webpush`.
+ *
+ * `web-push` guarda el remitente en estado de módulo y no en el envío, así que
+ * hay que configurarlo ANTES de cada tanda. Los isolates de Edge Functions son
+ * efímeros: un lote que arranque en frío no hereda nada de otro, y sin esto
+ * `sendNotification` lanza por falta de remitente.
+ *
+ * Existe como función y no como línea en cada sitio porque HAY dos sitios que
+ * envían —`sendToUser` y el bucle del repartidor— y esa duplicación ya costó un
+ * bug: al extraer `sendToUser` se movió la llamada dentro de él con un
+ * comentario que decía que era el único que enviaba, y el repartidor se quedó
+ * sin VAPID. Desde entonces ningún recordatorio de día antes ni del mismo día
+ * salió, y como el fallo se tragaba la reserva de `push_log` no dejaba ni fila.
+ * Quien añada un tercer sitio tiene que llamar a esto primero.
+ */
+function configureWebPush(push: WebPushLike, secrets: PushSecrets): void {
+  push.setVapidDetails(secrets.subject, secrets.publicKey, secrets.privateKey);
+}
+
+/**
+ * Identificador de un aviso para los logs, sin la zona horaria.
+ *
+ * Hace falta porque `dedupeKey` lleva la zona —para que dos navegadores en zonas
+ * distintas no compartan la reserva— y eso significa que imprimir `key` en los logs
+ * sacaba la zona del servidor al log retenido, que es justo lo que la regla del
+ * módulo prohíbe: la zona, junto con el resto de la fila de la suscripción,
+ * identifica a una persona concreta y cualquiera con acceso al proyecto lo lee.
+ *
+ * Lo que sale es lo mismo que ya identificaba un aviso: tipo, referencia, slot y
+ * día local. Si dos navegadores de la misma persona reciben el mismo aviso, en el
+ * log se ven dos líneas iguales, y eso es aceptable: la pregunta que responde un
+ * log es "qué aviso es" y "se entregó o no", no "a qué zona ha ido".
+ */
+function claveDeDiagnostico(dispatch: TargetedDispatch): string {
+  return `${dispatch.type}:${dispatch.refId}:${dispatch.slot}:${dispatch.localDay}`;
+}
+
+/**
+ * ¿Este fallo es de la infraestructura y no de la suscripción?
+ *
+ * Un 401 o un 403 del push service no dice nada de la suscripción: dice que las
+ * claves VAPID están mal, que se han rotado o que hay una configuración de gateway
+ * rota. Es lo mismo para todos los usuarios a la vez. Contarlo como fallo de la
+ * suscripción apagaba la flota entera en silencio, que es el modo de fallo más caro
+ * que hay: nadie recibe avisos, y recuperar cada suscripción apagada exige que
+ * esa persona apague y encienda el push a mano, sin ningún aviso de que toca.
+ *
+ * Es también el fallo que costó los recordatorios de este repo: un `setVapidDetails`
+ * que no se llamaba lanzaba aquí, se contaba como fallo de la suscripción, y a los
+ * cinco intentos la suscripción quedaba apagada. Por eso esto se decide por el
+ * código de estado y no por "no se pudo enviar".
+ *
+ * Lo que NO entra aquí: 429, 5xx y fallos de red. Esos sí son transitorios y sí son
+ * de la suscripción a efectos de reintentar, que es lo que hace el contador.
+ */
+export function isInfrastructureFailure(error: unknown): boolean {
+  const status = (error as { statusCode?: number } | null)?.statusCode;
+  return status === 401 || status === 403;
 }
 
 /** Envía un payload ya construido a las suscripciones de un usuario. */
 async function sendToUser(
   db: Db,
+  push: WebPushLike,
   secrets: PushSecrets,
   userId: string,
   payload: { title: string; body: string; data: { type: string; id: string; url: string } },
 ): Promise<SendResult> {
-  // Configurar las claves VAPID aquí y no en quien llama: `sendToUser` es el
-  // único sitio que despacha, y hay dos caminos que llegan (el dispatcher y el
-  // aviso de prueba). Configurarlas solo en el dispatcher dejaba al aviso de
-  // prueba enviando sin VAPID, que es un rechazo del.push service.
-  webpush.setVapidDetails(secrets.subject, secrets.publicKey, secrets.privateKey);
+  // Se configura aquí y no en quien llama porque quien llama son dos sitios
+  // distintos y el que se olvidara fue el repartidor; ver `configureWebPush`.
+  configureWebPush(push, secrets);
 
   const { data: subs, error } = await db
     .from("push_subscriptions")
@@ -355,16 +523,17 @@ async function sendToUser(
     .eq("active", true);
 
   if (error) {
-    console.error("send-web-push: no se pudieron leer las suscripciones del usuario", error);
-    return { delivered: 0, removed: 0, readFailed: true };
+    console.error("send-web-push: no se pudieron leer las suscripciones del usuario", String(error));
+    return { delivered: 0, removed: 0, readFailed: true, infraFailed: false };
   }
 
   let delivered = 0;
   const dead: string[] = [];
+  let infraFailed = false;
 
   for (const sub of (subs ?? []) as { id: string; endpoint: string; p256dh: string; auth: string }[]) {
     try {
-      await webpush.sendNotification(
+      await push.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
         JSON.stringify({
           title: payload.title,
@@ -387,17 +556,26 @@ async function sendToUser(
         .update({ last_success_at: new Date().toISOString(), failure_count: 0 })
         .eq("id", sub.id);
     } catch (error) {
-      const status = (error as { statusCode?: number }).statusCode;
+      const status = (error as { statusCode?: number } | null)?.statusCode;
       if (status === 404 || status === 410 || isUnusableSubscription(error)) {
         dead.push(sub.id);
         continue;
       }
-      console.error("send-web-push: fallo enviando el aviso de prueba", error);
+      if (isInfrastructureFailure(error)) {
+        // La configuración, no la suscripción. Se distingue porque quien llama
+        // responde con un motivo: sin esto, un push service con las claves VAPID
+        // rotas devolvía "no tienes suscripciones activas" a alguien que sí las
+        // tenía, y además quemaba el enfriamiento con ese motivo falso.
+        infraFailed = true;
+        console.error("send-web-push: fallo de infraestructura en el envío", String(error));
+        continue;
+      }
+      console.error("send-web-push: fallo enviando el aviso de prueba", String(error));
     }
   }
 
   if (dead.length > 0) await db.from("push_subscriptions").delete().in("id", dead);
-  return { delivered, removed: dead.length, readFailed: false };
+  return { delivered, removed: dead.length, readFailed: false, infraFailed };
 }
 
 /**
@@ -432,6 +610,7 @@ const TEST_PUSH_COOLDOWN_MS = 5 * 60_000;
 
 async function runTestPush(
   db: Db,
+  push: WebPushLike,
   secrets: PushSecrets,
   userId: string,
   now: number,
@@ -443,7 +622,7 @@ async function runTestPush(
 
   if (claimError) {
     if (claimError.code !== "23505") {
-      console.error("send-web-push: no se pudo registrar el aviso de prueba", claimError);
+      console.error("send-web-push: no se pudo registrar el aviso de prueba", String(claimError));
       return { ok: false, error: "no se pudo registrar el aviso" };
     }
     return {
@@ -453,7 +632,7 @@ async function runTestPush(
     };
   }
 
-  const result = await sendToUser(db, secrets, userId, {
+  const result = await sendToUser(db, push, secrets, userId, {
     title: "MiCasa: aviso de prueba",
     body: "Si lees esto, los avisos de verdad te llegaran con el movil bloqueado.",
     data: { type: "test", id: userId, url: "/" },
@@ -463,6 +642,13 @@ async function runTestPush(
   // botón reintentable en bucle con un motivo falso en la cara.
   if (result.readFailed) {
     return { ok: false, error: "no se pudieron leer tus suscripciones" };
+  }
+
+  if (result.infraFailed) {
+    // Va ANTES del `delivered === 0` a propósito: con la configuración rota no
+    // hay suscripciones que avisar, pero el motivo no es que no las tenga. Y la
+    // reserva se queda, que es lo que hace de enfriamiento.
+    return { ok: false, error: "el servidor no pudo enviar: configuracion de push rota" };
   }
 
   if (result.delivered === 0) {
@@ -557,6 +743,7 @@ const NOW_PUSH_COOLDOWN_MS = 60_000;
 
 async function runNowPush(
   db: Db,
+  push: WebPushLike,
   secrets: PushSecrets,
   userId: string,
   params: URLSearchParams,
@@ -613,7 +800,7 @@ async function runNowPush(
     // Cualquier otro error es de la base de datos, no una duplicidad. Aquí sí se
     // aborta: seguir significaría enviar sin haber reservado nada, que es el
     // duplicado que `push_log` existe para evitar.
-    console.error("send-web-push: no se pudo reservar la confirmacion", claimError);
+    console.error("send-web-push: no se pudo reservar la confirmacion", String(claimError));
     return fail("no se pudo registrar el aviso", 500);
   }
 
@@ -636,7 +823,7 @@ async function runNowPush(
     // Fallo cerrado, por el mismo motivo que en `buildDispatches`: con la otra
     // opción, un error transitorio de la base reactivaba los avisos de un usuario
     // que los tenía apagados.
-    console.error("send-web-push: no se pudieron leer las preferencias", prefsError);
+    console.error("send-web-push: no se pudieron leer las preferencias", String(prefsError));
     return fail("no se pudieron leer tus preferencias", 500);
   }
 
@@ -668,7 +855,7 @@ async function runNowPush(
       .maybeSingle();
 
     if (error) {
-      console.error("send-web-push: no se pudo leer la cita", error);
+      console.error("send-web-push: no se pudo leer la cita", String(error));
       return fail("no se pudo leer la cita", 500);
     }
     if (!data) return fail("esa cita no existe", 404);
@@ -690,7 +877,7 @@ async function runNowPush(
       .maybeSingle();
 
     if (error) {
-      console.error("send-web-push: no se pudo leer el contacto", error);
+      console.error("send-web-push: no se pudo leer el contacto", String(error));
       return fail("no se pudo leer el contacto", 500);
     }
     if (!data) return fail("ese contacto no existe", 404);
@@ -711,7 +898,7 @@ async function runNowPush(
   if (!dispatch) return fail("no hay recordatorio que confirmar", 404);
 
   try {
-    const result = await sendToUser(db, secrets, userId, {
+    const result = await sendToUser(db, push, secrets, userId, {
       title: dispatch.title,
       body: dispatch.body,
       data: { type: dispatch.type, id: dispatch.refId, url: dispatch.url },
@@ -721,6 +908,10 @@ async function runNowPush(
       // La reserva se queda: no sabemos si había a quién avisar, y soltarla
       // devolvería el bucle con un motivo falso en cada vuelta.
       return fail("no se pudieron leer tus suscripciones", 500);
+    }
+
+    if (result.infraFailed) {
+      return fail("el servidor no pudo enviar: configuracion de push rota", 502);
     }
 
     if (result.delivered === 0) {
@@ -748,15 +939,26 @@ async function runNowPush(
     // validar nada, así que soltarla aquí volvería a abrir el bucle que la fila
     // cierra. El precio es un minuto sin poder reintentar y una fila de más, y lo
     // paga un camino que casi no se recorre; soltarla lo pagaría todo el mundo.
-    console.error("send-web-push: fallo en el aviso de confirmacion", error);
+    console.error("send-web-push: fallo en el aviso de confirmacion", String(error));
     return fail("no se pudo enviar el aviso", 500);
   }
 }
 
 /** Reparte y envía todos los recordatorios pendientes. */
-async function runDispatch(db: Db, secrets: PushSecrets, now: number): Promise<Record<string, unknown>> {
+async function runDispatch(db: Db, push: WebPushLike, secrets: PushSecrets, now: number): Promise<Record<string, unknown>> {
   const instante = new Date(now);
   const windowStart = new Date(instante.getTime() - CATCHUP_MINUTES * 60_000);
+
+  // Logs de diagnóstico del reparto (2026-10-05).
+  //
+  // Solo se loguea lo que ocurre cuando HAY algo que repartir. Un log por
+  // ejecución daría 288 líneas/día para decir siempre lo mismo, y con eso el
+  // diario se llena de ruido justo cuando toca buscar el motivo de un fallo.
+
+  // Las claves VAPID van antes de leer nada: sin ellas, todo lo que viene
+  // debajo falla al cifrar y la reserva de `push_log` se suelta, así que el
+  // fallo sale y se reintenta sin dejar rastro. Ver `configureWebPush`.
+  configureWebPush(push, secrets);
 
   // La poda va PRIMERO, antes de leer nada. Estaba al final, y `dispatches` solo
   // existe dentro de la ventana de catchup alrededor de las 09:00 locales, así que
@@ -778,12 +980,32 @@ async function runDispatch(db: Db, secrets: PushSecrets, now: number): Promise<R
     .eq("active", true);
 
   if (subsError) {
-    console.error("send-web-push: no se pudieron leer las suscripciones", subsError);
+    console.error("send-web-push: no se pudieron leer las suscripciones", String(subsError));
     return { ok: false, error: "fallo al leer suscripciones" };
   }
 
-  const groups = groupByUserAndTimezone((subs ?? []) as SubscriptionRow[]);
+  // Vive aquí y no en el módulo a propósito. Un `Set` de módulo sobrevive entre
+  // invocaciones en un isolate caliente, y el aviso de "esta suscripción tiene la
+  // zona rota" tiene que volver a salir en cada ejecución: si nadie lo arregla en
+  // un par de horas, que vuelva a aparecer. En un `Set` de módulo salía una vez en
+  // toda la vida del isolate y luego callaba para siempre, que es el peor sitio
+  // para un aviso que es lo único que hay.
+  const zonasInvalidasVistas = new Set<string>();
+  const groups = groupByUserAndTimezone((subs ?? []) as SubscriptionRow[], zonasInvalidasVistas);
+
   const dispatches = await buildDispatches(db, groups, instante, windowStart);
+
+  for (const d of dispatches) {
+    // Sin `userId` ni `timezone`: los dos identifican a una persona concreta en un
+    // log retenido y accesible a cualquiera con acceso al proyecto, y no hacen
+    // falta para diagnosticar. `refId` y `slot` bastan para saber qué aviso es, y
+    // por eso ningún log imprime `dedupeKey`: esa clave lleva la zona desde que
+    // dos navegadores con zonas distintas dejaron de compartir la reserva. Los
+    // logs usan `claveDeDiagnostico`, que es la clave sin la zona. El título de la
+    // cita y el nombre del contacto tampoco salen, y eso sí que no puede salir
+    // nunca.
+    console.log(`send-web-push: dispatch type=${d.type} refId=${d.refId} slot=${d.slot} fireDay=${d.localDay}`);
+  }
 
   if (dispatches.length === 0) {
     return { ok: true, dispatched: 0, sent: 0, skipped: 0, window: CATCHUP_MINUTES };
@@ -792,10 +1014,34 @@ async function runDispatch(db: Db, secrets: PushSecrets, now: number): Promise<R
   let sent = 0;
   let skipped = 0;
   const dead: string[] = [];
-  const failures: { id: string; count: number; inactive: boolean }[] = [];
+  /**
+   * Si algún envío de esta ejecución falló por infraestructura y no por
+   * suscripción.
+   *
+   * Su único efecto es que el `console.error` se escriba UNA vez por lote y no una
+   * por cada envío, que es cuando un humano lo va a leer. No decide nada sobre las
+   * reservas: eso lo hace la regla única de "nadie lo recibió, se libera", que
+   * vale igual para un 403 que para un 429.
+   */
+  let fallosDeInfraEnElLote = false;
+  /**
+   * Fallos acumulados por suscripción DENTRO de esta ejecución.
+   *
+   * Antes se calculaba `failure_count` desde el valor leído al principio del run,
+   * y eso metía dos errores. Uno: si un aviso entregaba bien ponía el contador a 0
+   * en la base, pero un aviso posterior que fallara en la MISMA ejecución
+   * reescribía `valorViejo + 1` encima de ese 0. Con el valor viejo en 4, una
+   * suscripción que acababa de entregar acababa en 5 y se desactivaba. Dos: una
+   * suscripción que fallara en dos avisos metía dos filas y se escribía dos veces.
+   *
+   * Aquí se lleva la cuenta en memoria y se escribe una sola vez al final, con el
+   * estado consolidado de toda la ejecución.
+   */
+  const fallosEnEstaEjecucion = new Map<string, number>();
 
   for (const dispatch of dispatches) {
     const key = dedupeKey(dispatch);
+
 
     // Idempotencia: solo envía la ejecución que gana la restricción de unicidad.
     const { error: claimError } = await db
@@ -805,19 +1051,21 @@ async function runDispatch(db: Db, secrets: PushSecrets, now: number): Promise<R
     if (claimError) {
       // 23505 = clave duplicada: otra ejecución ya lo envió.
       if (claimError.code === "23505") {
+        console.log(`send-web-push: dispatch skipped (duplicate) key=${claveDeDiagnostico(dispatch)}`);
         skipped++;
         continue;
       }
-      console.error("send-web-push: no se pudo reservar el envio", claimError);
+      console.error("send-web-push: no se pudo reservar el envio", String(claimError));
       continue;
     }
 
+    console.log(`send-web-push: reservada key=${claveDeDiagnostico(dispatch)}`);
     const group = groups.find((g) => g.userId === dispatch.userId && g.timezone === dispatch.timezone);
     let delivered = 0;
 
     for (const sub of group?.subs ?? []) {
       try {
-        await webpush.sendNotification(
+        await push.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           JSON.stringify({
             title: dispatch.title,
@@ -836,44 +1084,90 @@ async function runDispatch(db: Db, secrets: PushSecrets, now: number): Promise<R
           { TTL: MAX_TTL_SECONDS, urgency: "normal" },
         );
         delivered++;
+        console.log(`send-web-push: notification delivered sub=${sub.id} key=${claveDeDiagnostico(dispatch)}`);
         await db
           .from("push_subscriptions")
           .update({ last_success_at: new Date().toISOString(), failure_count: 0 })
           .eq("id", sub.id);
+        // El contador de esta ejecución se resetea también, no solo el de la base:
+        // si otro aviso de la MISMA ejecución falla después, tiene que partir de
+        // cero y no del valor con el que se leía la fila al empezar.
+        fallosEnEstaEjecucion.set(sub.id, 0);
       } catch (error) {
-        const status = (error as { statusCode?: number }).statusCode;
+        const status = (error as { statusCode?: number } | null)?.statusCode;
         if (status === 404 || status === 410) {
           // El navegador se dio de baja o el servicio caducó el endpoint.
           dead.push(sub.id);
+          console.log(`send-web-push: subscription dead sub=${sub.id} status=${status}`);
           continue;
         }
         if (isUnusableSubscription(error)) {
           // Las claves no sirven y no van a servirlas nunca: no tiene sentido
           //dejarlo para el próximo intento ni contar un fallo más.
           dead.push(sub.id);
+          console.log(`send-web-push: subscription unusable sub=${sub.id}`);
           continue;
         }
-        const count = (sub.failure_count ?? 0) + 1;
-        failures.push({ id: sub.id, count, inactive: count >= MAX_FAILURES });
+        if (isInfrastructureFailure(error)) {
+          // Configuración, no suscripción. No se cuenta como fallo de la
+          // suscripción porque el contador acaba desactivando a gente cuya
+          // suscripción es perfectamente válida. La reserva sí se suelta, por la
+          // regla común de más abajo: un 429 transitorio ya la suelta y reintenta
+          // cada cinco minutos dentro de la ventana, así que tratar el 403 de otra
+          // forma perdía el recordatorio de ese día sin evitar reintentos. Se
+          // registra una vez por ejecución, que es cuando alguien lo va a leer.
+          if (!fallosDeInfraEnElLote) {
+            console.error(
+              `send-web-push: fallo de infraestructura al enviar, no se cuenta como fallo de suscripción: ${String(error)}`,
+            );
+          }
+          fallosDeInfraEnElLote = true;
+          continue;
+        }
+        // 429, 5xx y red: transitorios y sí son de la suscripción, que es lo que
+        // el contador sabe medir. Se parte del estado de esta ejecución, no del
+        // valor con el que se leyó la fila.
+        const count = (fallosEnEstaEjecucion.get(sub.id) ?? sub.failure_count ?? 0) + 1;
+        fallosEnEstaEjecucion.set(sub.id, count);
+        console.log(`send-web-push: send failed sub=${sub.id} count=${count} error=${String(error)}`);
       }
     }
 
     if (delivered > 0) {
       sent++;
+      console.log(`send-web-push: dispatch sent key=${claveDeDiagnostico(dispatch)} delivered=${delivered}`);
     } else if ((group?.subs.length ?? 0) > 0) {
-      // El aviso se reservó pero nadie lo recibió: se libera la reserva para
-      // que otra ejecución pueda reintentar dentro de la ventana.
+      // El aviso se reservó pero nadie lo recibió: se libera la reserva para que
+      // otra ejecución pueda reintentar dentro de la ventana.
+      //
+      // Se suelta también cuando lo que falló fue la infraestructura, y es una
+      // decisión. La alternativa era conservarla y perder ese aviso para siempre,
+      // y conservarla solo tiene sentido si no reintentar sale gratis. No sale: un
+      // 429 —transitorio, y justo al lado— ya suelta la reserva y reintenta cada
+      // cinco minutos durante las tres horas de ventana. Tratar el 403 de otra
+      // forma era incoherente y costaba el recordatorio. El techo de reintentos es
+      // el mismo que ya se aceptaba para el rate limit.
+      //
+      // Lo que nunca se reintenta es el `failure_count`: un fallo de
+      // infraestructura no toca el contador, y por eso una suscripción válida no
+      // se apaga porque el servidor tuviera la clave VAPID mal puesta.
       await db.from("push_log").delete().eq("user_id", dispatch.userId).eq("dedupe_key", key);
+      console.log(`send-web-push: aviso reservado y no entregado, reserva liberada key=${claveDeDiagnostico(dispatch)}`);
     }
   }
 
-  if (dead.length > 0) await db.from("push_subscriptions").delete().in("id", dead);
-  for (const failure of failures) {
+  // Un solo paso de escritura por suscripción, con el estado consolidado de toda
+  // la ejecución. Una suscripción que entregó en algún momento queda con 0 y sale
+  // del contador, aunque otro aviso suyo haya fallado antes.
+  for (const [id, count] of fallosEnEstaEjecucion) {
+    if (dead.includes(id)) continue;
     await db
       .from("push_subscriptions")
-      .update({ failure_count: failure.count, active: !failure.inactive })
-      .eq("id", failure.id);
+      .update({ failure_count: count, active: count < MAX_FAILURES })
+      .eq("id", id);
   }
+
+  if (dead.length > 0) await db.from("push_subscriptions").delete().in("id", dead);
 
   return {
     ok: true,
@@ -892,20 +1186,47 @@ async function runDispatch(db: Db, secrets: PushSecrets, now: number): Promise<R
  * `env` se inyecta para que los tests puedan pasar un entorno vacío y no
  * depender de los secretos que tenga la máquina. Por defecto es `Deno.env`.
  *
- * `deps` inyecta el cliente de Supabase y el reloj. Los tests lo necesitan: sin un
- * doble de base de datos no hay forma de comprobar qué consulta sale cuando una
- * falla, y sin un reloj fijo el bucket de enfriamiento depende del instante en que
- * el test corre. En producción no se pasa nada y se usan los de verdad.
+ * `deps` inyecta el cliente de Supabase, el reloj y el módulo de push. Los tests
+ * los necesitan: sin un doble de base de datos no hay forma de comprobar qué
+ * consulta sale cuando una falla, sin reloj fijo el bucket depende del instante en
+ * que corre el test, y sin un doble de push no se puede afirmar que VAPID se
+ * configuró antes de enviar. En producción no se pasa nada y se usan los de verdad.
  */
 export async function handle(
   req: Request,
   env: EnvReader = Deno.env,
   deps: HandlerDeps = {},
 ): Promise<Response> {
-  // Si `WEB_PUSH_ALLOWED_ORIGINS` está definida, su lista sustituye a la de por
-  // defecto (ver `resolveAllowedOrigins`).
+  // Los orígenes se resuelven ANTES del try, y no dentro, para que la red de
+  // seguridad de abajo no pueda quedar sin los datos que necesita para armar su
+  // propia respuesta: si la resolución fallara, el `catch` todavía tiene `origin` y
+  // `allowedOrigins` y puede devolver un 500 con CORS en vez de propagar el error
+  // fuera de `handle`, donde `Deno.serve` respondería sin cabeceras.
   const allowedOrigins = resolveAllowedOrigins(env.get("WEB_PUSH_ALLOWED_ORIGINS"));
   const origin = req.headers.get("origin");
+
+  try {
+    return await handleRequest(req, env, deps, allowedOrigins, origin);
+  } catch (error) {
+    // Red de seguridad, no camino previsto. `Deno.serve` en `index.ts` no tiene
+    // catch, así que una excepción que se escapara de aquí salía como un 500 pelado
+    // y sin cabeceras CORS: el navegador no podía ni leer por qué había fallado, que
+    // es justo lo que este módulo se ocupa de que no pase en ninguna respuesta.
+    console.error("send-web-push: fallo no controlado", String(error));
+    return jsonResponse({ error: "error interno" }, 500, corsHeaders(origin, allowedOrigins));
+  }
+}
+
+async function handleRequest(
+  req: Request,
+  env: EnvReader,
+  deps: HandlerDeps,
+  allowedOrigins: readonly string[],
+  origin: string | null,
+): Promise<Response> {
+  // `allowedOrigins` y `origin` los resuelve `handle` y llegan aquí ya hechos: si
+  // esa resolución lanzara dentro del catch, el 500 saldría sin cabeceras CORS,
+  // que es justo el fallo que la red de seguridad tiene que tapar.
 
   // Preflight antes que nada, y antes incluso de mirar la configuración: es una
   // respuesta vacía que no lee secretos ni toca la base de datos. Sin esto el
@@ -936,6 +1257,25 @@ export async function handle(
 
   const createDb = deps.createDb ?? defaultCreateDb;
   const clock = deps.now ?? Date.now;
+
+  /**
+   * El módulo real de `web-push` por defecto. Va por `deps` para que un test
+   * pueda sustituirlo: guarda el remitente en estado de módulo, así que usarlo
+   * en un test mezclaría la configuración entre tests y no dejaría afirmar que
+   * se configuró ANTES de enviar, que es justo el invariante que importó.
+   *
+   * En producción `index.ts` llama a `handle(req)` sin el tercer argumento, así
+   * que aquí siempre cae al módulo real. En los tests, el guion de la base de
+   * datos decide si hace falta sustituirlo: los que tienen suscripciones en su
+   * guion lo hacen, y los que no las tienen no llegan a enviar.
+   *
+   * Eso hoy es una convención y no una garantía: un test futuro que tenga
+   * suscripciones en el guion y se olvide de inyectar `push` haría un `fetch`
+   * HTTPS de verdad contra el endpoint de mentira que le haya puesto. El fallo
+   * sería ruidoso —un error de red, no un `true`— así que no puede hacer pasar un
+   * test en verde por error, que es el modo de fallo que importa aquí.
+   */
+  const push = deps.push ?? webpush;
 
   const db = createDb(supabaseUrl, serviceRoleKey);
 
@@ -971,11 +1311,11 @@ export async function handle(
     const userId = userData.user.id;
 
     if (mode === "now") {
-      const result = await runNowPush(db, userSecrets, userId, new URL(req.url).searchParams, clock());
+      const result = await runNowPush(db, push, userSecrets, userId, new URL(req.url).searchParams, clock());
       return json(result.body, result.status);
     }
 
-    return json(await runTestPush(db, userSecrets, userId, clock()));
+    return json(await runTestPush(db, push, userSecrets, userId, clock()));
   }
 
   // Antes de autenticar solo se lee el secreto del cron, y se hace por entorno
@@ -999,15 +1339,15 @@ export async function handle(
 
   const sync = new URL(req.url).searchParams.get("sync") === "1";
   if (sync) {
-    return json(await runDispatch(db, secrets, clock()));
+    return json(await runDispatch(db, push, secrets, clock()));
   }
 
   // pg_net aborta la llamada a los 5 s, y el arranque en frío de la función ya
   // consume más que eso. Por eso el cron solo encola: el trabajo real sigue en
   // segundo plano con waitUntil. `?sync=1` existe para depurar a mano.
   EdgeRuntime.waitUntil(
-    runDispatch(db, secrets, clock()).catch((error) => {
-      console.error("send-web-push: fallo en el reparto", error);
+    runDispatch(db, push, secrets, clock()).catch((error) => {
+      console.error("send-web-push: fallo en el reparto", String(error));
     }),
   );
   return json({ ok: true, queued: true }, 202);

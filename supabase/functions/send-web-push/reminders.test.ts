@@ -43,6 +43,24 @@ function ctx(nowIso: string, timeZone: string, catchupMinutes = 180): Context {
   };
 }
 
+Deno.test("localDayUtc NO lanza con una zona inválida: devuelve cadena vacía", () => {
+  // Esta función se llama desde el reparto y no puede lanzar. `Intl` lanza
+  // `RangeError` con cualquier cadena que no sea una zona real, y el valor viene
+  // de `push_subscriptions.timezone`, que solo tiene un `check` de 64 caracteres.
+  // Cuando sí lanzaba, una fila con `timezone = 'No/Existe'` tumbaba el lote entero
+  // y nadie recibía ese ciclo, ni siquiera las personas ajenas a esa fila.
+  for (const zona of ["No/Existe", "", "Europe/Madrid ", "GMT+25", "a".repeat(64)]) {
+    assertEquals(
+      localDayUtc(new Date("2026-03-16T08:05:00Z"), zona),
+      "",
+      `una zona inválida dio fecha en lugar de cadena vacía: ${JSON.stringify(zona)}`,
+    );
+  }
+  // Y una zona buena sigue funcionando, que es lo que hace que esto no sea "no
+  // hagas nada nunca".
+  assertEquals(localDayUtc(new Date("2026-03-16T08:05:00Z"), "Europe/Madrid"), "2026-03-16");
+});
+
 Deno.test("localDayUtc devuelve la fecha local, no la UTC", () => {
   // 2026-03-15T23:30Z en Madrid (UTC+1 en invierno) ya es el 16.
   assertEquals(localDayUtc(new Date("2026-03-15T23:30:00Z"), MADRID), "2026-03-16");
@@ -62,6 +80,33 @@ Deno.test("nineAmUtc calcula las 09:00 locales en cada zona", () => {
 
 Deno.test("nineAmUtc devuelve null con una zona inválida", () => {
   assertEquals(nineAmUtc("2026-03-16", "No/Existe"), null);
+});
+
+Deno.test("addDays es TOTAL: con fecha inválida devuelve cadena vacía, no revienta", () => {
+  // `addDays` no puede lanzar. Su `day` puede llegar vacío desde `localDayUtc`, que
+  // devuelve `""` con una zona inválida, y `new Date("T00:00:00Z")` —sin componente
+  // de fecha— da `Invalid Date` cuya `toISOString()` lanza `RangeError`. Ese error
+  // salía dentro de `buildDispatches` y tumbaba el lote entero, así que una fila
+  // con la zona rota impedía los avisos de todas las demás casas.
+  for (const dia of ["", "no-es-fecha", "2026-13-45", "T00:00:00Z", "2026-3-1"]) {
+    assertEquals(addDays(dia, 1), "", `addDays reventó o inventó fecha para ${JSON.stringify(dia)}`);
+    assertEquals(addDays(dia, -1), "", `addDays reventó o inventó fecha para ${JSON.stringify(dia)}`);
+  }
+  // Y una fecha buena sigue funcionando, que es lo que evita que esto sea "no hagas
+  // nada nunca".
+  assertEquals(addDays("2026-03-01", -1), "2026-02-28");
+});
+
+Deno.test("candidatesFor sin día local NO genera candidatos", () => {
+  // Sin día local no hay candidatos: `nineAmUtc` y `fallsOnLocalDay` tratan el día
+  // como fecha y fallan con `""`. El corte está aquí y no en quien llama porque los
+  // dos llamadores —citas y cumpleaños— tienen el mismo problema, y el segundo es
+  // fácil de olvidar.
+  assertEquals(candidatesFor("", "same-day"), []);
+  assertEquals(candidatesFor("", "day-before"), []);
+  assertEquals(candidatesFor("", "both"), []);
+  // Con día válido sigue generando, con el corte de `addDays` incluido.
+  assertEquals(candidatesFor("2026-03-16", "both").length, 2);
 });
 
 Deno.test("addDays cruza meses y años", () => {
@@ -368,7 +413,7 @@ Deno.test("cumpleaños de hoy no se duplica por estar en ayer y hoy", () => {
   assertEquals(dispatch[0].slot, "same-day");
 });
 
-Deno.test("dedupeKey incluye tipo, referencia, slot y día", () => {
+Deno.test("dedupeKey incluye tipo, referencia, slot, día y zona", () => {
   assertEquals(
     dedupeKey({
       type: "appointment",
@@ -378,9 +423,37 @@ Deno.test("dedupeKey incluye tipo, referencia, slot y día", () => {
       title: "t",
       body: "b",
       url: "/citas",
+      userId: "u1",
+      timezone: "Europe/Madrid",
     }),
-    "appointment:a1:same-day:2026-03-16",
+    "appointment:a1:same-day:2026-03-16:Europe/Madrid",
   );
+});
+
+Deno.test("dos zonas del mismo usuario NO comparten clave de idempotencia", () => {
+  // El reparto agrupa por `(user_id, timezone)`, así que una persona con dos
+  // navegadores en zonas distintas produce dos juegos de avisos. Antes de meter la
+  // zona en la clave, ambos jogos podían compartir día local y ventana de catchup
+  // —offsets a menos de tres horas— y el segundo insert chocaba con la
+  // restricción de unicidad. El aviso se perdía para ese navegador y el log decía
+  // "skipped (duplicate)": parece una repetición y en realidad es otro
+  // dispositivo.
+  const base = {
+    type: "appointment",
+    refId: "a1",
+    slot: "same-day",
+    localDay: "2026-03-16",
+    title: "Dentista",
+    body: "b",
+    url: "/citas",
+    userId: "u1",
+  } as const;
+  const madrid = dedupeKey({ ...base, timezone: "Europe/Madrid" });
+  const lisboa = dedupeKey({ ...base, timezone: "Europe/Lisbon" });
+  assert(madrid !== lisboa, "Madrid y Lisboa comparten clave: se perdería un aviso");
+
+  // Y la misma zona dos veces SÍ coincide, que es lo que evita el reenvío.
+  assertEquals(dedupeKey({ ...base, timezone: "Europe/Madrid" }), madrid);
 });
 
 Deno.test("appointmentQueryUpperBound mira 8 días por delante", () => {
@@ -743,7 +816,17 @@ Deno.test("nowDedupeKey no puede coincidir con la clave del cron", () => {
     for (const refId of ["a1", "c1"]) {
       for (const slot of ["day-before", "same-day"] as const) {
         for (const localDay of ["2026-03-16", "2026-03-17", "2026-10-05"]) {
-          const cron = dedupeKey({ type, refId, slot, localDay, title: "t", body: "b", url: "/" });
+          const cron = dedupeKey({
+            type,
+            refId,
+            slot,
+            localDay,
+            title: "t",
+            body: "b",
+            url: "/",
+            userId: USUARIO,
+            timezone: "Europe/Madrid",
+          });
           const ahora = nowDedupeKey(USUARIO, BUCKET);
           assert(cron !== ahora, `colision: ${type} ${refId} ${slot} ${localDay}`);
         }
