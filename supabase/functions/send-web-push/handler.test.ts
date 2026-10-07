@@ -1229,12 +1229,10 @@ Deno.test("una suscripción inservible se borra en los DOS caminos de envío", a
   );
 });
 
-Deno.test("una configuración de push rota NO se reporta como 'sin suscripciones'", async () => {
-  // El motivo que se le decía a la persona tenía que ser verdad. Con un 401 del
-  // push service, `delivered` es 0 y el camino de siempre respondía "sin
-  // suscripciones activas en este navegador" a alguien que sí las tenía. Además
-  // quemaba el enfriamiento de cinco minutos con ese motivo, así que tampoco podía
-  // reintentar hasta que expirara.
+Deno.test("discriminación por lote: un 401 aislado = fallo de suscripción, múltiples 401 = infraestructura", async () => {
+  // Caso 1: UNA suscripción con 401 → fallo de suscripción (no infra)
+  // La respuesta NO debe decir "configuración rota" sino "sin suscripciones activas"
+  // porque desde la perspectiva del usuario su única suscripción falló.
   const conInfra = () => new FakePush(errorConEstado(401));
 
   const dbTest = new FakeDb({ "push_subscriptions:select": [filas([suscripcion("sub-1")])] });
@@ -1246,23 +1244,52 @@ Deno.test("una configuración de push rota NO se reporta como 'sin suscripciones
   const cuerpoTest = await cuerpo(resTest);
   assertEquals(cuerpoTest.ok, false);
   assert(
-    !String(cuerpoTest.error).includes("suscripciones"),
-    `un 401 se reportó como falta de suscripciones: ${JSON.stringify(cuerpoTest)}`,
+    String(cuerpoTest.error).includes("suscripciones"),
+    `un 401 aislado debe reportarse como fallo de suscripción: ${JSON.stringify(cuerpoTest)}`,
   );
 
-  // Y el camino de la confirmación, que además responde con un 502: es un fallo
-  // del servidor, no un 404 de "no hay nada que confirmar".
+  // Caso 2: DOS suscripciones con 401 → infraestructura (configuración rota)
+  // La respuesta debe decir "configuración rota", no "sin suscripciones"
+  const dbTest2 = new FakeDb({ "push_subscriptions:select": [filas([suscripcion("sub-1"), suscripcion("sub-2")])] });
+  const resTest2 = await handle(
+    new Request(`${FN}?mode=test`, { method: "POST", headers: { authorization: "Bearer sesion" } }),
+    ENV,
+    { createDb: () => dbTest2 as unknown as SupabaseClient, now: () => 1_800_000_000_000, push: conInfra() },
+  );
+  const cuerpoTest2 = await cuerpo(resTest2);
+  assertEquals(cuerpoTest2.ok, false);
+  assert(
+    !String(cuerpoTest2.error).includes("suscripciones"),
+    `dos 401 deben reportarse como infraestructura: ${JSON.stringify(cuerpoTest2)}`,
+  );
+
+  // Y el camino de la confirmación (now): una suscripción con 401 → fallo de suscripción
+  // La respuesta NO debe ser 502 "configuración rota" sino 404/400 "sin suscripciones"
   const dbNow = guionConfirmacion({ "push_subscriptions:select": [filas([suscripcion("sub-1")])] });
   const resNow = await handle(peticionNow(), ENV, {
     createDb: () => dbNow as unknown as SupabaseClient,
     now: () => 1_800_000_000_000,
     push: conInfra(),
   });
-  assertEquals(resNow.status, 502);
+  assertEquals(resNow.status, 404);
   const cuerpoNow = await cuerpo(resNow);
   assert(
-    !String(cuerpoNow.error).includes("suscripciones"),
-    `un 401 se reportó como falta de suscripciones: ${JSON.stringify(cuerpoNow)}`,
+    String(cuerpoNow.error).includes("suscripciones"),
+    `un 401 aislado en now debe ser fallo de suscripción: ${JSON.stringify(cuerpoNow)}`,
+  );
+
+  // Dos suscripciones en now con 401 → infra (502)
+  const dbNow2 = guionConfirmacion({ "push_subscriptions:select": [filas([suscripcion("sub-1"), suscripcion("sub-2")])] });
+  const resNow2 = await handle(peticionNow(), ENV, {
+    createDb: () => dbNow2 as unknown as SupabaseClient,
+    now: () => 1_800_000_000_000,
+    push: conInfra(),
+  });
+  assertEquals(resNow2.status, 502);
+  const cuerpoNow2 = await cuerpo(resNow2);
+  assert(
+    !String(cuerpoNow2.error).includes("suscripciones"),
+    `dos 401 en now deben reportarse como infraestructura: ${JSON.stringify(cuerpoNow2)}`,
   );
 });
 
