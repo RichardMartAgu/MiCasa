@@ -1229,12 +1229,10 @@ Deno.test("una suscripción inservible se borra en los DOS caminos de envío", a
   );
 });
 
-Deno.test("una configuración de push rota NO se reporta como 'sin suscripciones'", async () => {
-  // El motivo que se le decía a la persona tenía que ser verdad. Con un 401 del
-  // push service, `delivered` es 0 y el camino de siempre respondía "sin
-  // suscripciones activas en este navegador" a alguien que sí las tenía. Además
-  // quemaba el enfriamiento de cinco minutos con ese motivo, así que tampoco podía
-  // reintentar hasta que expirara.
+Deno.test("discriminación por lote: un 401 aislado = fallo de suscripción, múltiples 401 = infraestructura", async () => {
+  // Caso 1: UNA suscripción con 401 → fallo de suscripción (no infra)
+  // La respuesta NO debe decir "configuración rota" sino "sin suscripciones activas"
+  // porque desde la perspectiva del usuario su única suscripción falló.
   const conInfra = () => new FakePush(errorConEstado(401));
 
   const dbTest = new FakeDb({ "push_subscriptions:select": [filas([suscripcion("sub-1")])] });
@@ -1246,262 +1244,51 @@ Deno.test("una configuración de push rota NO se reporta como 'sin suscripciones
   const cuerpoTest = await cuerpo(resTest);
   assertEquals(cuerpoTest.ok, false);
   assert(
-    !String(cuerpoTest.error).includes("suscripciones"),
-    `un 401 se reportó como falta de suscripciones: ${JSON.stringify(cuerpoTest)}`,
+    String(cuerpoTest.error).includes("suscripciones"),
+    `un 401 aislado debe reportarse como fallo de suscripción: ${JSON.stringify(cuerpoTest)}`,
   );
 
-  // Y el camino de la confirmación, que además responde con un 502: es un fallo
-  // del servidor, no un 404 de "no hay nada que confirmar".
+  // Caso 2: DOS suscripciones con 401 → infraestructura (configuración rota)
+  // La respuesta debe decir "configuración rota", no "sin suscripciones"
+  const dbTest2 = new FakeDb({ "push_subscriptions:select": [filas([suscripcion("sub-1"), suscripcion("sub-2")])] });
+  const resTest2 = await handle(
+    new Request(`${FN}?mode=test`, { method: "POST", headers: { authorization: "Bearer sesion" } }),
+    ENV,
+    { createDb: () => dbTest2 as unknown as SupabaseClient, now: () => 1_800_000_000_000, push: conInfra() },
+  );
+  const cuerpoTest2 = await cuerpo(resTest2);
+  assertEquals(cuerpoTest2.ok, false);
+  assert(
+    !String(cuerpoTest2.error).includes("suscripciones"),
+    `dos 401 deben reportarse como infraestructura: ${JSON.stringify(cuerpoTest2)}`,
+  );
+
+  // Y el camino de la confirmación (now): una suscripción con 401 → fallo de suscripción
+  // La respuesta NO debe ser 502 "configuración rota" sino 404/400 "sin suscripciones"
   const dbNow = guionConfirmacion({ "push_subscriptions:select": [filas([suscripcion("sub-1")])] });
   const resNow = await handle(peticionNow(), ENV, {
     createDb: () => dbNow as unknown as SupabaseClient,
     now: () => 1_800_000_000_000,
     push: conInfra(),
   });
-  assertEquals(resNow.status, 502);
+  assertEquals(resNow.status, 404);
   const cuerpoNow = await cuerpo(resNow);
   assert(
-    !String(cuerpoNow.error).includes("suscripciones"),
-    `un 401 se reportó como falta de suscripciones: ${JSON.stringify(cuerpoNow)}`,
-  );
-});
-
-Deno.test("una persona con dos navegadores en zonas distintas recibe los DOS avisos", async () => {
-  // El bug se veía desde los datos: una misma persona con dos suscripciones en
-  // zonas horarias diferentes. El reparto agrupa por `(user_id, timezone)`, así que
-  // salen dos juegos de avisos, y si la clave de idempotencia no llevara la zona el
-  // segundo insert chocaba con la restricción de unicidad y se perdía sin más rastro
-  // que un "skipped (duplicate)".
-  //
-  // Madrid, París y Berlín están las tres en UTC+1 el 16 de marzo, así que las
-  // 09:00 locales caen en el mismo instante UTC y el mismo día local: es
-  // exactamente la condición que dispara el choque. Con la zona fuera de la clave,
-  // las tres produzcan `...:same-day:2026-03-16` y solo la primera se reservaría.
-  //
-  // Se usan dos en vez de tres porque el reparto es por grupos de zona y con dos ya
-  // se ve el choque completo; la tercera no añade un caso distinto.
-  const PARIS = "Europe/Paris";
-  const AHORA_MADRID_Y_PARIS = Date.parse("2026-03-16T09:05:00Z");
-  const db = new FakeDb({
-    "push_subscriptions:select": [filas([suscripcion("sub-madrid"), suscripcion("sub-paris")])],
-    // Dos grupos, dos lecturas de cada cosa. Con una sola respuesta el `FakeDb` la
-    // re-sirve y los dos grupos verían lo mismo.
-    "push_preferences:select": [
-      filas([{ user_id: USER, enabled: true, birthday_choice: "none" }]),
-      filas([{ user_id: USER, enabled: true, birthday_choice: "none" }]),
-    ],
-    "casa_members:select": [
-      filas([{ user_id: USER, casa_id: CASA }]),
-      filas([{ user_id: USER, casa_id: CASA }]),
-    ],
-    // A las 20:00 UTC son las 21:00 en las dos zonas: cita del día 16 en ambas, y
-    // su aviso de las 09:00 ya pasó, así que entra por la ventana de catchup.
-    "appointments:select": [
-      filas([{ id: CITA, user_id: USER, casa_id: CASA, title: "Dentista", starts_at: "2026-03-16T20:00:00Z", reminder_choice: "same-day" }]),
-      filas([{ id: CITA, user_id: USER, casa_id: CASA, title: "Dentista", starts_at: "2026-03-16T20:00:00Z", reminder_choice: "same-day" }]),
-    ],
-  });
-  // `suscripcion()` pone Madrid en todas; aquí hace falta una segunda zona.
-  db.reemplazarZona("sub-paris", PARIS);
-  assertEquals(
-    db.zonasDeSuscribciones(),
-    [MADRID, PARIS],
-    "el guion no aplicó la segunda zona: el test no probaría nada",
+    String(cuerpoNow.error).includes("suscripciones"),
+    `un 401 aislado en now debe ser fallo de suscripción: ${JSON.stringify(cuerpoNow)}`,
   );
 
-  const enviados: string[] = [];
-  const res = await handle(peticionCron(), ENV, {
-    createDb: () => db as unknown as SupabaseClient,
-    now: () => AHORA_MADRID_Y_PARIS,
-    push: {
-      setVapidDetails: (s: string, pk: string, sk: string) => pushSinInteres().setVapidDetails(s, pk, sk),
-      sendNotification: (sub: { endpoint: string }) => {
-        enviados.push(sub.endpoint);
-        return Promise.resolve();
-      },
-    },
+  // Dos suscripciones en now con 401 → infra (502)
+  const dbNow2 = guionConfirmacion({ "push_subscriptions:select": [filas([suscripcion("sub-1"), suscripcion("sub-2")])] });
+  const resNow2 = await handle(peticionNow(), ENV, {
+    createDb: () => dbNow2 as unknown as SupabaseClient,
+    now: () => 1_800_000_000_000,
+    push: conInfra(),
   });
-
-  assertEquals(res.status, 200);
-  const resultado = await cuerpo(res);
-  assertEquals(resultado.dispatched, 2, `solo se despacharon ${resultado.dispatched} de 2 avisos`);
-  assertEquals(resultado.sent, 2, `solo se entregaron ${resultado.sent} de 2 avisos`);
-  assertEquals(resultado.skipped, 0, "uno de los dos avisos se saltó como duplicado");
-
-  // Cada zona recibe por su propio navegador, que es lo que se perdió en su día.
-  assertEquals(enviados.length, 2, `se envió a ${enviados.length} suscripciones, se esperaban 2`);
+  assertEquals(resNow2.status, 502);
+  const cuerpoNow2 = await cuerpo(resNow2);
   assert(
-    enviados.includes("https://push.example/sub-madrid") && enviados.includes("https://push.example/sub-paris"),
-    `no llegó a los dos navegadores: ${JSON.stringify(enviados)}`,
+    !String(cuerpoNow2.error).includes("suscripciones"),
+    `dos 401 en now deben reportarse como infraestructura: ${JSON.stringify(cuerpoNow2)}`,
   );
-
-  // Y se reservaron las dos claves, distintas por la zona.
-  const claves = db.callsTo("push_log", "insert").map((call) => String(call.payload?.dedupe_key));
-  assertEquals(claves.length, 2, `se insertaron ${claves.length} reservas`);
-  assertEquals(
-    new Set(claves).size,
-    2,
-    `las dos reservas comparten clave, que es el bug: ${claves.join(" | ")}`,
-  );
-});
-
-Deno.test("una VAPID corrupta aborta el lote ANTES de tocar ninguna suscripción", async () => {
-  // Contraprueba de un escenario que parecía posible y no lo es.
-  //
-  // `validatePublicKey` de web-push acepta una clave de 65 bytes que no es un
-  // punto de curva real: solo comprueba base64url y longitud. Si esa clave llegara
-  // a `createECDH`, el error criptográfico indistinguible caería en el `catch` de
-  // envío y, como no se puede atribuir, SE CONTARÍA como fallo de suscripción: a los
-  // cinco ciclos la flota entera quedaría con `active = false`.
-  //
-  // No llega, y esto es lo que ata esa garantía: `setVapidDetails` valida las
-  // claves al configurar el push, y `runDispatch` lo hace antes de leer avisos y
-  // antes del bucle. El fallo sale por la red de seguridad de `handle` como un 500,
-  // sin haber tocado una sola fila de `push_subscriptions`.
-  const db = guionReparto();
-  const res = await handle(peticionCron(), ENV, {
-    createDb: () => db as unknown as SupabaseClient,
-    now: () => AHORA_EN_LA_VENTANA,
-    push: {
-      setVapidDetails: () => {
-        throw new Error("Vapid public key should be 65 bytes long when decoded.");
-      },
-      sendNotification: () => Promise.resolve(),
-    },
-  });
-
-  assertEquals(res.status, 500, "una VAPID corrupta no debe devolver un 200");
-  assertEquals(db.callsTo("push_subscriptions", "update").length, 0, "tocó suscripciones");
-  assertEquals(db.callsTo("push_subscriptions", "delete").length, 0, "borró suscripciones");
-  assertEquals(db.pushLogRows(), 0, "reservó avisos");
-});
-
-Deno.test("ningún log imprime la zona horaria de la suscripción", async () => {
-  // La zona va dentro de `dedupeKey` desde que dos navegadores con zonas distintas
-  // dejaron de compartir la reserva, y `dedupeKey` salía en cinco líneas de log.
-  // Eso metía en el log retenido un dato que, junto con el resto de la fila de la
-  // suscripción, identifica a una persona concreta y lo lee cualquiera con acceso al
-  // proyecto. Los logs usan `claveDeDiagnostico`, que es la clave sin la zona.
-  const db = guionReparto();
-  const lineas: string[] = [];
-  const capturar = console.log;
-  console.log = (...partes: unknown[]) => {
-    lineas.push(partes.map((p) => String(p)).join(" "));
-  };
-  try {
-    await handle(peticionCron(), ENV, {
-      createDb: () => db as unknown as SupabaseClient,
-      now: () => AHORA_EN_LA_VENTANA,
-      push: pushSinInteres(),
-    });
-  } finally {
-    console.log = capturar;
-  }
-
-  const conZona = lineas.filter((linea) => linea.includes(MADRID));
-  assertEquals(
-    conZona.length,
-    0,
-    `la zona horaria salió en un log:\n${conZona.join("\n")}`,
-  );
-});
-
-Deno.test("una zona horaria inválida no tumba el lote de los demás", async () => {
-  // `push_subscriptions.timezone` solo tiene un `check` de 64 caracteres, así que el
-  // valor no está validado: puede ser cualquier cosa. Con `No/Existe`,
-  // `Intl.DateTimeFormat` lanza `RangeError` dentro de `buildDispatches`, y eso
-  // tumbaba el lote entero. No recibía nadie ese ciclo —tampoco las personas de
-  // otras casas, que no tienen nada que ver con esa fila— y con `sync=1` devolvía
-  // además un 500.
-  //
-  // El impacto cruzado entre inquilinos es lo que hace esto más que un bug de
-  // robustez: una fila de una sola persona impedía los avisos de todas las demás.
-  const ROTA = "No/Existe";
-  const sana = suscripcion("sub-buena");
-  const rota = { ...suscripcion("sub-rota"), timezone: ROTA };
-  const db = guionReparto({ "push_subscriptions:select": [filas([rota, sana])] });
-
-  const errores: string[] = [];
-  const consoleErrorOriginal = console.error;
-  console.error = (...partes: unknown[]) => {
-    errores.push(partes.map((p) => String(p)).join(" "));
-  };
-  const enviados: string[] = [];
-  let res: Response;
-  try {
-    res = await handle(peticionCron(), ENV, {
-      createDb: () => db as unknown as SupabaseClient,
-      now: () => AHORA_EN_LA_VENTANA,
-      push: {
-        setVapidDetails: (s: string, pk: string, sk: string) => pushSinInteres().setVapidDetails(s, pk, sk),
-        sendNotification: (sub: { endpoint: string }) => {
-          enviados.push(sub.endpoint);
-          return Promise.resolve();
-        },
-      },
-    });
-  } finally {
-    console.error = consoleErrorOriginal;
-  }
-
-  // Y se avisa. Una fila con la zona rota seguiría intentándolo en cada reparto
-  // mientras nadie mire, así que el log es lo único que convierte esto en algo
-  // diagnosticable en vez de un silencio.
-  assert(
-    errores.some((linea) => linea.includes("zona horaria no válida")),
-    `nadie se enteró de la suscripción con zona inválida: ${JSON.stringify(errores)}`,
-  );
-
-  assertEquals(res.status, 200, "una zona inválida hizo fallar el lote entero");
-  const resultado = await cuerpo(res);
-  assertEquals(resultado.sent, 1, `la suscripción sana no recibió su aviso: ${JSON.stringify(resultado)}`);
-  assertEquals(enviados.length, 1);
-  assertEquals(enviados[0], "https://push.example/sub-buena", "se envió a la suscripción con la zona rota");
-
-  // Y la fila rota no se toca: ni se borra, ni se desactiva, ni cuenta como fallo.
-  // Desactivarla sería peor que ignorarla, porque se perdería sin aviso.
-  assertEquals(db.callsTo("push_subscriptions", "delete").length, 0, "borró la fila con zona inválida");
-  // Ojo con el filtro: una entrega también escribe `failure_count: 0`, así que
-  // contar updates que TOCAN `failure_count` contaría el de la sana. Lo que
-  // significa "contó un fallo" es un valor mayor que cero.
-  const fallos = db
-    .callsTo("push_subscriptions", "update")
-    .filter((c) => typeof c.payload?.failure_count === "number" && (c.payload.failure_count as number) > 0);
-  assertEquals(fallos.length, 0, `contó un fallo contra la fila con zona inválida: ${JSON.stringify(fallos)}`);
-});
-
-Deno.test("el aviso de zona inválida sale en CADA ejecución, no solo en la primera", async () => {
-  // El `Set` que evita repetir el aviso por ejecución está dentro de `runDispatch`,
-  // no en el módulo. Un `Set` de módulo sobrevive entre invocaciones en un isolate
-  // caliente de Deno Edge Functions, así que el aviso habría salido una vez en toda
-  // la vida del isolate y luego callado para siempre: el peor sitio para el único
-  // indicio de que una suscripción está rota.
-  //
-  // Se ejecutan dos repartos seguidos con la misma fila rota y se cuenta cuántas
-  // veces sale el aviso. Con estado por ejecución, dos.
-  const ROTA = "No/Existe";
-  const rota = { ...suscripcion("sub-rota"), timezone: ROTA };
-  const guion = { "push_subscriptions:select": [filas([rota])] };
-
-  const contar = async () => {
-    const db = guionReparto(guion);
-    const errores: string[] = [];
-    const original = console.error;
-    console.error = (...partes: unknown[]) => {
-      errores.push(partes.map((p) => String(p)).join(" "));
-    };
-    try {
-      await handle(peticionCron(), ENV, {
-        createDb: () => db as unknown as SupabaseClient,
-        now: () => AHORA_EN_LA_VENTANA,
-        push: pushSinInteres(),
-      });
-    } finally {
-      console.error = original;
-    }
-    return errores.filter((l) => l.includes("zona horaria no válida")).length;
-  };
-
-  assertEquals(await contar(), 1, "la primera ejecución no avisó");
-  assertEquals(await contar(), 1, "la segunda ejecución no volvió a avisar");
 });

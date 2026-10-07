@@ -511,10 +511,15 @@ async function sendToUser(
   secrets: PushSecrets,
   userId: string,
   payload: { title: string; body: string; data: { type: string; id: string; url: string } },
+  fallosEnEstaEjecucion?: Map<string, number>,
 ): Promise<SendResult> {
   // Se configura aquí y no en quien llama porque quien llama son dos sitios
   // distintos y el que se olvidara fue el repartidor; ver `configureWebPush`.
   configureWebPush(push, secrets);
+
+  // Mapa de fallos por suscripción en ESTA ejecución.
+  // Si no se pasa, se crea uno local (para compatibilidad con runTestPush).
+  const fallosLocales = fallosEnEstaEjecucion ?? new Map<string, number>();
 
   const { data: subs, error } = await db
     .from("push_subscriptions")
@@ -530,6 +535,7 @@ async function sendToUser(
   let delivered = 0;
   const dead: string[] = [];
   let infraFailed = false;
+  const infraFailures: string[] = [];
 
   for (const sub of (subs ?? []) as { id: string; endpoint: string; p256dh: string; auth: string }[]) {
     try {
@@ -562,16 +568,26 @@ async function sendToUser(
         continue;
       }
       if (isInfrastructureFailure(error)) {
-        // La configuración, no la suscripción. Se distingue porque quien llama
-        // responde con un motivo: sin esto, un push service con las claves VAPID
-        // rotas devolvía "no tienes suscripciones activas" a alguien que sí las
-        // tenía, y además quemaba el enfriamiento con ese motivo falso.
-        infraFailed = true;
-        console.error("send-web-push: fallo de infraestructura en el envío", String(error));
+        infraFailures.push(sub.id);
         continue;
       }
       console.error("send-web-push: fallo enviando el aviso de prueba", String(error));
     }
+  }
+
+  // Discriminación por lote: si MÁS DE UNO falla 401/403, es infraestructura.
+  // Si solo UNO falla, es fallo de esa suscripción (contar y potencialmente apagar).
+  if (infraFailures.length > 1) {
+    infraFailed = true;
+    for (const id of infraFailures) {
+      console.error("send-web-push: fallo de infraestructura en lote, no se cuenta", id);
+    }
+  } else if (infraFailures.length === 1) {
+    // Solo uno falló: tratar como fallo de suscripción normal
+    const id = infraFailures[0];
+    const count = (fallosLocales.get(id) ?? 0) + 1;
+    fallosLocales.set(id, count);
+    console.error("send-web-push: fallo 401/403 aislado, se cuenta como fallo de suscripción", infraFailures[0]);
   }
 
   if (dead.length > 0) await db.from("push_subscriptions").delete().in("id", dead);
