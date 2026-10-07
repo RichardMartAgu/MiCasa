@@ -93,7 +93,7 @@ jobs:
       # es `index.ts`, el que levanta el servidor. Por eso está `deno check`
       # aparte, que sí recorre el directorio entero.
       #
-      # `deno lint` no está, a propósito: hoy tiene 8 avisos preexistentes en
+      # `deno lint` no está, a propósito: hoy tiene 7 avisos preexistentes en
       # esta carpeta y sale con código 1, así que metido aquí dejaría en rojo
       # todos los pushes hasta arreglar ruido viejo.
       #
@@ -145,20 +145,17 @@ jobs:
         working-directory: supabase/functions/send-web-push
         run: deno check --frozen --node-modules-dir=none .
 
-      # `--allow-env` no lo pide ningún test: los 34 inyectan su propio `ENV`.
+      # `--allow-env` no lo pide ningún test: los 121 inyectan su propio `ENV`.
       # Lo pide `npm:web-push`, que lee `process.env` al importarse, así que sin
       # este permiso importar el paquete revienta. Es decir, el permiso ata la
       # suite a lo que haga ese paquete con el entorno, no a lo que haga MiCasa.
       # Aquí no hay secretos: el único `env:` del workflow lleva `vars.*`.
       #
-      # `--allow-read` acotado a `.`, que es esta carpeta: un test lee el fuente
-      # de `handler.ts` y sin `=` el permiso sería todo el disco del runner.
-      #
       # Sin `--allow-net` a propósito, y es una barrera: un test que intentara
       # hablar con Supabase falla en vez de exfiltrar.
       - name: Test de la Edge Function
         working-directory: supabase/functions/send-web-push
-        run: deno test --frozen --allow-env --allow-read=. --node-modules-dir=none .
+        run: deno test --frozen --allow-env --node-modules-dir=none .
 
       # Puerta de vulnerabilidades, solo sobre lo que se instala en producción.
       # `--omit=dev` porque las herramientas de build (jest, @expo/cli,

@@ -108,7 +108,7 @@ Del bloque de Web Push:
 
 Del bloque de CORS:
 
-- `deno check` limpio; `deno test --allow-env --allow-read` 54/54 (28 de recordatorios + 19 de CORS + 7 de suscripciones inservibles). El `--allow-env` hace falta porque el paquete npm `web-push` lee `process.env` al cargarse; sin él, `deno test` sin banderas falla al importar el módulo. El `--allow-read` lo necesita un único test, que lee el fuente del handler para atar que los dos `catch` que limpian suscripciones usan el clasificador. Nota: en esta máquina `deno` no está instalado a mano, así que se invoca como `npx -y deno ... --node-modules-dir=auto` (la segunda bandera es la que resuelve `npm:web-push@3.6.7`).
+- `deno check` limpio; `deno test --allow-env` 121/121 (53 de recordatorios + 19 de CORS + 36 del handler + 13 de suscripciones inservibles). El `--allow-env` hace falta porque el paquete npm `web-push` lee `process.env` al cargarse; sin él, `deno test` sin banderas falla al importar el módulo. Nota: en esta máquina `deno` no está instalado a mano, así que se invoca como `npx -y deno ...`.
 - Función arrancada en local (`deno run --allow-env --allow-net index.ts`) y probada con `curl`: preflight con origen permitido → `204` con `Access-Control-Allow-Origin`; preflight con origen ajeno → `403` sin esa cabecera; `POST ?mode=test` con origen permitido y sin sesión → `401` **con** la cabecera; `GET` con origen permitido → `405` con la cabecera; `POST` sin `Origin` con `x-cron-secret` → `401` sin CORS, igual que antes.
 - Con `WEB_PUSH_ALLOWED_ORIGINS=https://preview-abc.vercel.app`: ese origen entra y `micasa-demo.vercel.app` se queda sin permiso, que es el comportamiento buscado al sustituir la lista.
 - `npx tsc --noEmit`, `npx expo lint` y `npx jest` (49/49 suites, 653/653) limpios, aunque este bloque no toca la app. Ojo: `tsconfig.json` excluye `supabase/`, así que esos checks no dicen **nada** de la Edge Function. Para eso están `deno check` y `deno test`.
@@ -198,7 +198,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X OPTIONS \
 | otro proyecto / otro dominio / sufijo montado | `403` |
 | `POST` sin `Origin` (cron) | `401` |
 
-Y los tests: `npx -y deno test --allow-env --allow-read --node-modules-dir=none supabase/functions/send-web-push/` → 83/83 (49 de recordatorios + 19 de CORS + 8 del handler + 7 de suscripciones inservibles).
+Y los tests: `npm run test:functions` → 121/121 (53 de recordatorios + 19 de CORS + 36 del handler + 13 de suscripciones inservibles).
 
 ## Cómo correr los tests de la función
 
@@ -206,13 +206,12 @@ Y los tests: `npx -y deno test --allow-env --allow-read --node-modules-dir=none 
 npm run test:functions
 ```
 
-El script es `npx -y deno test --allow-env --allow-read --node-modules-dir=none supabase/functions/send-web-push/`. Cada bandera tiene un motivo:
+El script es `npx -y deno test --allow-env --node-modules-dir=none supabase/functions/send-web-push/`. Cada bandera tiene un motivo:
 
-- `--allow-env`: el paquete npm `web-push` lee `process.env` al cargarse.
-- `--allow-read`: un único test lee el fuente de `handler.ts` para atar que los dos `catch` que limpian suscripciones usan el clasificador.
+- `--allow-env`: el paquete npm `web-push` lee `process.env` al cargarse. Ningún test lo pide: todos inyectan su propio `ENV`.
 - `--node-modules-dir=none`: explícito a propósito. Con `--node-modules-dir=auto`, que es lo que se usaba antes, Deno **reescribe el `node_modules` de la app**: sustituye los enlaces simbólico de nivel superior por entradas dentro de un `node_modules/.deno` propio y rompe Jest, que deja de encontrar `jest-expo`. Pasó de verdad, y la única salida fue `rm -rf node_modules && npm ci`. Con `none` no toca nada. No se usa `--allow-net` porque con `none` Deno resuelve los dependencias él mismo y no necesita red una vez poblada la caché.
 
-Deno **no** viene en el PATH de esta máquina, y por eso el script usa `npx -y deno` (probado con 2.9.6) en vez de un `deno` global. **CI no corre estos tests todavía**: `.github/workflows/ci.yml` solo lanza `npm run typecheck`, `npm run lint`, `npm test` y `npm run verify:pwa`, y `tsconfig.json` excluye `supabase/`, así que ni `tsc` ni Jest dicen nada de la Edge Function. Para comprobarla hacen falta `deno check` y `deno test`. Añadir un job de Deno al CI está pendiente.
+Deno **no** viene en el PATH de esta máquina, y por eso el script usa `npx -y deno` (probado con 2.9.6) en vez de un `deno` global. Los tests de la función sí corren en CI (`.github/workflows/ci.yml`, pasos `deno check` y `deno test`), así que un cambio en `supabase/functions/` no puede llegar a `develop` sin pasar por `deno check` y los 121 tests.
 
 
 ## Aviso de prueba

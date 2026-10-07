@@ -176,6 +176,39 @@ class FakeDb {
   }
 
   /**
+   * Cambia la zona de una fila de `push_subscriptions` en el guion.
+   *
+   * Existe para el caso de una misma persona con dos suscripciones en zonas
+   * distintas. `suscripcion()` pone siempre Madrid, porque en el resto de la suite
+   * una sola zona es lo que hace falta; aquí hace falta exactamente lo contrario, y
+   * meter un parámetro opcional en el helper obligaría a tocar todas las llamadas.
+   */
+  /** Las zonas que devolverá la consulta de suscripciones, en orden. */
+  zonasDeSuscribciones(): string[] {
+    const cola = this.guion["push_subscriptions:select"] ?? [];
+    const primera = cola[0];
+    const datos = primera?.data;
+    return Array.isArray(datos) ? datos.map((f) => String((f as Record<string, unknown>).timezone)) : [];
+  }
+
+  reemplazarZona(id: string, timezone: string): void {
+    for (const [clave, respuestas] of Object.entries(this.guion)) {
+      if (!clave.startsWith("push_subscriptions:select")) continue;
+      this.guion[clave] = respuestas.map((respuesta) => {
+        const datos = respuesta.data;
+        if (!Array.isArray(datos)) return respuesta;
+        return {
+          ...respuesta,
+          data: datos.map((fila) => {
+            const filaComoObjeto = fila as Record<string, unknown>;
+            return filaComoObjeto.id === id ? { ...filaComoObjeto, timezone } : fila;
+          }),
+        };
+      });
+    }
+  }
+
+  /**
    * Cuántas filas de `push_log` hay de verdad.
    *
    * Hace falta porque `calls` registra el `insert` aunque la restricción de
@@ -405,7 +438,7 @@ Deno.test("la reserva de la confirmación va por usuario y no por referencia", a
 // ---------------------------------------------------------------------------
 
 Deno.test("una referencia que no existe también quema el bucket", async () => {
-  // El caso que motivated el arreglo: antes salía un 404 sin escribir fila, así que
+  // El caso que motivó el arreglo: antes salía un 404 sin escribir fila, así que
   // el mismo request se podía repetir indefinidamente pagando la validación de
   // sesión y las dos llamadas a Vault cada vez.
   const db = guionConfirmacion({ "contacts:select": [filas([])] });
@@ -725,4 +758,750 @@ Deno.test("una cita que no se ve quema la reserva igual que una que sí", async 
 
   assertEquals(db.pushLogRows(), 1);
   assertEquals(db.callsTo("push_log", "delete").length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Regresión: las claves VAPID se configuran antes de enviar, y quién cuda
+// un fallo es lo que evita que una suscripción válida se apague sola.
+//
+// Estos tests son de COMPORTAMIENTO, sobre un doble de `web-push` inyectado por
+// `HandlerDeps`. La versión anterior los hacía leyendo el fuente, y era frágil
+// por construcción: la primera vez que se escribió, comentar la llamada a
+// `setVapidDetails` dejaba el texto buscado dentro del comentario y la suite
+// seguía en verde con el bug entero de vuelta. Un guard que no falla cuando
+// reproduces el fallo no guarda nada, y además un comentario no es una prueba.
+// Con el doble, el orden se lee en la secuencia de llamadas: si alguien mueve
+// la configuración después del envío, el test se pone rojo solo.
+// ---------------------------------------------------------------------------
+
+/** Un `web-push` que registra el orden de las llamadas y puede fallar lo que se le pida. */
+class FakePush {
+  /** Secuencia de llamadas, en el orden en que hicieron. */
+  readonly llamadas: string[] = [];
+  /** Claves con las que se configuró el remitente, para comprobar que son las de Vault. */
+  configured?: { subject: string; publicKey: string; privateKey: string };
+
+  constructor(private readonly fallo?: unknown) {}
+
+  setVapidDetails(subject: string, publicKey: string, privateKey: string): void {
+    this.configured = { subject, publicKey, privateKey };
+    this.llamadas.push("setVapidDetails");
+  }
+
+  // Sin `async`: no hay nada que awaits, y `deno lint` lo señala. La firma pide
+  // promesa, y eso es lo que devuelve.
+  sendNotification(): Promise<unknown> {
+    this.llamadas.push("sendNotification");
+    if (this.fallo !== undefined) return Promise.reject(this.fallo);
+    return Promise.resolve({});
+  }
+}
+
+/** Un `web-push` normal para los tests que no miran el push. */
+function pushSinInteres(): FakePush {
+  return new FakePush();
+}
+
+/** Índice de la primera aparición de `evento`, o -1. */
+function cuando(llamadas: string[], evento: string): number {
+  return llamadas.indexOf(evento);
+}
+
+/** Una suscripción viva tal y como la lee el reparto. */
+function suscripcion(id: string, failureCount = 0): Record<string, unknown> {
+  return {
+    id,
+    user_id: USER,
+    endpoint: `https://push.example/${id}`,
+    p256dh: "clave-publica",
+    auth: "clave-privada",
+    timezone: MADRID,
+    failure_count: failureCount,
+    active: true,
+  };
+}
+
+/**
+ * Guion del camino del cron: un `POST` sin sesión, con el secreto, que llega al
+ * reparto. Se llama `?sync=1` para que la respuesta contenga el resultado y el
+ * test no dependa del trabajo en segundo plano.
+ */
+function peticionCron(params: Record<string, string> = {}): Request {
+  const url = new URL(`${FN}?sync=1`);
+  for (const [clave, valor] of Object.entries(params)) url.searchParams.set(clave, valor);
+  return new Request(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-cron-secret": "secreto" },
+  });
+}
+
+/**
+ * Guion del reparto con una cita de HOY a las 09:00 locales y una suscripción
+ * viva, que es la situación mínima para que salga un aviso de verdad.
+ */
+function guionReparto(extra: Guion = {}): FakeDb {
+  return new FakeDb({
+    // 2026-03-16T08:05Z son las 09:05 en Madrid: dentro de la ventana de catchup.
+    "push_subscriptions:select": [
+      filas([suscripcion("sub-1")]),
+      filas([suscripcion("sub-1")]),
+    ],
+    // Cada grupo (una zona) lee sus propias preferencias, sus casas y sus citas,
+    // así que cada guion necesita dos respuestas encadenadas: `answer()` hace
+    // `shift()` mientras quede más de una.
+    "push_preferences:select": [
+      filas([{ user_id: USER, enabled: true, birthday_choice: "none" }]),
+      filas([{ user_id: USER, enabled: true, birthday_choice: "none" }]),
+    ],
+    "casa_members:select": [
+      filas([{ user_id: USER, casa_id: CASA }]),
+      filas([{ user_id: USER, casa_id: CASA }]),
+    ],
+    "appointments:select": [
+      filas([{ id: CITA, user_id: USER, casa_id: CASA, title: "Dentista", starts_at: "2026-03-16T10:00:00Z", reminder_choice: "same-day" }]),
+      filas([{ id: CITA, user_id: USER, casa_id: CASA, title: "Dentista", starts_at: "2026-03-16T10:00:00Z", reminder_choice: "same-day" }]),
+    ],
+    ...extra,
+  });
+}
+
+const AHORA_EN_LA_VENTANA = Date.parse("2026-03-16T08:05:00Z");
+
+Deno.test("el reparto configura VAPID con las claves de Vault antes de enviar", async () => {
+  const push = pushSinInteres();
+  await handle(peticionCron(), ENV, {
+    createDb: () => guionReparto() as unknown as SupabaseClient,
+    now: () => AHORA_EN_LA_VENTANA,
+    push,
+  });
+
+  const configurar = cuando(push.llamadas, "setVapidDetails");
+  const enviar = cuando(push.llamadas, "sendNotification");
+  assert(configurar !== -1, "el reparto no configuró VAPID: enviaría sin remitente");
+  assert(enviar !== -1, "no se envió nada: el test está mirando un camino que no llega al envío");
+  assert(
+    configurar < enviar,
+    `VAPID se configura DESPUÉS de enviar (${push.llamadas.join(" -> ")})`,
+  );
+  // Y con las claves de verdad, no con una constante: si alguien mueve el
+  // `configureWebPush` a otro módulo, esto sigue atando que lee las suyas.
+  assertEquals(push.configured?.publicKey, VAPID_PUBLIC);
+  assertEquals(push.configured?.privateKey, VAPID_PRIVATE);
+});
+
+Deno.test("el aviso de prueba también configura VAPID antes de enviar", async () => {
+  // El otro camino. Si este se rompe, el botón "Enviar" de Ajustes deja de avisar,
+  // que es el síntoma que hace sospechar de la suscripción cuando lo que falla es esto.
+  const push = pushSinInteres();
+  const db = new FakeDb({
+    "push_subscriptions:select": [filas([suscripcion("sub-1")])],
+  });
+  const res = await handle(
+    new Request(`${FN}?mode=test`, { method: "POST", headers: { authorization: "Bearer sesion" } }),
+    ENV,
+    { createDb: () => db as unknown as SupabaseClient, now: () => 1_800_000_000_000, push },
+  );
+
+  assertEquals((await cuerpo(res)).ok, true);
+  assert(configurarAntes(push.llamadas), `orden incorrecto: ${push.llamadas.join(" -> ")}`);
+});
+
+/** ¿Se configuró VAPID antes del primer envío? */
+function configurarAntes(llamadas: string[]): boolean {
+  const configurar = cuando(llamadas, "setVapidDetails");
+  const enviar = cuando(llamadas, "sendNotification");
+  return configurar !== -1 && enviar !== -1 && configurar < enviar;
+}
+
+/** Un error con `statusCode`, como los que lanza `web-push`. */
+function errorConEstado(status: number): Error {
+  return Object.assign(new Error(`push service ${status}`), { statusCode: status });
+}
+
+Deno.test("un 403 del push service no desactiva la suscripción, pero sí reintenta", async () => {
+  // El fallo que costó los recordatorios de este repo, por la vía que quedaba:
+  // un rechazo de configuración se contaba como fallo de la suscripción, y a los
+  // cinco la apagaba. `active = false` es irreversible, así que contar infra
+  // contra el contador de suscripción apagaba a gente que no tenía nada malo.
+  const push = new FakePush(errorConEstado(403));
+  const db = guionReparto();
+  const res = await handle(peticionCron(), ENV, {
+    createDb: () => db as unknown as SupabaseClient,
+    now: () => AHORA_EN_LA_VENTANA,
+    push,
+  });
+
+  const cuerpoRes = await cuerpo(res);
+  assertEquals(cuerpoRes.sent, 0);
+
+  // Ni una escritura que toque `failure_count` o `active`.
+  const escrituras = db.callsTo("push_subscriptions", "update");
+  for (const call of escrituras) {
+    assertEquals(call.payload?.failure_count, undefined, `contó un 403 como fallo: ${JSON.stringify(call.payload)}`);
+    assertEquals(call.payload?.active, undefined, `desactivó por un 403: ${JSON.stringify(call.payload)}`);
+  }
+
+  // La reserva sí se libera, y a propósito: un 429 —transitorio, y justo al
+  // lado— ya lo hacía, así que tratar el 403 de otra forma era incoherente y
+  // costaba el recordatorio de ese día para siempre. Liberándola, el aviso sale
+  // en cuanto la configuración se arregle y dentro de la ventana de catchup.
+  //
+  // Se cuentan solo los `delete` que llevan el filtro de la reserva. El reparto
+  // empieza podando `push_log` por antigüedad, y ese `delete` sale siempre: si
+  // se contara, el test pasaría por un borrado que no es el que importa.
+  assertEquals(
+    reservasSueltas(db).length,
+    1,
+    "un 403 no liberó la reserva: el recordatorio de ese día se pierde para siempre",
+  );
+});
+
+/**
+ * Los `delete` de `push_log` que sueltan una reserva concreta, sin contar la poda
+ * de antigüedad que hace el reparto al empezar.
+ */
+function reservasSueltas(db: FakeDb): Call[] {
+  return db.callsTo("push_log", "delete").filter((call) => call.eq.dedupe_key !== undefined);
+}
+
+Deno.test("un 429 sí cuenta como fallo de la suscripción", async () => {
+  // El otro lado de la línea: un 429 es transitorio y sí es de la suscripción.
+  // Si esto no contara, un rate limit del servicio de push sería invisible y la
+  // suscripción nunca se protegería de un endpoint realmente malo.
+  const push = new FakePush(errorConEstado(429));
+  const db = guionReparto();
+  await handle(peticionCron(), ENV, {
+    createDb: () => db as unknown as SupabaseClient,
+    now: () => AHORA_EN_LA_VENTANA,
+    push,
+  });
+
+  const conContador = db
+    .callsTo("push_subscriptions", "update")
+    .filter((call) => call.payload?.failure_count !== undefined);
+  assertEquals(conContador.length, 1, "un 429 no llegó a contarse como fallo");
+  assertEquals(conContador[0].payload?.failure_count, 1);
+  assertEquals(conContador[0].payload?.active, true);
+
+  // Y al revés que el 403: aquí sí se suelta la reserva, porque un 429 sí
+  // tiene arreglo esperando dentro de la ventana de catchup.
+  assertEquals(
+    reservasSueltas(db).length,
+    1,
+    "un 429 no debería soltar la reserva: se podría reintentar dentro de la ventana",
+  );
+});
+
+Deno.test("una suscripción que entrega y luego falla no queda con el contador viejo", async () => {
+  // El contador se resucitaba con el valor leído al principio de la ejecución: si
+  // un aviso entregaba (y ponía el contador a 0) y otro fallaba después en la
+  // MISMA ejecución, se reescribía `viejo + 1` encima de ese 0. Con el viejo en
+  // 4, una suscripción que acababa de entregar acababa en 5 y se apagaba.
+  //
+  // El doble solo devuelve una suscripción por lectura, así que para tener dos
+  // despatch en el mismo lote hacen falta dos citas y dos respuestas en cola.
+  const push = new FakePush();
+  let envio = 0;
+  const pushConUnFallo = {
+    setVapidDetails: (s: string, p: string, pr: string) => push.setVapidDetails(s, p, pr),
+    sendNotification: () => {
+      envio++;
+      push.llamadas.push("sendNotification");
+      // El primero entra bien, el segundo revienta con un 429.
+      return envio === 2 ? Promise.reject(errorConEstado(429)) : Promise.resolve({});
+    },
+  };
+
+  const db = guionReparto({
+    "push_subscriptions:select": [
+      filas([suscripcion("sub-1", 4)]),
+      filas([suscripcion("sub-1", 4)]),
+    ],
+    "appointments:select": [
+      filas([
+        { id: CITA, user_id: USER, casa_id: CASA, title: "Dentista", starts_at: "2026-03-16T10:00:00Z", reminder_choice: "same-day" },
+        { id: "55555555-5555-4555-8555-555555555555", user_id: USER, casa_id: CASA, title: "Gym", starts_at: "2026-03-16T18:00:00Z", reminder_choice: "same-day" },
+      ]),
+    ],
+  });
+
+  await handle(peticionCron(), ENV, {
+    createDb: () => db as unknown as SupabaseClient,
+    now: () => AHORA_EN_LA_VENTANA,
+    push: pushConUnFallo,
+  });
+
+  // Una entrega y un fallo en el mismo lote: el estado final consolidado tiene
+  // que reflejar el fallo, pero calculado desde el 0 que dejó la entrega, no
+  // desde el 4 con el que se leyó la fila.
+  const finales = db
+    .callsTo("push_subscriptions", "update")
+    .filter((call) => call.payload?.failure_count !== undefined);
+  assert(finales.length >= 1, "no se escribió el contador de fallos");
+  const ultimo = finales[finales.length - 1];
+  assertEquals(
+    ultimo.payload?.active,
+    true,
+    `una suscripción que entregó quedó apagada: ${JSON.stringify(ultimo.payload)}`,
+  );
+  assert(
+    (ultimo.payload?.failure_count as number) < 5,
+    `el contador se resucitó con el valor viejo: ${JSON.stringify(ultimo.payload)}`,
+  );
+});
+
+Deno.test("una excepción que se escapa responde 500 CON cabeceras CORS, no un 500 pelado", async () => {
+  // `Deno.serve` en `index.ts` no tiene catch, así que antes de esta red una
+  // excepción sin cubrir salía como un 500 sin cabeceras: el navegador no podía ni
+  // leer por qué había fallado. El caso real que la motivó es `setVapidDetails`,
+  // que lanza `TypeError` si las claves de Vault están mal formadas.
+  //
+  // El doble de push es el que revienta, y lo hace al configurar VAPID, que es lo
+  // primero que hace cualquier camino de envío.
+  class PushQueRevienta {
+    setVapidDetails(): void {
+      throw new TypeError("The VAPID public key is not valid");
+    }
+    sendNotification(): Promise<unknown> {
+      return Promise.resolve({});
+    }
+  }
+
+  const res = await handle(
+    new Request(`${FN}?mode=test`, {
+      method: "POST",
+      headers: { authorization: "Bearer sesion", origin: "https://micasa-demo.vercel.app" },
+    }),
+    ENV,
+    {
+      createDb: () => new FakeDb({ "push_subscriptions:select": [filas([suscripcion("sub-1")])] }) as unknown as SupabaseClient,
+      now: () => 1_800_000_000_000,
+      push: new PushQueRevienta(),
+    },
+  );
+
+  assertEquals(res.status, 500);
+  // Lo que de verdad importa: el origen permitido puede leer el motivo.
+  assertEquals(
+    res.headers.get("access-control-allow-origin"),
+    "https://micasa-demo.vercel.app",
+    "el 500 salió sin cabeceras CORS: el navegador no puede leer por qué falló",
+  );
+  assertEquals(await cuerpo(res), { error: "error interno" });
+});
+
+Deno.test("la red de seguridad no filtra el error interno al navegador", async () => {
+  // El cuerpo del 500 es genérico a propósito. El motivo va al log, que es donde
+  // lo lee quien puede arreglarlo; mandarlo también al navegador publicaría la
+  // forma de la configuración por error.
+  class PushQueFalla {
+    setVapidDetails(): void {
+      throw new Error("la clave privada de Vault es sk_live_SECRETA");
+    }
+    sendNotification(): Promise<unknown> {
+      return Promise.resolve({});
+    }
+  }
+
+  const res = await handle(
+    new Request(`${FN}?mode=test`, {
+      method: "POST",
+      headers: { authorization: "Bearer sesion", origin: "https://micasa-demo.vercel.app" },
+    }),
+    ENV,
+    {
+      createDb: () => new FakeDb({ "push_subscriptions:select": [filas([suscripcion("sub-1")])] }) as unknown as SupabaseClient,
+      now: () => 1_800_000_000_000,
+      push: new PushQueFalla(),
+    },
+  );
+
+  const texto = await res.text();
+  assert(!texto.includes("sk_live_SECRETA"), `el 500 filtra el motivo interno: ${texto}`);
+  assert(!texto.includes("Vault"), `el 500 nombra el origen del fallo: ${texto}`);
+});
+
+Deno.test("con dos avisos y un 401, ambos liberan su reserva y solo el 429 cuenta", async () => {
+  // Cuando la reserva se conservaba en fallo de infraestructura, este caso
+  // destapó que el flag era estado del LOTE leído dentro del bucle: el aviso con
+  // 401 lo dejaba en `true` y el siguiente, que podía haber fallado por un 429 de
+  // lo más reintentable, lo leía y perdía su reintento para siempre.
+  //
+  // El flag por aviso ya no existe —liberar la reserva es ahora la regla única—,
+  // pero el caso se queda porque ata dos cosas que sí pueden volver a romperse:
+  // que los dos reintenten, y que solo uno cuente como fallo de suscripción.
+  let envio = 0;
+  const push = {
+    setVapidDetails: (s: string, p: string, pr: string) => pushSinInteres().setVapidDetails(s, p, pr),
+    sendNotification: () => {
+      envio++;
+      // El primer aviso recibe un 401 (configuración) y el segundo un 429 (rate).
+      return envio === 1 ? Promise.reject(errorConEstado(401)) : Promise.reject(errorConEstado(429));
+    },
+  };
+
+  const dosAvisos = [
+    { id: CITA, user_id: USER, casa_id: CASA, title: "Dentista", starts_at: "2026-03-16T10:00:00Z", reminder_choice: "same-day" },
+    { id: "55555555-5555-4555-8555-555555555555", user_id: USER, casa_id: CASA, title: "Gym", starts_at: "2026-03-16T18:00:00Z", reminder_choice: "same-day" },
+  ];
+
+  const db = guionReparto({
+    "push_subscriptions:select": [filas([suscripcion("sub-1")]), filas([suscripcion("sub-1")])],
+    "appointments:select": [filas(dosAvisos)],
+  });
+
+  await handle(peticionCron(), ENV, {
+    createDb: () => db as unknown as SupabaseClient,
+    now: () => AHORA_EN_LA_VENTANA,
+    push,
+  });
+
+  // Los dos liberan: ninguno se queda sin reintento por el fallo del otro.
+  const sueltas = reservasSueltas(db);
+  assertEquals(sueltas.length, 2, `los dos avisos deberían liberar su reserva; soltaron ${sueltas.length}`);
+
+  // Y solo el 429 cuenta: el 401 no toca el contador.
+  const conContador = db
+    .callsTo("push_subscriptions", "update")
+    .filter((call) => call.payload?.failure_count !== undefined);
+  assertEquals(conContador.length, 1, "el 401 se contó como fallo de suscripción");
+  assertEquals(conContador[0].payload?.failure_count, 1);
+});
+
+Deno.test("una suscripción inservible se borra en los DOS caminos de envío", async () => {
+  // Atar el cableado del clasificador, en comportamiento y no leyendo el fuente.
+  //
+  // La versión anterior de esta comprobación contaba apariciones de
+  // `isUnusableSubscription(error)` en el fuente de `handler.ts`, con un regex y
+  // `--allow-read` en el comando de test. Se quitó porque su premisa ya era
+  // falsa: decía que probar el cableado "exigiría inyectar `web-push`", y eso es
+  // justo lo que hace `HandlerDeps.push`. Y porque un test que cuenta
+  // apariciones en el fuente tiene el defecto que ya mordió dos veces en este
+  // bloque: comentar la llamada deja el texto dentro del comentario y la suite
+  // sigue en verde con el bug de vuelta.
+  //
+  // Lo que se ata ahora es el efecto: una suscripción con claves imposibles se
+  // borra, y lo hace por los dos caminos. Si alguien quita el clasificador de
+  // cualquiera de los dos, la fila deja de borrarse y esto se pone rojo.
+  const pushInservible = () =>
+    new FakePush(new Error("The subscription p256dh value should be 65 bytes long."));
+
+  // Camino 1: el aviso de prueba de Ajustes.
+  const dbTest = new FakeDb({
+    "push_subscriptions:select": [filas([suscripcion("sub-inservible")])],
+  });
+  const resTest = await handle(
+    new Request(`${FN}?mode=test`, { method: "POST", headers: { authorization: "Bearer sesion" } }),
+    ENV,
+    {
+      createDb: () => dbTest as unknown as SupabaseClient,
+      now: () => 1_800_000_000_000,
+      push: pushInservible(),
+    },
+  );
+  // El cuerpo no se mira a propósito: con `delivered === 0` el aviso de prueba
+  // responde por otra rama. Lo que importa es que la fila se borra, y eso se ve
+  // en la llamada de `delete`.
+  await cuerpo(resTest);
+  assertEquals(
+    dbTest.callsTo("push_subscriptions", "delete").length,
+    1,
+    "el aviso de prueba no borró la suscripción inservible",
+  );
+
+  // Camino 2: el reparto del cron, que es el que se llevaba los avisos.
+  const dbReparto = guionReparto({
+    "push_subscriptions:select": [
+      filas([suscripcion("sub-inservible")]),
+      filas([suscripcion("sub-inservible")]),
+    ],
+  });
+  const resReparto = await handle(peticionCron(), ENV, {
+    createDb: () => dbReparto as unknown as SupabaseClient,
+    now: () => AHORA_EN_LA_VENTANA,
+    push: pushInservible(),
+  });
+  assertEquals((await cuerpo(resReparto)).removedSubscriptions, 1);
+  assertEquals(
+    dbReparto.callsTo("push_subscriptions", "delete").length,
+    1,
+    "el reparto no borró la suscripción inservible",
+  );
+});
+
+Deno.test("una configuración de push rota NO se reporta como 'sin suscripciones'", async () => {
+  // El motivo que se le decía a la persona tenía que ser verdad. Con un 401 del
+  // push service, `delivered` es 0 y el camino de siempre respondía "sin
+  // suscripciones activas en este navegador" a alguien que sí las tenía. Además
+  // quemaba el enfriamiento de cinco minutos con ese motivo, así que tampoco podía
+  // reintentar hasta que expirara.
+  const conInfra = () => new FakePush(errorConEstado(401));
+
+  const dbTest = new FakeDb({ "push_subscriptions:select": [filas([suscripcion("sub-1")])] });
+  const resTest = await handle(
+    new Request(`${FN}?mode=test`, { method: "POST", headers: { authorization: "Bearer sesion" } }),
+    ENV,
+    { createDb: () => dbTest as unknown as SupabaseClient, now: () => 1_800_000_000_000, push: conInfra() },
+  );
+  const cuerpoTest = await cuerpo(resTest);
+  assertEquals(cuerpoTest.ok, false);
+  assert(
+    !String(cuerpoTest.error).includes("suscripciones"),
+    `un 401 se reportó como falta de suscripciones: ${JSON.stringify(cuerpoTest)}`,
+  );
+
+  // Y el camino de la confirmación, que además responde con un 502: es un fallo
+  // del servidor, no un 404 de "no hay nada que confirmar".
+  const dbNow = guionConfirmacion({ "push_subscriptions:select": [filas([suscripcion("sub-1")])] });
+  const resNow = await handle(peticionNow(), ENV, {
+    createDb: () => dbNow as unknown as SupabaseClient,
+    now: () => 1_800_000_000_000,
+    push: conInfra(),
+  });
+  assertEquals(resNow.status, 502);
+  const cuerpoNow = await cuerpo(resNow);
+  assert(
+    !String(cuerpoNow.error).includes("suscripciones"),
+    `un 401 se reportó como falta de suscripciones: ${JSON.stringify(cuerpoNow)}`,
+  );
+});
+
+Deno.test("una persona con dos navegadores en zonas distintas recibe los DOS avisos", async () => {
+  // El bug se veía desde los datos: una misma persona con dos suscripciones en
+  // zonas horarias diferentes. El reparto agrupa por `(user_id, timezone)`, así que
+  // salen dos juegos de avisos, y si la clave de idempotencia no llevara la zona el
+  // segundo insert chocaba con la restricción de unicidad y se perdía sin más rastro
+  // que un "skipped (duplicate)".
+  //
+  // Madrid, París y Berlín están las tres en UTC+1 el 16 de marzo, así que las
+  // 09:00 locales caen en el mismo instante UTC y el mismo día local: es
+  // exactamente la condición que dispara el choque. Con la zona fuera de la clave,
+  // las tres produzcan `...:same-day:2026-03-16` y solo la primera se reservaría.
+  //
+  // Se usan dos en vez de tres porque el reparto es por grupos de zona y con dos ya
+  // se ve el choque completo; la tercera no añade un caso distinto.
+  const PARIS = "Europe/Paris";
+  const AHORA_MADRID_Y_PARIS = Date.parse("2026-03-16T09:05:00Z");
+  const db = new FakeDb({
+    "push_subscriptions:select": [filas([suscripcion("sub-madrid"), suscripcion("sub-paris")])],
+    // Dos grupos, dos lecturas de cada cosa. Con una sola respuesta el `FakeDb` la
+    // re-sirve y los dos grupos verían lo mismo.
+    "push_preferences:select": [
+      filas([{ user_id: USER, enabled: true, birthday_choice: "none" }]),
+      filas([{ user_id: USER, enabled: true, birthday_choice: "none" }]),
+    ],
+    "casa_members:select": [
+      filas([{ user_id: USER, casa_id: CASA }]),
+      filas([{ user_id: USER, casa_id: CASA }]),
+    ],
+    // A las 20:00 UTC son las 21:00 en las dos zonas: cita del día 16 en ambas, y
+    // su aviso de las 09:00 ya pasó, así que entra por la ventana de catchup.
+    "appointments:select": [
+      filas([{ id: CITA, user_id: USER, casa_id: CASA, title: "Dentista", starts_at: "2026-03-16T20:00:00Z", reminder_choice: "same-day" }]),
+      filas([{ id: CITA, user_id: USER, casa_id: CASA, title: "Dentista", starts_at: "2026-03-16T20:00:00Z", reminder_choice: "same-day" }]),
+    ],
+  });
+  // `suscripcion()` pone Madrid en todas; aquí hace falta una segunda zona.
+  db.reemplazarZona("sub-paris", PARIS);
+  assertEquals(
+    db.zonasDeSuscribciones(),
+    [MADRID, PARIS],
+    "el guion no aplicó la segunda zona: el test no probaría nada",
+  );
+
+  const enviados: string[] = [];
+  const res = await handle(peticionCron(), ENV, {
+    createDb: () => db as unknown as SupabaseClient,
+    now: () => AHORA_MADRID_Y_PARIS,
+    push: {
+      setVapidDetails: (s: string, pk: string, sk: string) => pushSinInteres().setVapidDetails(s, pk, sk),
+      sendNotification: (sub: { endpoint: string }) => {
+        enviados.push(sub.endpoint);
+        return Promise.resolve();
+      },
+    },
+  });
+
+  assertEquals(res.status, 200);
+  const resultado = await cuerpo(res);
+  assertEquals(resultado.dispatched, 2, `solo se despacharon ${resultado.dispatched} de 2 avisos`);
+  assertEquals(resultado.sent, 2, `solo se entregaron ${resultado.sent} de 2 avisos`);
+  assertEquals(resultado.skipped, 0, "uno de los dos avisos se saltó como duplicado");
+
+  // Cada zona recibe por su propio navegador, que es lo que se perdió en su día.
+  assertEquals(enviados.length, 2, `se envió a ${enviados.length} suscripciones, se esperaban 2`);
+  assert(
+    enviados.includes("https://push.example/sub-madrid") && enviados.includes("https://push.example/sub-paris"),
+    `no llegó a los dos navegadores: ${JSON.stringify(enviados)}`,
+  );
+
+  // Y se reservaron las dos claves, distintas por la zona.
+  const claves = db.callsTo("push_log", "insert").map((call) => String(call.payload?.dedupe_key));
+  assertEquals(claves.length, 2, `se insertaron ${claves.length} reservas`);
+  assertEquals(
+    new Set(claves).size,
+    2,
+    `las dos reservas comparten clave, que es el bug: ${claves.join(" | ")}`,
+  );
+});
+
+Deno.test("una VAPID corrupta aborta el lote ANTES de tocar ninguna suscripción", async () => {
+  // Contraprueba de un escenario que parecía posible y no lo es.
+  //
+  // `validatePublicKey` de web-push acepta una clave de 65 bytes que no es un
+  // punto de curva real: solo comprueba base64url y longitud. Si esa clave llegara
+  // a `createECDH`, el error criptográfico indistinguible caería en el `catch` de
+  // envío y, como no se puede atribuir, SE CONTARÍA como fallo de suscripción: a los
+  // cinco ciclos la flota entera quedaría con `active = false`.
+  //
+  // No llega, y esto es lo que ata esa garantía: `setVapidDetails` valida las
+  // claves al configurar el push, y `runDispatch` lo hace antes de leer avisos y
+  // antes del bucle. El fallo sale por la red de seguridad de `handle` como un 500,
+  // sin haber tocado una sola fila de `push_subscriptions`.
+  const db = guionReparto();
+  const res = await handle(peticionCron(), ENV, {
+    createDb: () => db as unknown as SupabaseClient,
+    now: () => AHORA_EN_LA_VENTANA,
+    push: {
+      setVapidDetails: () => {
+        throw new Error("Vapid public key should be 65 bytes long when decoded.");
+      },
+      sendNotification: () => Promise.resolve(),
+    },
+  });
+
+  assertEquals(res.status, 500, "una VAPID corrupta no debe devolver un 200");
+  assertEquals(db.callsTo("push_subscriptions", "update").length, 0, "tocó suscripciones");
+  assertEquals(db.callsTo("push_subscriptions", "delete").length, 0, "borró suscripciones");
+  assertEquals(db.pushLogRows(), 0, "reservó avisos");
+});
+
+Deno.test("ningún log imprime la zona horaria de la suscripción", async () => {
+  // La zona va dentro de `dedupeKey` desde que dos navegadores con zonas distintas
+  // dejaron de compartir la reserva, y `dedupeKey` salía en cinco líneas de log.
+  // Eso metía en el log retenido un dato que, junto con el resto de la fila de la
+  // suscripción, identifica a una persona concreta y lo lee cualquiera con acceso al
+  // proyecto. Los logs usan `claveDeDiagnostico`, que es la clave sin la zona.
+  const db = guionReparto();
+  const lineas: string[] = [];
+  const capturar = console.log;
+  console.log = (...partes: unknown[]) => {
+    lineas.push(partes.map((p) => String(p)).join(" "));
+  };
+  try {
+    await handle(peticionCron(), ENV, {
+      createDb: () => db as unknown as SupabaseClient,
+      now: () => AHORA_EN_LA_VENTANA,
+      push: pushSinInteres(),
+    });
+  } finally {
+    console.log = capturar;
+  }
+
+  const conZona = lineas.filter((linea) => linea.includes(MADRID));
+  assertEquals(
+    conZona.length,
+    0,
+    `la zona horaria salió en un log:\n${conZona.join("\n")}`,
+  );
+});
+
+Deno.test("una zona horaria inválida no tumba el lote de los demás", async () => {
+  // `push_subscriptions.timezone` solo tiene un `check` de 64 caracteres, así que el
+  // valor no está validado: puede ser cualquier cosa. Con `No/Existe`,
+  // `Intl.DateTimeFormat` lanza `RangeError` dentro de `buildDispatches`, y eso
+  // tumbaba el lote entero. No recibía nadie ese ciclo —tampoco las personas de
+  // otras casas, que no tienen nada que ver con esa fila— y con `sync=1` devolvía
+  // además un 500.
+  //
+  // El impacto cruzado entre inquilinos es lo que hace esto más que un bug de
+  // robustez: una fila de una sola persona impedía los avisos de todas las demás.
+  const ROTA = "No/Existe";
+  const sana = suscripcion("sub-buena");
+  const rota = { ...suscripcion("sub-rota"), timezone: ROTA };
+  const db = guionReparto({ "push_subscriptions:select": [filas([rota, sana])] });
+
+  const errores: string[] = [];
+  const consoleErrorOriginal = console.error;
+  console.error = (...partes: unknown[]) => {
+    errores.push(partes.map((p) => String(p)).join(" "));
+  };
+  const enviados: string[] = [];
+  let res: Response;
+  try {
+    res = await handle(peticionCron(), ENV, {
+      createDb: () => db as unknown as SupabaseClient,
+      now: () => AHORA_EN_LA_VENTANA,
+      push: {
+        setVapidDetails: (s: string, pk: string, sk: string) => pushSinInteres().setVapidDetails(s, pk, sk),
+        sendNotification: (sub: { endpoint: string }) => {
+          enviados.push(sub.endpoint);
+          return Promise.resolve();
+        },
+      },
+    });
+  } finally {
+    console.error = consoleErrorOriginal;
+  }
+
+  // Y se avisa. Una fila con la zona rota seguiría intentándolo en cada reparto
+  // mientras nadie mire, así que el log es lo único que convierte esto en algo
+  // diagnosticable en vez de un silencio.
+  assert(
+    errores.some((linea) => linea.includes("zona horaria no válida")),
+    `nadie se enteró de la suscripción con zona inválida: ${JSON.stringify(errores)}`,
+  );
+
+  assertEquals(res.status, 200, "una zona inválida hizo fallar el lote entero");
+  const resultado = await cuerpo(res);
+  assertEquals(resultado.sent, 1, `la suscripción sana no recibió su aviso: ${JSON.stringify(resultado)}`);
+  assertEquals(enviados.length, 1);
+  assertEquals(enviados[0], "https://push.example/sub-buena", "se envió a la suscripción con la zona rota");
+
+  // Y la fila rota no se toca: ni se borra, ni se desactiva, ni cuenta como fallo.
+  // Desactivarla sería peor que ignorarla, porque se perdería sin aviso.
+  assertEquals(db.callsTo("push_subscriptions", "delete").length, 0, "borró la fila con zona inválida");
+  // Ojo con el filtro: una entrega también escribe `failure_count: 0`, así que
+  // contar updates que TOCAN `failure_count` contaría el de la sana. Lo que
+  // significa "contó un fallo" es un valor mayor que cero.
+  const fallos = db
+    .callsTo("push_subscriptions", "update")
+    .filter((c) => typeof c.payload?.failure_count === "number" && (c.payload.failure_count as number) > 0);
+  assertEquals(fallos.length, 0, `contó un fallo contra la fila con zona inválida: ${JSON.stringify(fallos)}`);
+});
+
+Deno.test("el aviso de zona inválida sale en CADA ejecución, no solo en la primera", async () => {
+  // El `Set` que evita repetir el aviso por ejecución está dentro de `runDispatch`,
+  // no en el módulo. Un `Set` de módulo sobrevive entre invocaciones en un isolate
+  // caliente de Deno Edge Functions, así que el aviso habría salido una vez en toda
+  // la vida del isolate y luego callado para siempre: el peor sitio para el único
+  // indicio de que una suscripción está rota.
+  //
+  // Se ejecutan dos repartos seguidos con la misma fila rota y se cuenta cuántas
+  // veces sale el aviso. Con estado por ejecución, dos.
+  const ROTA = "No/Existe";
+  const rota = { ...suscripcion("sub-rota"), timezone: ROTA };
+  const guion = { "push_subscriptions:select": [filas([rota])] };
+
+  const contar = async () => {
+    const db = guionReparto(guion);
+    const errores: string[] = [];
+    const original = console.error;
+    console.error = (...partes: unknown[]) => {
+      errores.push(partes.map((p) => String(p)).join(" "));
+    };
+    try {
+      await handle(peticionCron(), ENV, {
+        createDb: () => db as unknown as SupabaseClient,
+        now: () => AHORA_EN_LA_VENTANA,
+        push: pushSinInteres(),
+      });
+    } finally {
+      console.error = original;
+    }
+    return errores.filter((l) => l.includes("zona horaria no válida")).length;
+  };
+
+  assertEquals(await contar(), 1, "la primera ejecución no avisó");
+  assertEquals(await contar(), 1, "la segunda ejecución no volvió a avisar");
 });

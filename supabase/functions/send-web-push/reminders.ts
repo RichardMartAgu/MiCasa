@@ -60,20 +60,62 @@ export function isValidChoice(value: unknown): value is ReminderChoice {
   return value === "none" || value === "day-before" || value === "same-day" || value === "both";
 }
 
+/**
+ * Fecha `delta` días después de `day`, en formato YYYY-MM-DD.
+ *
+ * Total: con una `day` que no sea una fecha válida devuelve `""` en lugar de
+ * lanzar. La razón es que `day` puede venir ya vacío: `localDayUtc` devuelve `""`
+ * cuando la zona horaria de la suscripción no es válida, y `new Date("T00:00:00Z")`
+ * —sin componente de fecha— da `Invalid Date`, cuya `toISOString()` lanza
+ * `RangeError`. Ese `RangeError` salía dentro de `buildDispatches` y tumbaba el
+ * lote entero: no recibía nadie ese ciclo, ni siquiera las personas de otras casas,
+ * por culpa de una fila ajena.
+ *
+ * Quien llama decide qué hacer con una fecha vacía, y esa decisión queda a la vista
+ * en lugar de estar escondida en un `Date` inválido.
+ */
 export function addDays(day: string, delta: number): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return "";
   const date = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return "";
   date.setUTCDate(date.getUTCDate() + delta);
+  if (Number.isNaN(date.getTime())) return "";
   return date.toISOString().slice(0, 10);
 }
 
-/** Fecha local (YYYY-MM-DD) del instante `now` en la zona `timeZone`. */
+/**
+ * Fecha local (YYYY-MM-DD) del instante `now` en la zona `timeZone`.
+ *
+ * Devuelve `""` si la zona no es válida, y el motivo es que esta función se llama
+ * desde el reparto y no puede lanzar. `Intl.DateTimeFormat` lanza `RangeError` con
+ * cualquier cadena que no sea una zona real, y `push_subscriptions.timezone` solo
+ * tiene un `check` de 64 caracteres: nada garantiza que sea una zona.
+ *
+ * Esto evita el `RangeError` de `Intl`, pero NO evita por sí solo que el lote caiga:
+ * el día vacío tenía que atravesar `candidatesFor` y `addDays` antes de reventar, y
+ * eso lo cortan `addDays`, que es total, y `candidatesFor`, que devuelve vacío sin
+ * día local. Las tres guardas hacen falta y ninguna basta sola.
+ *
+ * Por qué importa tanto: el impacto de un `RangeError` aquí es cruzado entre
+ * inquilinos. Una fila con `timezone = 'No/Existe'` tumbaba el reparto entero, así
+ * que no recibía nadie ese ciclo —tampoco las personas de otras casas, que no
+ * tienen nada que ver con esa fila— y con `sync=1` además devolvía un 500.
+ *
+ * La fila con la zona inválida se queda sin avisos, que es lo correcto: no se sabe
+ * a qué día local pertenece su cita. `groupByUserAndTimezone` la descarta antes y
+ * avisa por `console.error`, que es lo que hace el aviso diagnosticable.
+ */
 export function localDayUtc(now: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -171,9 +213,20 @@ export interface Candidate {
  * Cualquier otro caso pertenece a otro día y lo cubre esa otra ejecución.
  */
 export function candidatesFor(today: string, choice: ReminderChoice): Candidate[] {
+  // Sin día local no hay candidatos. `today` llega vacío cuando la zona horaria de
+  // la suscripción no es válida, y un candidato con día vacío no significaría
+  // nada: `nineAmUtc` y `fallsOnLocalDay` lo tratan como fecha y fallan.
+  //
+  // El corte es explícito y aquí, no en quien llama, porque los dos llamadores
+  // —citas y cumpleaños— tienen exactamente el mismo problema y sería fácil que el
+  // segundo no lo añadiera.
+  if (today.length === 0) return [];
+
   const out: Candidate[] = [];
   if (choice === "day-before" || choice === "both") {
-    out.push({ eventDay: addDays(today, 1), slot: "day-before", fireDay: today });
+    const manana = addDays(today, 1);
+    if (manana.length === 0) return [];
+    out.push({ eventDay: manana, slot: "day-before", fireDay: today });
   }
   if (choice === "same-day" || choice === "both") {
     out.push({ eventDay: today, slot: "same-day", fireDay: today });
@@ -402,9 +455,24 @@ export function buildBirthdayDispatches(
   return out;
 }
 
-/** Clave de idempotencia: un aviso por referencia, slot y día local. */
-export function dedupeKey(dispatch: Dispatch): string {
-  return `${dispatch.type}:${dispatch.refId}:${dispatch.slot}:${dispatch.localDay}`;
+/**
+ * Clave de idempotencia: un aviso por referencia, slot, día local y zona.
+ *
+ * La zona va dentro, y no por gusto. El reparto agrupa las suscripciones por
+ * `(user_id, timezone)`, así que una persona con dos navegadores en zonas
+ * distintas genera dos grupos, y cada uno produce su juego de avisos. Si la clave
+ * no la incluyera, los dos grupos podrían compartir `localDay` y caer en la misma
+ * ventana de catchup —offsets a menos de tres horas, Madrid con Lisboa o París— y
+ * el segundo insert chocaría con la restricción de unicidad. El aviso se perdería
+ * para ese navegador sin más rastro que un `dispatch skipped (duplicate)`, que es
+ * la peor forma de perderlo: parece duplicado, y en realidad es otro dispositivo.
+ *
+ * `timezone` es la columna tal cual viene de la fila de la suscripción, así que es
+ * estable entre ejecuciones: la clave no cambia por un cambio de zona en el
+ * dispositivo y no se mandan dos veces.
+ */
+export function dedupeKey(dispatch: TargetedDispatch): string {
+  return `${dispatch.type}:${dispatch.refId}:${dispatch.slot}:${dispatch.localDay}:${dispatch.timezone}`;
 }
 
 /**
