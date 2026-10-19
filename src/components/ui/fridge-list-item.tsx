@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Palette, Radius, Spacing } from '@/constants/theme';
