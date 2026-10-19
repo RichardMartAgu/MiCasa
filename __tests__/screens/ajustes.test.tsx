@@ -48,6 +48,7 @@ const mockSetCasaMemberRole = jest.fn();
 jest.mock('@/lib/api', () => ({
   fetchAppointments: jest.fn(),
   fetchContacts: jest.fn(),
+  fetchFridgeItems: jest.fn(),
   removeCasaMember: (...args: unknown[]) => mockRemoveCasaMember(...args),
   setCasaMemberRole: (...args: unknown[]) => mockSetCasaMemberRole(...args),
 }));
@@ -56,8 +57,11 @@ const mockAreNotificationsEnabled = jest.fn();
 const mockAskEnableNotifications = jest.fn();
 const mockCanRequestPermissionAgain = jest.fn();
 const mockGetBirthdayChoice = jest.fn();
+const mockGetFridgeChoice = jest.fn();
 const mockRequestPermissions = jest.fn();
 const mockScheduleBirthdays = jest.fn();
+const mockScheduleFridgeItems = jest.fn();
+const mockSetFridgeChoice = jest.fn();
 const mockSetBirthdayChoice = jest.fn();
 const mockSetNotificationsEnabled = jest.fn();
 const mockSyncAll = jest.fn();
@@ -68,6 +72,7 @@ const mockGetActiveSubscription = jest.fn(async () => null);
 // distinta a "sin aviso". Tiparlo solo como `string` impedía escribir el caso que
 // más importa, el de la lectura que no sabe.
 const mockGetStoredBirthdayChoice = jest.fn<Promise<string | null>, [unknown]>(async () => null);
+const mockGetStoredFridgeChoice = jest.fn<Promise<string | null>, [unknown]>(async () => null);
 const mockNotificationPermission = jest.fn(() => 'default' as const);
 // Con la firma de los dos argumentos que recibe, y no sin ellos: si el mock
 // aceptara cero, reenviar los argumentos desde la fábrica se quejaría al
@@ -102,6 +107,7 @@ jest.mock('@/lib/web-push', () => {
   isPushSupported: () => mockIsPushSupported(),
   getActiveSubscription: () => mockGetActiveSubscription(),
   getStoredBirthdayChoice: (user: unknown) => mockGetStoredBirthdayChoice(user),
+  getStoredFridgeChoice: (user: unknown) => mockGetStoredFridgeChoice(user),
   notificationPermission: () => mockNotificationPermission(),
   syncPushPreferences: (user: unknown, params: unknown) => mockSyncPushPreferences(user, params),
   enableWebPush: (user: unknown) => mockEnableWebPush(user),
@@ -116,9 +122,12 @@ jest.mock('@/lib/notifications', () => ({
   askEnableNotifications: (...args: unknown[]) => mockAskEnableNotifications(...args),
   canRequestPermissionAgain: (...args: unknown[]) => mockCanRequestPermissionAgain(...args),
   getBirthdayChoice: (...args: unknown[]) => mockGetBirthdayChoice(...args),
+  getFridgeChoice: (...args: unknown[]) => mockGetFridgeChoice(...args),
   requestPermissions: (...args: unknown[]) => mockRequestPermissions(...args),
   scheduleBirthdays: (...args: unknown[]) => mockScheduleBirthdays(...args),
+  scheduleFridgeItems: (...args: unknown[]) => mockScheduleFridgeItems(...args),
   setBirthdayChoice: (...args: unknown[]) => mockSetBirthdayChoice(...args),
+  setFridgeChoice: (...args: unknown[]) => mockSetFridgeChoice(...args),
   setNotificationsEnabled: (...args: unknown[]) => mockSetNotificationsEnabled(...args),
   syncAll: (...args: unknown[]) => mockSyncAll(...args),
 }));
@@ -273,12 +282,16 @@ beforeEach(() => {
   mockAskEnableNotifications.mockResolvedValue('enabled');
   mockCanRequestPermissionAgain.mockResolvedValue(true);
   mockGetBirthdayChoice.mockResolvedValue('both');
+  mockGetFridgeChoice.mockResolvedValue('both');
+  mockGetStoredFridgeChoice.mockResolvedValue(null);
   // En web la preferencia se lee de la base, así que el valor por defecto de la
   // lectura de web tiene que ser el mismo que el de la nativa: si no, los tests
   // de web pintarían un selector distinto sin querer.
   mockGetStoredBirthdayChoice.mockResolvedValue('both');
   mockRequestPermissions.mockResolvedValue(true);
   mockScheduleBirthdays.mockResolvedValue(undefined);
+  mockScheduleFridgeItems.mockResolvedValue(undefined);
+  mockSetFridgeChoice.mockResolvedValue(undefined);
   mockSetBirthdayChoice.mockResolvedValue(undefined);
   mockSetNotificationsEnabled.mockResolvedValue(undefined);
   // Sin suscripción activa. Este mock no lo fijaba nadie: los tests que lo
@@ -315,7 +328,7 @@ describe('AjustesScreen', () => {
   });
 
   it('muestra miembros y sus roles', () => {
-    const { getByText } = setup();
+    const { getByText, getAllByText } = setup();
     expect(getByText('Miembros (2)')).toBeTruthy();
     expect(getByText('Administrador')).toBeTruthy();
     expect(getByText('Ana')).toBeTruthy();
@@ -323,7 +336,7 @@ describe('AjustesScreen', () => {
 
   it('cambia de casa activa al pulsar', async () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
-    const { getByText } = setup();
+    const { getByText, getAllByText } = setup();
 
     fireEvent.press(getByText('Chalet'));
 
@@ -359,7 +372,7 @@ describe('AjustesScreen', () => {
       valid: false,
       message: 'El nombre de la casa es obligatorio.',
     });
-    const { getByText } = setup();
+    const { getByText, getAllByText } = setup();
 
     fireEvent.press(getByText('Nueva casa'));
     await waitFor(() => expect(getByText('Crear nueva casa')).toBeTruthy());
@@ -390,7 +403,7 @@ describe('AjustesScreen', () => {
   });
 
   it('cierra sesión al pulsar el botón', () => {
-    const { getByText } = setup();
+    const { getByText, getAllByText } = setup();
     fireEvent.press(getByText('Cerrar sesión'));
     expect(signOut).toHaveBeenCalled();
   });
@@ -402,7 +415,7 @@ describe('AjustesScreen', () => {
     const alertWebSpy = stubWebAlert();
 
     try {
-      const { getByText } = setup();
+      const { getByText, getAllByText } = setup();
       fireEvent.press(getByText('Enviar'));
 
       await waitFor(() => {
@@ -427,7 +440,7 @@ describe('AjustesScreen', () => {
 
     jest.useFakeTimers();
     try {
-      const { getByText } = setup();
+      const { getByText, getAllByText } = setup();
       fireEvent.press(getByText('Enviar'));
 
       await act(async () => {
@@ -455,7 +468,7 @@ describe('AjustesScreen', () => {
     const alertWebSpy = stubWebAlert();
 
     try {
-      const { getByText } = setup();
+      const { getByText, getAllByText } = setup();
       fireEvent.press(getByText('Enviar'));
 
       await waitFor(() => {
@@ -573,7 +586,7 @@ describe('AjustesScreen', () => {
       const alertWebSpy = stubWebAlert();
 
       try {
-        const { getByText } = setup();
+        const { getByText, getAllByText } = setup();
         await act(async () => {});
 
         fireEvent.press(getByText('Instalar ahora'));
@@ -718,7 +731,7 @@ describe('AjustesScreen', () => {
       );
 
       try {
-        const { getByText } = setup();
+        const { getByText, getAllByText } = setup();
         await act(async () => {});
 
         expect(getByText('App instalada')).toBeTruthy();
@@ -754,7 +767,7 @@ describe('AjustesScreen', () => {
       const alertWebSpy = stubWebAlert();
 
       try {
-        const { getByText } = setup();
+        const { getByText, getAllByText } = setup();
         await act(async () => {});
 
         fireEvent.press(getByText('Instalar ahora'));
@@ -847,7 +860,7 @@ describe('AjustesScreen', () => {
       );
 
       try {
-        const { getByText } = setup();
+        const { getByText, getAllByText } = setup();
         await act(async () => {});
 
         // El aviso va ademas de la descripcion, no en vez de ella: quien no sabe
@@ -1244,14 +1257,14 @@ describe('AjustesScreen', () => {
       mockGetStoredBirthdayChoice.mockResolvedValue('day-before');
 
       try {
-        const { getByRole } = setup();
+        const { getAllByRole } = setup();
 
         await waitFor(() => {
           expect(
-            getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked,
+            getAllByRole('radio', { name: 'Día antes' })[0].props.accessibilityState.checked,
           ).toBe(true);
         });
-        expect(getByRole('radio', { name: 'Sin aviso' }).props.accessibilityState.checked).toBe(
+        expect(getAllByRole('radio', { name: 'Sin aviso' })[0].props.accessibilityState.checked).toBe(
           false,
         );
         // Y se le pregunta con la sesión, no sin ella: una lectura hecha sin
@@ -1267,10 +1280,10 @@ describe('AjustesScreen', () => {
     it('en nativo se sigue leyendo de AsyncStorage', async () => {
       mockGetBirthdayChoice.mockResolvedValue('same-day');
 
-      const { getByRole } = setup();
+      const { getAllByRole } = setup();
 
       await waitFor(() => {
-        expect(getByRole('radio', { name: 'Mismo día' }).props.accessibilityState.checked).toBe(
+        expect(getAllByRole('radio', { name: 'Mismo día' })[0].props.accessibilityState.checked).toBe(
           true,
         );
       });
@@ -1291,19 +1304,19 @@ describe('AjustesScreen', () => {
       mockGetStoredBirthdayChoice.mockResolvedValue(null);
 
       try {
-        const { getByRole, getByText } = setup();
+        const { getAllByRole, getAllByText } = setup();
 
         await waitFor(() => {
-          expect(getByText(/No se ha podido leer el aviso/)).toBeTruthy();
+          expect(getAllByText(/No se ha podido leer el aviso/)[0]).toBeTruthy();
         });
         // Ningún chip marcado, y el que habríafst responsible de escribir 'none'
         // aparece como el que está.
         for (const name of ['Sin aviso', 'Día antes', 'Mismo día', 'Día antes + mismo día']) {
-          expect(getByRole('radio', { name }).props.accessibilityState.checked).toBe(false);
+          expect(getAllByRole('radio', { name })[0].props.accessibilityState.checked).toBe(false);
         }
 
         await act(async () => {
-          fireEvent.press(getByRole('radio', { name: 'Sin aviso' }));
+          fireEvent.press(getAllByRole('radio', { name: 'Sin aviso' })[0]);
         });
 
         // Ahora sí escribe, porque el usuario lo ha elegido explícitamente.
@@ -1323,17 +1336,17 @@ describe('AjustesScreen', () => {
       mockGetStoredBirthdayChoice.mockResolvedValue('both');
 
       try {
-        const { getByRole } = setup();
+        const { getAllByRole } = setup();
 
         await waitFor(() => {
           expect(
-          getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState.checked,
+          getAllByRole('radio', { name: 'Día antes + mismo día' })[0].props.accessibilityState.checked,
         ).toBe(true);
         });
         expect(mockSyncPushPreferences).not.toHaveBeenCalled();
 
         await act(async () => {
-          fireEvent.press(getByRole('radio', { name: 'Día antes + mismo día' }));
+          fireEvent.press(getAllByRole('radio', { name: 'Día antes + mismo día' })[0]);
         });
 
         expect(mockSyncPushPreferences).not.toHaveBeenCalled();
@@ -1491,7 +1504,7 @@ describe('AjustesScreen', () => {
 
         expect(mockGetStoredBirthdayChoice).toHaveBeenNthCalledWith(1, null);
         expect(
-          screen.getByRole('radio', { name: 'Sin aviso' }).props.accessibilityState.checked,
+          screen.getAllByRole('radio', { name: 'Sin aviso' })[0].props.accessibilityState.checked,
         ).toBe(true);
 
         // Llega la sesión y el mismo componente se vuelve a pintar. Si el efecto
@@ -1502,12 +1515,12 @@ describe('AjustesScreen', () => {
 
         await waitFor(() => {
           expect(
-            screen.getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked,
+            screen.getAllByRole('radio', { name: 'Día antes' })[0].props.accessibilityState.checked,
           ).toBe(true);
         });
         expect(mockGetStoredBirthdayChoice).toHaveBeenNthCalledWith(2, user);
         expect(
-          screen.getByRole('radio', { name: 'Sin aviso' }).props.accessibilityState.checked,
+          screen.getAllByRole('radio', { name: 'Sin aviso' })[0].props.accessibilityState.checked,
         ).toBe(false);
       } finally {
         Platform.OS = originalOs;
@@ -1528,23 +1541,23 @@ describe('AjustesScreen', () => {
       const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 
       try {
-        const { getByRole } = setup();
+        const { getAllByRole } = setup();
 
         await waitFor(() => {
           expect(
-            getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState.checked,
+            getAllByRole('radio', { name: 'Día antes + mismo día' })[0].props.accessibilityState.checked,
           ).toBe(true);
         });
 
         await act(async () => {
-          fireEvent.press(getByRole('radio', { name: 'Mismo día' }));
+          fireEvent.press(getAllByRole('radio', { name: 'Mismo día' })[0]);
         });
 
         // Vuelve a lo que decía la fila, y el motivo queda anotado.
-        expect(getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState.checked).toBe(
+        expect(getAllByRole('radio', { name: 'Día antes + mismo día' })[0].props.accessibilityState.checked).toBe(
           true,
         );
-        expect(getByRole('radio', { name: 'Mismo día' }).props.accessibilityState.checked).toBe(
+        expect(getAllByRole('radio', { name: 'Mismo día' })[0].props.accessibilityState.checked).toBe(
           false,
         );
         expect(warn).toHaveBeenCalledWith(
@@ -1618,7 +1631,7 @@ describe('AjustesScreen', () => {
         await waitFor(() => {
           expect(screen.getByLabelText('Activar notificaciones').props.disabled).toBe(false);
         });
-        expect(screen.getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked).toBe(
+        expect(screen.getAllByRole('radio', { name: 'Día antes' })[0].props.accessibilityState.checked).toBe(
           true,
         );
       } finally {
@@ -1650,20 +1663,20 @@ describe('AjustesScreen', () => {
       mockGetStoredBirthdayChoice.mockImplementationOnce(() => staleRead as never);
 
       try {
-        const { getByRole } = setup();
+        const { getAllByRole } = setup();
 
         // La lectura sigue en vuelo y el selector ya es utilizable. Con la lectura
         // sin responder no se marca ningún chip: `null` es "no se sabe", no
         // "sin aviso".
         await act(async () => {});
         for (const name of ['Sin aviso', 'Día antes', 'Mismo día', 'Día antes + mismo día']) {
-          expect(getByRole('radio', { name }).props.accessibilityState.checked).toBe(false);
+          expect(getAllByRole('radio', { name })[0].props.accessibilityState.checked).toBe(false);
         }
 
         // El usuario elige mientras tanto.
-        fireEvent.press(getByRole('radio', { name: 'Día antes' }));
+        fireEvent.press(getAllByRole('radio', { name: 'Día antes' })[0]);
         await act(async () => {});
-        expect(getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked).toBe(true);
+        expect(getAllByRole('radio', { name: 'Día antes' })[0].props.accessibilityState.checked).toBe(true);
         expect(mockSyncPushPreferences).toHaveBeenCalledWith(user, { birthdayChoice: 'day-before' });
 
         // Y solo ahora responde la lectura vieja, con lo que encontró antes de
@@ -1671,9 +1684,9 @@ describe('AjustesScreen', () => {
         resolveStaleRead?.('both');
         await act(async () => {});
 
-        expect(getByRole('radio', { name: 'Día antes' }).props.accessibilityState.checked).toBe(true);
+        expect(getAllByRole('radio', { name: 'Día antes' })[0].props.accessibilityState.checked).toBe(true);
         expect(
-          getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState.checked,
+          getAllByRole('radio', { name: 'Día antes + mismo día' })[0].props.accessibilityState.checked,
         ).toBe(false);
       } finally {
         Platform.OS = originalOs;
@@ -1704,23 +1717,23 @@ describe('AjustesScreen', () => {
 
         await waitFor(() => {
           expect(
-            screen.getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState
+            screen.getAllByRole('radio', { name: 'Día antes + mismo día' })[0].props.accessibilityState
               .checked,
           ).toBe(true);
         });
 
-        fireEvent.press(screen.getByRole('radio', { name: 'Sin aviso' }));
+        fireEvent.press(screen.getAllByRole('radio', { name: 'Sin aviso' })[0]);
         await act(async () => {});
         // La escritura falla, así que el chip vuelve a lo que decía la fila. Antes
         // se pintaba de forma optimista y se dejaba así: la pantalla acababa
         // afirmar "sin aviso" con la fila en "ambos", que es justo lo que el
         // servidor sigue avisando.
         expect(
-          screen.getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState
+          screen.getAllByRole('radio', { name: 'Día antes + mismo día' })[0].props.accessibilityState
             .checked,
         ).toBe(true);
         expect(
-          screen.getByRole('radio', { name: 'Sin aviso' }).props.accessibilityState.checked,
+          screen.getAllByRole('radio', { name: 'Sin aviso' })[0].props.accessibilityState.checked,
         ).toBe(false);
 
         // Mismo usuario, objeto nuevo: el efecto vuelve a correr.
@@ -1730,12 +1743,12 @@ describe('AjustesScreen', () => {
 
         await waitFor(() => {
           expect(
-            screen.getByRole('radio', { name: 'Día antes + mismo día' }).props.accessibilityState
+            screen.getAllByRole('radio', { name: 'Día antes + mismo día' })[0].props.accessibilityState
               .checked,
           ).toBe(true);
         });
         expect(
-          screen.getByRole('radio', { name: 'Sin aviso' }).props.accessibilityState.checked,
+          screen.getAllByRole('radio', { name: 'Sin aviso' })[0].props.accessibilityState.checked,
         ).toBe(false);
       } finally {
         Platform.OS = originalOs;
@@ -1747,7 +1760,7 @@ describe('AjustesScreen', () => {
     const originalOs = Platform.OS;
     Platform.OS = 'web';
     try {
-    const { getByText } = setup();
+    const { getByText, getAllByText } = setup();
     fireEvent.press(getByText('Cerrar sesión'));
 
     await waitFor(() => {
@@ -1767,7 +1780,7 @@ describe('AjustesScreen', () => {
     mockDisableWebPush.mockRejectedValueOnce(new Error('sin red'));
 
     try {
-      const { getByText } = setup();
+      const { getByText, getAllByText } = setup();
       fireEvent.press(getByText('Cerrar sesión'));
 
       await waitFor(() => {
@@ -1884,11 +1897,11 @@ describe('AjustesScreen', () => {
   });
 
   it('renderiza sección Recordatorios con preferencias cargadas', async () => {
-    const { getByText, getByLabelText } = setup();
+    const { getByText, getAllByText, getByLabelText } = setup();
     await waitFor(() => {
       expect(getByText('Recordatorios')).toBeTruthy();
       expect(getByText('Cumpleaños: avisar')).toBeTruthy();
-      expect(getByText('Día antes + mismo día')).toBeTruthy();
+      expect(getAllByText('Día antes + mismo día')[0]).toBeTruthy();
     });
     expect(getByLabelText('Activar notificaciones').props.value).toBe(true);
   });
@@ -1976,12 +1989,12 @@ describe('AjustesScreen', () => {
   it('elegir cumpleaños sin notif activadas pide activar y no cambia si cancela', async () => {
     mockAreNotificationsEnabled.mockResolvedValue(false);
     mockAskEnableNotifications.mockResolvedValue('cancelled');
-    const { getByText } = setup();
+    const { getByText, getAllByText } = setup();
     await waitFor(() => {
       expect(getByText('Cumpleaños: avisar')).toBeTruthy();
     });
 
-    fireEvent.press(getByText('Mismo día'));
+    fireEvent.press(getAllByText('Mismo día')[0]);
 
     await waitFor(() => {
       expect(mockAskEnableNotifications).toHaveBeenCalled();
@@ -1991,12 +2004,12 @@ describe('AjustesScreen', () => {
   });
 
   it('cambia aviso de cumpleaños y reprograma', async () => {
-    const { getByText } = setup();
+    const { getByText, getAllByText } = setup();
     await waitFor(() => {
       expect(getByText('Cumpleaños: avisar')).toBeTruthy();
     });
 
-    fireEvent.press(getByText('Mismo día'));
+    fireEvent.press(getAllByText('Mismo día')[0]);
 
     await waitFor(() => {
       expect(mockSetBirthdayChoice).toHaveBeenCalledWith('same-day');

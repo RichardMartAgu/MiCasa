@@ -9,6 +9,7 @@ declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void };
 
 import { corsHeaders, jsonResponse, preflightResponse, resolveAllowedOrigins } from "./cors.ts";
 import {
+  addDays,
   appointmentQueryUpperBound,
   birthdayChoiceFor,
   buildAppointmentDispatches,
@@ -17,6 +18,7 @@ import {
   buildNowAppointmentDispatch,
   buildNowBirthdayDispatch,
   dedupeKey,
+  fridgeChoiceFor,
   isPushEnabled,
   isValidChoice,
   isValidTimeZone,
@@ -25,6 +27,7 @@ import {
   type AppointmentRow,
   type ContactRow,
   type Dispatch,
+  type FridgeItemRow,
   type NowDispatch,
   type PushPreference,
   type TargetedDispatch,
@@ -366,6 +369,42 @@ async function fetchBirthdayContacts(db: Db, casaIds: string[]): Promise<Contact
   return (data ?? []) as ContactRow[];
 }
 
+/**
+ * Ítems de nevera que caducan hoy o mañana en la zona del grupo.
+ *
+ * Se consulta solo por esos dos días `date`, no por un rango de instantes: la
+ * columna es un día de calendario y traer 48 horas de margen obligaría a filtrar
+ * después con la zona, que es justo la fuente del bug que se está evitando.
+ */
+async function fetchFridgeItems(
+  db: Db,
+  casaIds: string[],
+  now: Date,
+  timeZone: string,
+): Promise<FridgeItemRow[] | null> {
+  if (casaIds.length === 0) return [];
+
+  const today = localDayUtc(now, timeZone);
+  const tomorrow = addDays(today, 1);
+  if (today.length === 0 || tomorrow.length === 0) return [];
+
+  const { data, error } = await db
+    .from("fridge_items")
+    .select("id, name, expiry_date")
+    .in("casa_id", casaIds)
+    .eq("done", false)
+    .in("expiry_date", [today, tomorrow])
+    .order("expiry_date", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(100);
+
+  if (error) {
+    console.error("send-web-push: no se pudieron leer los ítems de nevera", String(error));
+    return null;
+  }
+  return (data ?? []) as FridgeItemRow[];
+}
+
 async function buildDispatches(
   db: Db,
   groups: Group[],
@@ -384,7 +423,7 @@ async function buildDispatches(
     // apagado y los seguientes recibiendo avisos.
     const { data: prefs, error: prefsError } = await db
       .from("push_preferences")
-      .select("birthday_choice, enabled")
+      .select("birthday_choice, fridge_choice, enabled")
       .eq("user_id", group.userId)
       .maybeSingle();
 
@@ -422,28 +461,16 @@ async function buildDispatches(
       }
     }
 
-    const { data: fridgePrefs, error: fridgePrefsError } = await db
-      .from("push_preferences")
-      .select("fridge_choice, enabled")
-      .eq("user_id", group.userId)
-      .maybeSingle();
-
-    if (!fridgePrefsError && fridgePrefs !== null && isPushEnabled(fridgePrefs as PushPreference | null)) {
-      const fridgeChoice = (fridgePrefs as PushPreference).fridge_choice;
-      if (fridgeChoice !== "none" && fridgeChoice !== undefined) {
-        const { data: fridgeItems } = await db
-          .from("fridge_items")
-          .select("id, name, expiry_date")
-          .eq("user_id", group.userId)
-          .in("casa_id", casaIds)
-          .gte("expiry_date", new Date(from.toISOString()).add(14, "day").toISOString())
-          .lte("expiry_date", new Date(now.toISOString()).add(14, "day").toISOString())
-          .order("expiry_date", { ascending: true });
-
-        if (fridgeItems !== null && fridgeItems.length > 0) {
-          const dispatches = buildFridgeDispatches(fridgeItems, fridgeChoice as ReminderChoice, context);
-          out.push(...dispatches.map((d) => ({ ...d, ...target })));
-        }
+    const fridgeChoice = fridgeChoiceFor(pref);
+    if (fridgeChoice !== "none") {
+      const fridgeItems = await fetchFridgeItems(db, casaIds, now, group.timezone);
+      if (fridgeItems !== null && fridgeItems.length > 0) {
+        out.push(
+          ...buildFridgeDispatches(fridgeItems, fridgeChoice, context).map((d) => ({
+            ...d,
+            ...target,
+          })),
+        );
       }
     }
   }

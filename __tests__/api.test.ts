@@ -6,6 +6,7 @@ import {
   addCategory,
   addContact,
   addExpense,
+  addFridgeItem,
   addShoppingItem,
   addShoppingList,
   fetchAppointments,
@@ -13,6 +14,7 @@ import {
   fetchCategories,
   fetchContacts,
   fetchExpenses,
+  fetchFridgeItems,
   fetchShoppingItems,
   fetchShoppingLists,
   removeAppointment,
@@ -21,10 +23,12 @@ import {
   removeCategory,
   removeContact,
   removeExpense,
+  removeFridgeItem,
   removeShoppingItem,
   removeShoppingList,
   removeCasa,
   setCasaMemberRole,
+  toggleFridgeItem,
   toggleShoppingItem,
   toggleShoppingList,
   updateAppointment,
@@ -33,6 +37,7 @@ import {
   updateCategory,
   updateContact,
   updateExpense,
+  updateFridgeItem,
 } from '@/lib/api';
 
 const mockFrom = jest.fn();
@@ -47,7 +52,7 @@ function makeQuery(result: Record<string, unknown>) {
   const query: Record<string, unknown> & { then: (onfulfilled: (value: unknown) => unknown) => unknown } = {
     then: (resolve: (value: unknown) => unknown) => resolve(result),
   };
-  for (const method of ['select', 'eq', 'order', 'insert', 'update', 'delete', 'single', 'in']) {
+  for (const method of ['select', 'eq', 'order', 'limit', 'insert', 'update', 'delete', 'single', 'in']) {
     query[method] = jest.fn(() => query);
   }
   return query;
@@ -69,6 +74,7 @@ describe('fetch helpers', () => {
     ['fetchAppointmentKinds', fetchAppointmentKinds, 'appointment_kinds'],
     ['fetchShoppingLists', fetchShoppingLists, 'shopping_lists'],
     ['fetchContacts', fetchContacts, 'contacts'],
+    ['fetchFridgeItems', fetchFridgeItems, 'fridge_items'],
   ])('%s devuelve filas filtradas por casa', async (_name, fn, table) => {
     const rows = [{ id: '1', casa_id: casaId }];
     const query = setupFrom({ data: rows });
@@ -168,6 +174,8 @@ describe('mutaciones que devuelven { error, data }', () => {
   const createCases: [string, () => Promise<{ error: ApiError | null; data?: unknown }>][] = [
     ['addAppointment', () => addAppointment({ casa_id: 'c', user_id: 'u', title: 't', kind: 'otro', starts_at: '2026-01-01' })],
     ['addContact', () => addContact({ casa_id: 'c', user_id: 'u', name: 'n', birth_date: '2020-01-01' })],
+    ['addFridgeItem', () => addFridgeItem({ casa_id: 'c', name: 'Leche', expiry_date: '2026-01-01' })],
+    ['updateFridgeItem', () => updateFridgeItem('1', { name: 'Leche', expiry_date: '2026-01-01' })],
   ];
 
   it.each(createCases)('%s devuelve error=null y data cuando no hay error', async (_name, fn) => {
@@ -205,6 +213,8 @@ describe('mutaciones que devuelven ApiError | null', () => {
     ['removeShoppingItem', () => removeShoppingItem('1')],
     ['updateContact', () => updateContact('1', { name: 'n', birth_date: '2020-01-01' })],
     ['removeContact', () => removeContact('1')],
+    ['toggleFridgeItem', () => toggleFridgeItem('1', true)],
+    ['removeFridgeItem', () => removeFridgeItem('1')],
     ['updateCasa', () => updateCasa('1', { name: 'Nuevo nombre' })],
     ['removeCasa', () => removeCasa('1')],
     ['removeCasaMember', () => removeCasaMember('c1', 'u2')],

@@ -60,13 +60,10 @@ create trigger push_subscriptions_touch
 create table if not exists public.push_preferences (
   user_id uuid primary key references auth.users (id) on delete cascade,
   birthday_choice text not null default 'both',
-  fridge_choice text not null default 'both',
   enabled boolean not null default true,
   updated_at timestamptz not null default now(),
   constraint push_preferences_birthday_choice_check
-    check (birthday_choice in ('none', 'day-before', 'same-day', 'both')),
-  constraint push_preferences_fridge_choice_check
-    check (fridge_choice in ('none', 'day-before', 'same-day', 'both'))
+    check (birthday_choice in ('none', 'day-before', 'same-day', 'both'))
 );
 
 comment on table public.push_preferences is

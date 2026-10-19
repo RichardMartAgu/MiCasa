@@ -4,7 +4,25 @@
 Viven aquí y no en el chat, que es donde se pierden. Lo que sigue se confirmó después
 de cerrar los bloques; nada de esto es hipótesis.
 
-**No hay ninguno abierto.** Los dos que hubo en esta sesión se cerraron:
+Abiertos a 2026-10-19:
+
+- **Nevera**: bloque completo en rama `feat/nevera`. Falta merge del PR, aplicar
+  `20261019_nevera.sql`, desplegar la Edge Function `send-web-push` y desplegar la web.
+  Hasta entonces la feature no funciona en producción.
+- **Prueba en dispositivo real** de la nevera (avisos locales en Android/iOS) y del
+  push web, que sigue sin probarse en navegador real.
+- **OAuth Google**: botón oculto en login hasta que haya credenciales en Google Cloud y
+  Supabase. Ver `oauth-google-pendiente.md`.
+- **Dependabot**: 7 PRs abiertos contra `master` cerrados el 2026-10-19 (CI en rojo por
+  audit preexistente). Retomar en bloque de dependencias contra `develop`.
+- **`master` divergente**: 5 commits solo en `master` (rediseño de splash, pins de jest)
+  que no están en `develop`. Portar a mano si se quieren.
+- **Auditoría de dependencias**: `npm audit --audit-level=high` da 50 hallazgos (29 high)
+  y bloquea CI, pero son preexistentes y externos a este bloque: el árbol de Expo/Metro
+  arrastra `node-forge`, `braces`, `source-map-js`, `sprintf-js` y la cadena de jest sin
+  arreglo por bump. Tratarlo como bloque propio de dependencias.
+
+Cerrados:
 
 - **CSP en `vercel.json`** — cerrada en el PR #86 (`d292a06`), desplegada y verificada
   contra producción el 2026-09-29. Se añadió además `scripts/check-csp.mjs`, que
@@ -49,7 +67,44 @@ usa en producción, es ruido del propio test. QA ya lo había descartado en su i
 como artefacto del harness; aquí se recoge para que la siguiente sesión no lo vuelva
 a sacar de la lista.
 
-## Sesión actual — 2026-09-29 (CSP en la web, y cerrar tres PR)
+## Sesión actual — 2026-10-19 (nevera end-to-end, CI verde, limpieza)
+
+- Objetivo: dejar funcional lo que estaba a medias. Cuatro frentes: CI roto en
+  `develop`, feature nevera incompleta, residuos (worktree vacío, stash, untracked,
+  PRs dependabot) y OAuth visible sin provider.
+- Archivos: `supabase/migrations/20261019_nevera.sql` (nueva),
+  `supabase/functions/send-web-push/{handler,reminders}.ts` y tests,
+  `supabase/schema.sql`, `src/app/(tabs)/nevera.tsx` (nueva),
+  `src/components/ui/fridge-list*.tsx`, `src/lib/{api,fridge,notifications,notification-schedule,web-push,types,database.types}.ts`,
+  `src/app/(tabs)/{_layout,ajustes}.tsx`, `src/app/login.tsx`,
+  `src/hooks/use-notification-sync.ts`, `sw-src.js`, `scripts/verify-pwa.cjs`,
+  tests nuevos y ajustados, `README.md`, docs.
+- Edge Function: `ReminderType` incluye `fridge`; `fetchFridgeItems` con
+  `.in(expiry_date,[hoy,mañana])`, `.eq(done,false)`, orden `expiry_date,id` y
+  `limit(100)`; `buildFridgeDispatches` compara día de calendario (columna `date`, no
+  instante); `fridgeChoiceFor` con repliegue `none`. 125 tests deno verdes.
+- Migración: `fridge_items` (`date`, RLS, tope 200 por casa con
+  `pg_advisory_xact_lock`, trigger que congela autor/casa, `revoke execute`),
+  `push_preferences.fridge_choice default 'none'`, publicación en
+  `supabase_realtime` + `replica identity full`. Migración histórica
+  `20260925_web_push.sql` restaurada (no se editan migraciones aplicadas).
+- UI: tab Nevera, CRUD, marcado de consumido, preferencia de aviso en Ajustes,
+  notificación local en nativo y web push en web. Login sin botón Google.
+- Security: **APROBADO** tras tres rondas (REVISAR → REVISAR → APROBADO).
+  Remediados consentimiento por defecto `none`, inmutabilidad de autor/casa, tope por
+  casa, `limit` en cliente, saneado bidi/controles en notificaciones locales, longitud
+  de `unit`, `revoke execute` de funciones trigger.
+- QA: **PASA** tras una ronda FALLA→PASA. Remediado el realtime (publicación +
+  replica identity) y el agendado de ítems consumidos. Gates: `tsc` verde, `expo lint`
+  verde, jest 55 suites / 867 tests, deno check/test 125, `verify:pwa` 66.
+- Limpieza: worktree `MiCasa-fridge-comment` y rama `docs/fridge-comment` borrados,
+  stash «cumpleaños+webpush sin terminar» descartado (ya supersedido por #90),
+  `.playwright-cli/` eliminado, 7 PRs dependabot cerrados.
+- Commit/push: pendiente.
+- Siguiente: PR contra `develop`, merge, aplicar migración, desplegar Edge Function y
+  web, y probar en navegador/dispositivo real.
+
+## Sesión anterior — 2026-09-29 (CSP en la web, y cerrar tres PR)
 
 - Objetivo: añadir `Content-Security-Policy` a la web, que era el único hueco que
   quedaba de los headers de `vercel.json`.

@@ -128,7 +128,7 @@ export const VAPID_PUBLIC_KEY =
 export const VAPID_KEY_VERSION = '2026-09-28-v3';
 
 /** Rutas internas a las que puede llevar un aviso. Espejo de sw-src.js. */
-export const ALLOWED_PUSH_ROUTES = ['/citas', '/cumpleanos'] as const;
+export const ALLOWED_PUSH_ROUTES = ['/citas', '/cumpleanos', '/nevera'] as const;
 
 export type PushPermission = 'granted' | 'denied' | 'default' | 'unsupported';
 
@@ -970,16 +970,18 @@ function failedBy(error: unknown): { status: 'timeout' | 'failed'; reason: strin
  */
 export async function syncPushPreferences(
   user: User | null,
-  params: { birthdayChoice?: ReminderChoice; enabled?: boolean },
+  params: { birthdayChoice?: ReminderChoice; fridgeChoice?: ReminderChoice; enabled?: boolean },
 ): Promise<void> {
   if (!user) return;
 
   const payload: {
     user_id: string;
     birthday_choice?: ReminderChoice;
+    fridge_choice?: ReminderChoice;
     enabled?: boolean;
   } = { user_id: user.id };
   if (params.birthdayChoice) payload.birthday_choice = params.birthdayChoice;
+  if (params.fridgeChoice) payload.fridge_choice = params.fridgeChoice;
   if (params.enabled !== undefined) payload.enabled = params.enabled;
 
   // Upsert y no select + write: con dos pestañas abiertas a la vez, el camino
@@ -1051,6 +1053,39 @@ export async function getStoredBirthdayChoice(user: User | null): Promise<Remind
   // devuelven las dos cosas como `null`, no como `'none'`. El servidor también
   // avisa por lo mínimo en cuanto no sabe qué leer, así que los dos lados
   // coinciden: quien no sabe, no afirma.
+  return reminderChoices.includes(value as ReminderChoice) ? (value as ReminderChoice) : null;
+}
+
+/**
+ * La preferencia de aviso de caducidad tal y como está guardada en la base.
+ *
+ * Mismo contrato que `getStoredBirthdayChoice`: `null` es "no se sabe" y no
+ * `'none'`, para que Ajustes no marque ningún chip cuando la lectura falla en vez
+ * de afirmar un valor que nadie eligió.
+ */
+export async function getStoredFridgeChoice(user: User | null): Promise<ReminderChoice | null> {
+  if (!user) return null;
+
+  let value: unknown = null;
+  try {
+    const { data, error } = await withTimeout(
+      Promise.resolve(
+        supabase
+          .from('push_preferences')
+          .select('fridge_choice')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+      ),
+      PREFS_READ_TIMEOUT_MS,
+      'la lectura de la preferencia de caducidad no ha terminado a tiempo',
+    );
+    if (error) throw new Error(error.message);
+    value = (data as { fridge_choice?: string | null } | null)?.fridge_choice ?? null;
+  } catch (error) {
+    console.warn('No se pudo leer la preferencia de caducidad guardada', errorText(error));
+    return null;
+  }
+
   return reminderChoices.includes(value as ReminderChoice) ? (value as ReminderChoice) : null;
 }
 

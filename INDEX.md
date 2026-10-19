@@ -11,9 +11,9 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `
 | [`.opencode/skills/micasa-git/SKILL.md`](.opencode/skills/micasa-git/SKILL.md) | Buenas prácticas de git de este repo: worktree por rama, comandos que ya han perdido trabajo, dependabot→`master`. | Vigente; leer antes de commitear/pushear/mergear. |
 | [`AGENTS.md`](AGENTS.md) | Reglas del proyecto, Expo v57, stack, agentes, calidad, deploy y worktrees. | Vigente; leer primero. |
 | [`CLAUDE.md`](CLAUDE.md) | Redirección a `AGENTS.md`. | Vigente; 1 línea. |
-| [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-09-29. |
+| [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-10-19. |
 | [`README.md`](README.md) | Producto, funcionalidades, stack, puesta en marcha, calidad, estructura, modelo de datos. | Vigente. |
-| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global para continuar sesiones. **Empezar por «Pendientes»; las sesiones están en orden inverso (la primera «Sesión actual» es la más reciente).** | Actualizado 2026-09-29. |
+| [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global para continuar sesiones. **Empezar por «Pendientes»; las sesiones están en orden inverso (la primera «Sesión actual» es la más reciente).** | Actualizado 2026-10-19. |
 
 ### Bugs resueltos o documentados
 
@@ -33,7 +33,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `
 |---|---|---|
 | [`docs/calendar-sync-plan.md`](docs/calendar-sync-plan.md) | Plan de sincronización anual de cumpleaños con calendario nativo. | Parcial; requiere build nativo. |
 | [`docs/list-filtering-plan.md`](docs/list-filtering-plan.md) | Búsqueda y filtros reutilizables en Gastos, Citas y Cumpleaños. | Completado; APROBADO/PASA. |
-| [`docs/oauth-google-pendiente.md`](docs/oauth-google-pendiente.md) | Estado y pasos de OAuth Google. | Código listo; faltan credenciales y dashboard. |
+| [`docs/oauth-google-pendiente.md`](docs/oauth-google-pendiente.md) | Estado y pasos de OAuth Google. | Código en `develop`; botón oculto; faltan credenciales y dashboard. |
 | [`docs/pwa-installable.md`](docs/pwa-installable.md) | PWA instalable: manifest, service worker, iconos, decisiones de security. | Desplegado; quedan items en su «Qué falta». |
 | [`docs/usuarios-prueba.md`](docs/usuarios-prueba.md) | Cuentas de prueba en producción y sus límites de seguridad. | Vigente; credenciales en `.env.local`. |
 | [`docs/web-push.md`](docs/web-push.md) | Web Push (recordatorios en web): Edge Function, SW, cron, CORS, VAPID. | Mergeado (#54) y desplegado; CORS de previews mergeado (#83), v11 en prod. Falta prueba en navegador. |

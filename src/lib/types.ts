@@ -25,3 +25,5 @@ export type ShoppingList = Tables['shopping_lists']['Row'];
 export type ShoppingItem = Tables['shopping_items']['Row'];
 
 export type Contact = Tables['contacts']['Row'];
+
+export type FridgeItem = Tables['fridge_items']['Row'];

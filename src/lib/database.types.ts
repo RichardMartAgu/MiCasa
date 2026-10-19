@@ -225,6 +225,42 @@ export type Database = {
         }
         Relationships: []
       }
+      fridge_items: {
+        Row: {
+          casa_id: string
+          created_at: string
+          done: boolean
+          expiry_date: string
+          id: string
+          name: string
+          quantity: number | null
+          unit: string | null
+          user_id: string
+        }
+        Insert: {
+          casa_id: string
+          created_at?: string
+          done?: boolean
+          expiry_date: string
+          id?: string
+          name: string
+          quantity?: number | null
+          unit?: string | null
+          user_id?: string
+        }
+        Update: {
+          casa_id?: string
+          created_at?: string
+          done?: boolean
+          expiry_date?: string
+          id?: string
+          name?: string
+          quantity?: number | null
+          unit?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -268,18 +304,21 @@ export type Database = {
         Row: {
           birthday_choice: string
           enabled: boolean
+          fridge_choice: string
           updated_at: string
           user_id: string
         }
         Insert: {
           birthday_choice?: string
           enabled?: boolean
+          fridge_choice?: string
           updated_at?: string
           user_id: string
         }
         Update: {
           birthday_choice?: string
           enabled?: boolean
+          fridge_choice?: string
           updated_at?: string
           user_id?: string
         }

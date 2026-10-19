@@ -10,18 +10,22 @@ import {
   birthdayNotificationDates,
   buildAppointmentContent,
   buildBirthdayContent,
+  buildFridgeContent,
   choiceFromReminderAt,
+  fridgeFingerprint,
+  fridgeNotificationDates,
   notificationKey,
   reminderChoices,
   slotForBirthday,
   slotForDate,
   type ReminderChoice,
 } from './notification-schedule';
-import type { Appointment, Contact } from './types';
+import type { Appointment, Contact, FridgeItem } from './types';
 
 const CHANNEL_ID = 'recordatorios';
 const ENABLED_KEY = 'notifications_enabled';
 const BIRTHDAY_CHOICE_KEY = 'birthday_choice';
+const FRIDGE_CHOICE_KEY = 'fridge_choice';
 const MAP_KEY = 'notification_map_v1';
 
 type NotificationMap = Record<string, { identifiers: string[]; fingerprint: string }>;
@@ -214,6 +218,17 @@ export async function setBirthdayChoice(choice: ReminderChoice): Promise<void> {
   await AsyncStorage.setItem(BIRTHDAY_CHOICE_KEY, choice);
 }
 
+export async function getFridgeChoice(): Promise<ReminderChoice> {
+  if (Platform.OS === 'web') return 'none';
+  const value = await AsyncStorage.getItem(FRIDGE_CHOICE_KEY);
+  return reminderChoices.includes(value as ReminderChoice) ? (value as ReminderChoice) : 'none';
+}
+
+export async function setFridgeChoice(choice: ReminderChoice): Promise<void> {
+  if (Platform.OS === 'web') return;
+  await AsyncStorage.setItem(FRIDGE_CHOICE_KEY, choice);
+}
+
 async function cancelKeys(map: NotificationMap, keys: string[]): Promise<string[]> {
   const identifiers: string[] = [];
   for (const key of keys) {
@@ -348,8 +363,88 @@ export async function scheduleBirthdays(
   });
 }
 
+export async function scheduleFridgeItem(
+  item: FridgeItem,
+  choice: ReminderChoice,
+): Promise<void> {
+  if (Platform.OS === 'web') return;
+  if (!(await areNotificationsEnabled())) return;
+  await enqueue(async () => {
+    const map = await readMap();
+    const keys = [
+      notificationKey('fridge', item.id, 'day-before'),
+      notificationKey('fridge', item.id, 'same-day'),
+    ];
+    await cancelIdentifiers(await cancelKeys(map, keys));
+    // Un ítem ya consumido no debe agendar nada; si se edita, sus avisos viejos
+    // se acaban de cancelar arriba.
+    if (item.done) {
+      await writeMap(map);
+      return;
+    }
+    const expiry = safeDate(item.expiry_date);
+    if (expiry === null) return;
+    const now = new Date();
+    const dates = fridgeNotificationDates(expiry, choice, now);
+    const fingerprint = fridgeFingerprint(item, choice);
+    for (const trigger of dates) {
+      const slot = slotForDate(trigger, expiry);
+      const identifier = await Notifications.scheduleNotificationAsync({
+        content: buildFridgeContent(item, slot),
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: trigger,
+          channelId: CHANNEL_ID,
+        },
+      });
+      map[notificationKey('fridge', item.id, slot)] = {
+        identifiers: [identifier],
+        fingerprint,
+      };
+    }
+    await writeMap(map);
+  });
+}
+
+export async function scheduleFridgeItems(
+  items: FridgeItem[],
+  choice: ReminderChoice,
+): Promise<void> {
+  if (Platform.OS === 'web') return;
+  if (!(await areNotificationsEnabled())) return;
+  await enqueue(async () => {
+    const map = await readMap();
+    const fridgeKeys = Object.keys(map).filter((key) => key.startsWith('fridge:'));
+    await cancelIdentifiers(await cancelKeys(map, fridgeKeys));
+    const now = new Date();
+    for (const item of items) {
+      if (item.done) continue;
+      const expiry = safeDate(item.expiry_date);
+      if (expiry === null) continue;
+      const dates = fridgeNotificationDates(expiry, choice, now);
+      const fingerprint = fridgeFingerprint(item, choice);
+      for (const trigger of dates) {
+        const slot = slotForDate(trigger, expiry);
+        const identifier = await Notifications.scheduleNotificationAsync({
+          content: buildFridgeContent(item, slot),
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date: trigger,
+            channelId: CHANNEL_ID,
+          },
+        });
+        map[notificationKey('fridge', item.id, slot)] = {
+          identifiers: [identifier],
+          fingerprint,
+        };
+      }
+    }
+    await writeMap(map);
+  });
+}
+
 export async function cancelEntityKey(
-  kind: 'appointment' | 'birthday',
+  kind: 'appointment' | 'birthday' | 'fridge',
   id: string,
 ): Promise<void> {
   if (Platform.OS === 'web') return;
@@ -366,6 +461,8 @@ export async function syncAll(
   contacts: Contact[],
   birthdayChoice: ReminderChoice,
   now = new Date(),
+  fridgeItems: FridgeItem[] = [],
+  fridgeChoice: ReminderChoice = 'none',
 ): Promise<void> {
   if (Platform.OS === 'web') return;
   if (!(await areNotificationsEnabled())) return;
@@ -461,6 +558,47 @@ export async function syncAll(
           fingerprint,
         };
         seenKeys.add(notificationKey('birthday', contact.id, slot));
+      }
+    }
+
+    for (const item of fridgeItems) {
+      if (item.done) continue;
+      const expiry = safeDate(item.expiry_date);
+      if (expiry === null) continue;
+      const dates = fridgeNotificationDates(expiry, fridgeChoice, now);
+      const fingerprint = fridgeFingerprint(item, fridgeChoice);
+      const keys = [
+        notificationKey('fridge', item.id, 'day-before'),
+        notificationKey('fridge', item.id, 'same-day'),
+      ];
+      let matched = false;
+      for (const key of keys) {
+        const entry = map[key];
+        if (!entry) continue;
+        seenKeys.add(key);
+        if (entry.fingerprint === fingerprint) {
+          matched = true;
+        } else {
+          toCancel.push(...entry.identifiers);
+          delete map[key];
+        }
+      }
+      if (matched) continue;
+      for (const trigger of dates) {
+        const slot = slotForDate(trigger, expiry);
+        const identifier = await Notifications.scheduleNotificationAsync({
+          content: buildFridgeContent(item, slot),
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date: trigger,
+            channelId: CHANNEL_ID,
+          },
+        });
+        map[notificationKey('fridge', item.id, slot)] = {
+          identifiers: [identifier],
+          fingerprint,
+        };
+        seenKeys.add(notificationKey('fridge', item.id, slot));
       }
     }
 

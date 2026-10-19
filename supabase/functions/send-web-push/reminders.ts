@@ -13,7 +13,7 @@
 
 export type ReminderChoice = "none" | "day-before" | "same-day" | "both";
 export type Slot = "day-before" | "same-day";
-export type ReminderType = "appointment" | "birthday";
+export type ReminderType = "appointment" | "birthday" | "fridge";
 
 export interface Dispatch {
   type: ReminderType;
@@ -43,6 +43,12 @@ export interface ContactRow {
   id: string;
   name: string;
   birth_date: string | null;
+}
+
+export interface FridgeItemRow {
+  id: string;
+  name: string;
+  expiry_date: string;
 }
 
 export const REMINDER_HOUR = 9;
@@ -348,6 +354,15 @@ export function isPushEnabled(pref: PushPreference | null | undefined): boolean 
  */
 export function birthdayChoiceFor(pref: PushPreference | null | undefined): ReminderChoice {
   return isValidChoice(pref?.birthday_choice) ? pref.birthday_choice : "none";
+}
+
+/**
+ * Cuándo avisa de caducidad de la nevera. Mismo criterio que cumpleaños: sin fila
+ * o con un valor ilegible no se avisa, porque el servidor y la pantalla tienen que
+ * decir lo mismo y el repliegue seguro es no mandar nada.
+ */
+export function fridgeChoiceFor(pref: PushPreference | null | undefined): ReminderChoice {
+  return isValidChoice(pref?.fridge_choice) ? pref.fridge_choice : "none";
 }
 
 export interface Window {
@@ -659,22 +674,15 @@ export function buildNowAppointmentDispatch(input: {
 }
 
 /**
- * Confirmación de un cumpleaños recién creado. `null` si no hay recordatorio que
- * confirmar.
+ * Recordatorios de caducidad de la nevera.
  *
- * No lleva `timeZone` a propósito, y no es un descuido: un cumpleaños es un día del
- * calendario, así que la fecha se formatea sin zona (ver `formatMonthDay`). Si se
- * aceptara una zona, el texto dependería de ella sin motivo.
- *
- * A diferencia del recordatorio del cron, esta función NO exige que el cumpleaños
- * caiga hoy o mañana. La fecha se resuelve hacia adelante, así que un contacto
- * creado con un cumpleaños dentro de tres meses también se confirma, diciendo la
- * fecha de verdad. Antes solo se construía el aviso si el cumpleaños caía en la
- * ventana de día antes / mismo día, lo que dejaba esta función sin efecto en el
- * caso normal de uso.
+ * `expiry_date` es una columna `date`, no un instante: se compara el día tal cual
+ * (YYYY-MM-DD) contra el día local del aviso. Convertirlo a `Date` y pasarlo por
+ * `localDayUtc` desplazaba el día según la zona y podía avisar un día antes o
+ * después justo en zonas al oeste de UTC.
  */
 export function buildFridgeDispatches(
-  fridgeItems: { expiry_date: string; name: string }[],
+  fridgeItems: FridgeItemRow[],
   choice: ReminderChoice,
   context: Context,
 ): Dispatch[] {
@@ -685,8 +693,8 @@ export function buildFridgeDispatches(
 
   for (const item of fridgeItems) {
     if (!item.expiry_date) continue;
-    const expiryLocal = localDayUtc(new Date(item.expiry_date), context.timeZone);
-    if (expiryLocal.length === 0) continue;
+    const expiryLocal = item.expiry_date.slice(0, 10);
+    if (expiryLocal.length !== 10) continue;
 
     for (const candidate of candidatesFor(today, choice)) {
       if (expiryLocal !== candidate.eventDay) continue;
@@ -696,11 +704,13 @@ export function buildFridgeDispatches(
 
       out.push({
         type: "fridge",
-        refId: item.name,
+        refId: item.id,
         slot: candidate.slot,
         localDay: candidate.fireDay,
-        title: `Expira ${candidate.slot === "day-before" ? "mañana" : "hoy"}: ${truncate(item.name, 50)}`,
-        body: truncate(`El ${item.name} expira ${candidate.slot === "day-before" ? "el día antes" : "hoy"}.`),
+        title: `Caduca ${candidate.slot === "day-before" ? "mañana" : "hoy"}: ${
+          truncate(item.name, 50)
+        }`,
+        body: truncate(`El ${item.name} caduca ${candidate.slot === "day-before" ? "mañana" : "hoy"}.`),
         url: "/nevera",
       });
     }
@@ -712,7 +722,7 @@ export function buildFridgeDispatches(
  * Clave de idempotencia del modo `now`, en un espacio de nombres PROPIO.
  *
  * El prefijo `now:` no es decorativo: `dedupeKey` devuelve
- * `${type}:${refId}:${slot}:${localDay}`, que es exactamente la fila que el cron
+ * `${type}:${refId}:${slot}:${localDay}:${timezone}`, que es exactamente la fila que el cron
  * inserta para el recordatorio real. Si las dos compartieran clave, la
  * confirmación se comería el recordatorio, y el usuario se quedaría sin el aviso
  * que le importa a cambio del que solo le confirma lo que acaba de hacer.

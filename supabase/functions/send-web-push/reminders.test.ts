@@ -8,7 +8,9 @@ import {
   buildBirthdayDispatches,
   buildNowAppointmentDispatch,
   buildNowBirthdayDispatch,
+  buildFridgeDispatches,
   dedupeKey,
+  fridgeChoiceFor,
   fallsOnLocalDay,
   formatTime,
   formatMonthDay,
@@ -847,4 +849,58 @@ Deno.test("nowDedupeKey está acotada al bucket y al usuario", () => {
   assert(nowDedupeKey("u1", 29_000_000) !== nowDedupeKey("u2", 29_000_000));
   // Y cabe en el `check` de la columna (char_length <= 200).
   assert(nowDedupeKey(USUARIO, BUCKET).length <= 200);
+});
+
+Deno.test("fridgeChoiceFor: solo valores válidos y repliegue sin aviso", () => {
+  assertEquals(fridgeChoiceFor(null), "none");
+  assertEquals(fridgeChoiceFor({ enabled: true }), "none");
+  assertEquals(fridgeChoiceFor({ enabled: true, fridge_choice: null }), "none");
+  assertEquals(fridgeChoiceFor({ enabled: true, fridge_choice: "BOTH" }), "none");
+  assertEquals(fridgeChoiceFor({ enabled: true, fridge_choice: "none" }), "none");
+  for (const value of ["day-before", "same-day", "both"] as const) {
+    assertEquals(fridgeChoiceFor({ enabled: true, fridge_choice: value }), value);
+  }
+});
+
+Deno.test("buildFridgeDispatches avisa el día antes y el mismo día", () => {
+  const item = { id: "f1", name: "Leche", expiry_date: "2026-03-16" };
+  const before = buildFridgeDispatches([item], "day-before", ctx("2026-03-15T08:05:00Z", MADRID));
+  assertEquals(before.length, 1);
+  assertEquals(before[0].type, "fridge");
+  assertEquals(before[0].refId, "f1");
+  assertEquals(before[0].slot, "day-before");
+  assertEquals(before[0].url, "/nevera");
+
+  const same = buildFridgeDispatches([item], "same-day", ctx("2026-03-16T08:05:00Z", MADRID));
+  assertEquals(same.length, 1);
+  assertEquals(same[0].slot, "same-day");
+
+  assertEquals(buildFridgeDispatches([item], "none", ctx("2026-03-16T08:05:00Z", MADRID)), []);
+  assertEquals(buildFridgeDispatches([item], "same-day", ctx("2026-03-17T08:05:00Z", MADRID)), []);
+});
+
+Deno.test("buildFridgeDispatches compara el día de calendario sin desplazarlo por zona", () => {
+  const item = { id: "f1", name: "Yogur", expiry_date: "2026-03-16" };
+  // En Ciudad de México (UTC-6) el aviso del mismo día sale a las 15:00Z.
+  const mexico = buildFridgeDispatches(
+    [item],
+    "same-day",
+    ctx("2026-03-16T15:05:00Z", MEXICO),
+  );
+  assertEquals(mexico.length, 1);
+  assertEquals(mexico[0].localDay, "2026-03-16");
+  // Y con la fecha guardada como date no se corre al día anterior.
+  assertEquals(mexico[0].slot, "same-day");
+});
+
+Deno.test("buildFridgeDispatches ignora fechas inválidas y nombres con controles", () => {
+  const raros = [
+    { id: "f1", name: "Leche\u202E", expiry_date: "2026-03-16" },
+    { id: "f2", name: "Pan", expiry_date: "" },
+    { id: "f3", name: "Huevos", expiry_date: "ayer" },
+  ];
+  const out = buildFridgeDispatches(raros, "same-day", ctx("2026-03-16T08:05:00Z", MADRID));
+  assertEquals(out.length, 1);
+  assertEquals(out[0].refId, "f1");
+  assert(!out[0].title.includes("\u202E"));
 });

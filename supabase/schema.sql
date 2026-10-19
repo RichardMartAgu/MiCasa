@@ -164,13 +164,16 @@ create table if not exists public.contacts (
 create table if not exists public.fridge_items (
   id uuid primary key default gen_random_uuid(),
   casa_id uuid not null references public.casas (id) on delete cascade,
-  user_id uuid not null references auth.users (id) on delete cascade,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   name text not null,
-  expiry_date timestamptz not null,
+  expiry_date date not null,
   quantity numeric(10, 2),
   unit text,
   done boolean not null default false,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint fridge_items_name_length check (char_length(name) between 1 and 120),
+  constraint fridge_items_quantity_positive check (quantity is null or quantity > 0),
+  constraint fridge_items_unit_length check (unit is null or char_length(unit) <= 32)
 );
 
 -- Índices
@@ -321,6 +324,7 @@ alter table public.appointment_kinds enable row level security;
 alter table public.shopping_lists enable row level security;
 alter table public.shopping_items enable row level security;
 alter table public.contacts enable row level security;
+alter table public.fridge_items enable row level security;
 
 -- profiles: cada usuario ve/edita su propio perfil; también ve el de sus co-miembros.
 -- (select auth.uid()) evita re-evaluar auth.uid() por fila (initplan).
@@ -497,6 +501,63 @@ create policy "contacts_update_member" on public.contacts
   with check (public.is_casa_member(casa_id));
 
 create policy "contacts_delete_member" on public.contacts
+  for delete using (public.is_casa_member(casa_id));
+
+-- Autoría y casa inmutables, igual que en la migración.
+create or replace function public.fridge_items_freeze_owner()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+begin
+  if new.user_id <> old.user_id or new.casa_id <> old.casa_id then
+    raise exception 'no se puede cambiar el autor ni la casa de un ítem de nevera';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists fridge_items_freeze_owner on public.fridge_items;
+create trigger fridge_items_freeze_owner
+  before update on public.fridge_items
+  for each row execute function public.fridge_items_freeze_owner();
+
+create or replace function public.fridge_items_limit_per_casa()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+begin
+  perform pg_advisory_xact_lock(hashtext('fridge:' || new.casa_id::text));
+  if (select count(*) from public.fridge_items where casa_id = new.casa_id) >= 200 then
+    raise exception 'la nevera de esta casa ha alcanzado el límite de 200 ítems';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists fridge_items_limit_per_casa on public.fridge_items;
+create trigger fridge_items_limit_per_casa
+  before insert on public.fridge_items
+  for each row execute function public.fridge_items_limit_per_casa();
+
+revoke all on function public.fridge_items_freeze_owner() from public, anon, authenticated;
+revoke all on function public.fridge_items_limit_per_casa() from public, anon, authenticated;
+
+drop policy if exists "fridge_items_all_member" on public.fridge_items;
+drop policy if exists "fridge_items_select_member" on public.fridge_items;
+drop policy if exists "fridge_items_insert_member" on public.fridge_items;
+drop policy if exists "fridge_items_update_member" on public.fridge_items;
+drop policy if exists "fridge_items_delete_member" on public.fridge_items;
+create policy "fridge_items_select_member" on public.fridge_items
+  for select using (public.is_casa_member(casa_id));
+
+create policy "fridge_items_insert_member" on public.fridge_items
+  for insert with check (public.is_casa_member(casa_id) and user_id = (select auth.uid()));
+
+create policy "fridge_items_update_member" on public.fridge_items
+  for update using (public.is_casa_member(casa_id))
+  with check (public.is_casa_member(casa_id));
+
+create policy "fridge_items_delete_member" on public.fridge_items
   for delete using (public.is_casa_member(casa_id));
 
 -- ============================================================================
@@ -680,6 +741,18 @@ alter publication supabase_realtime add table public.appointments;
 alter publication supabase_realtime add table public.appointment_kinds;
 alter publication supabase_realtime add table public.shopping_lists;
 alter publication supabase_realtime add table public.shopping_items;
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'fridge_items'
+  ) then
+    alter publication supabase_realtime add table public.fridge_items;
+  end if;
+end;
+$$;
 
 -- replica identity full: necesario para que realtime entregue eventos DELETE
 -- (y UPDATE) filtrables por columnas no-PK (casa_id, list_id). Sin esto, el
@@ -691,6 +764,7 @@ alter table public.appointments replica identity full;
 alter table public.appointment_kinds replica identity full;
 alter table public.shopping_lists replica identity full;
 alter table public.shopping_items replica identity full;
+alter table public.fridge_items replica identity full;
 alter table public.categories replica identity full;
 alter table public.contacts replica identity full;
 alter table public.casa_members replica identity full;

@@ -17,6 +17,7 @@ MiCasa te permite llevar la **contabilidad de compras** por secciones (Bebé, Re
 - **Citas**: tipo (médico, escuela, mascota…), persona, lugar, fecha y hora, con aviso configurable (día antes y/o mismo día a las 9:00, o sin aviso).
 - **Listas de la compra**: artículos con cantidad, marcado de completado y listas terminadas.
 - **Cumpleaños**: contactos con fecha de nacimiento y widget de «próximos 30 días».
+- **Nevera**: ítems con fecha de caducidad, marcado de consumido y aviso configurable (web push y notificación local).
 - **Recordatorios locales**: avisos de citas y cumpleaños en el dispositivo con `expo-notifications` (toggle en Ajustes, sin backend).
 - **Tiempo real**: los cambios de cualquier miembro se reflejan al instante (Supabase Realtime).
 - **Seguridad**: Row Level Security en toda la base de datos.
@@ -266,7 +267,7 @@ que resolverlo a mano y revisar lo que sale.
 ```
 src/
 ├── app/                 # Rutas de expo-router
-│   ├── (tabs)/          # Pantallas principales (Inicio, Citas, Gastos, Listas, Cumpleaños, Ajustes)
+│   ├── (tabs)/          # Pantallas principales (Inicio, Citas, Gastos, Listas, Nevera, Cumpleaños, Ajustes)
 │   ├── _layout.tsx      # Providers (Auth, Casa) + Stack
 │   ├── login.tsx
 │   └── register.tsx

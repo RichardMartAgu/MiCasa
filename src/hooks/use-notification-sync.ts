@@ -3,15 +3,16 @@ import { useEffect, useRef } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
-import { fetchAppointments, fetchContacts } from '@/lib/api';
+import { fetchAppointments, fetchContacts, fetchFridgeItems } from '@/lib/api';
 import {
   areNotificationsEnabled,
   ensureChannel,
   getBirthdayChoice,
+  getFridgeChoice,
   setupNotificationHandler,
   syncAll,
 } from '@/lib/notifications';
-import type { Appointment, Contact } from '@/lib/types';
+import type { Appointment, Contact, FridgeItem } from '@/lib/types';
 
 export function useNotificationSync(): void {
   const { user } = useAuth();
@@ -26,6 +27,11 @@ export function useNotificationSync(): void {
     'contacts',
     currentCasa?.id ?? null,
   );
+  const { data: fridgeItems, loading: fridgeLoading } = useRealtimeCollection<FridgeItem>(
+    () => (currentCasa ? fetchFridgeItems(currentCasa.id) : Promise.resolve([])),
+    'fridge_items',
+    currentCasa?.id ?? null,
+  );
 
   const initialized = useRef(false);
 
@@ -37,16 +43,26 @@ export function useNotificationSync(): void {
   }, []);
 
   useEffect(() => {
-    if (!user || !currentCasa || appointmentsLoading || contactsLoading) return;
+    if (!user || !currentCasa || appointmentsLoading || contactsLoading || fridgeLoading) return;
     let active = true;
     (async () => {
       const enabled = await areNotificationsEnabled();
       if (!active || !enabled) return;
       const birthdayChoice = await getBirthdayChoice();
-      await syncAll(appointments, contacts, birthdayChoice);
+      const fridgeChoice = await getFridgeChoice();
+      await syncAll(appointments, contacts, birthdayChoice, new Date(), fridgeItems, fridgeChoice);
     })();
     return () => {
       active = false;
     };
-  }, [user, currentCasa, appointments, contacts, appointmentsLoading, contactsLoading]);
+  }, [
+    user,
+    currentCasa,
+    appointments,
+    contacts,
+    fridgeItems,
+    appointmentsLoading,
+    contactsLoading,
+    fridgeLoading,
+  ]);
 }
