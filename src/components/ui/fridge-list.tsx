@@ -1,18 +1,21 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { Palette, Spacing } from '@/constants/theme';
+import type { FridgeItem } from '@/lib/types';
 import { FridgeListItem } from './fridge-list-item';
 
 export function FridgeList({
   items,
+  onToggle,
   onPress,
-  hasEmpty,
+  onDelete,
 }: {
-  items: { name: string; expiry: string }[];
-  onPress?: (name: string) => void;
-  hasEmpty?: boolean;
+  items: FridgeItem[];
+  onToggle?: (item: FridgeItem) => void;
+  onPress?: (item: FridgeItem) => void;
+  onDelete?: (item: FridgeItem) => void;
 }) {
-  if (hasEmpty || items.length === 0) {
+  if (items.length === 0) {
     return (
       <View style={styles.empty}>
         <Text style={styles.emptyText}>No hay elementos en la nevera</Text>
@@ -21,19 +24,17 @@ export function FridgeList({
   }
 
   return (
-    <ScrollView
-      contentContainerStyle={styles.list}
-      showsVerticalScrollIndicator={false}
-    >
+    <View style={styles.list}>
       {items.map((item) => (
         <FridgeListItem
-          key={item.name}
-          name={item.name}
-          expiry={item.expiry}
-          onPress={() => onPress?.(item.name)}
+          key={item.id}
+          item={item}
+          onToggle={() => onToggle?.(item)}
+          onPress={() => onPress?.(item)}
+          onDelete={() => onDelete?.(item)}
         />
       ))}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -42,7 +43,6 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   empty: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: Spacing.four,

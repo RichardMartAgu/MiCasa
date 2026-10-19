@@ -7,6 +7,7 @@ import type {
   Category,
   Contact,
   Expense,
+  FridgeItem,
   ShoppingItem,
   ShoppingList,
 } from './types';
@@ -249,6 +250,56 @@ export async function toggleShoppingItem(id: string, done: boolean): Promise<Api
 
 export async function removeShoppingItem(id: string): Promise<ApiError | null> {
   const { error } = await supabase.from('shopping_items').delete().eq('id', id);
+  return toError(error);
+}
+
+// ---- Nevera ------------------------------------------------------------------
+
+export type FridgeItemInput = {
+  name: string;
+  expiry_date: string;
+  quantity?: number | null;
+  unit?: string | null;
+};
+
+export async function fetchFridgeItems(casaId: string): Promise<FridgeItem[]> {
+  const { data, error } = await supabase
+    .from('fridge_items')
+    .select('*')
+    .eq('casa_id', casaId)
+    .order('expiry_date', { ascending: true })
+    .limit(500);
+  if (error) throw new Error(friendlyError(error.message));
+  return (data ?? []) as FridgeItem[];
+}
+
+export async function addFridgeItem(
+  input: { casa_id: string } & FridgeItemInput,
+): Promise<{ error: ApiError | null; data?: FridgeItem }> {
+  const { data, error } = await supabase.from('fridge_items').insert(input).select().single();
+  return { error: toError(error), data: (data as FridgeItem | null) ?? undefined };
+}
+
+export async function updateFridgeItem(
+  id: string,
+  input: FridgeItemInput,
+): Promise<{ error: ApiError | null; data?: FridgeItem }> {
+  const { data, error } = await supabase
+    .from('fridge_items')
+    .update(input)
+    .eq('id', id)
+    .select()
+    .single();
+  return { error: toError(error), data: (data as FridgeItem | null) ?? undefined };
+}
+
+export async function toggleFridgeItem(id: string, done: boolean): Promise<ApiError | null> {
+  const { error } = await supabase.from('fridge_items').update({ done }).eq('id', id);
+  return toError(error);
+}
+
+export async function removeFridgeItem(id: string): Promise<ApiError | null> {
+  const { error } = await supabase.from('fridge_items').delete().eq('id', id);
   return toError(error);
 }
 

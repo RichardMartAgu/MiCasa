@@ -3,8 +3,11 @@ import {
   appointmentReminderDates,
   birthdayFingerprint,
   birthdayNotificationDates,
+  fridgeFingerprint,
+  fridgeNotificationDates,
   buildAppointmentContent,
   buildBirthdayContent,
+  buildFridgeContent,
   choiceFromReminderAt,
   notificationKey,
   reminderChoiceLabels,
@@ -349,5 +352,54 @@ describe('contenido de notificaciones', () => {
     expect(content.title.length).toBeGreaterThan(0);
     expect(content.body.length).toBeGreaterThan(0);
     expect(content.data).toEqual({ type: 'birthday', id: 'c1', slot: 'same-day' });
+  });
+});
+describe('nevera', () => {
+  const item = {
+    id: 'f1',
+    casa_id: 'c1',
+    user_id: 'u1',
+    name: 'Leche',
+    expiry_date: '2026-03-16',
+    quantity: 2,
+    unit: 'L',
+    done: false,
+    created_at: '2026-03-01',
+  };
+
+  it('programa 9:00 del día antes y del mismo día', () => {
+    const now = new Date(2026, 2, 14, 10, 0, 0);
+    const both = fridgeNotificationDates(new Date(2026, 2, 16), 'both', now);
+    expect(both.map((d) => d.getDate())).toEqual([15, 16]);
+    expect(both.every((d) => d.getHours() === 9)).toBe(true);
+  });
+
+  it('none no agenda nada', () => {
+    expect(fridgeNotificationDates(new Date(2026, 2, 16), 'none', new Date(2026, 2, 15))).toEqual([]);
+  });
+
+  it('fingerprint cambia con la fecha, con la preferencia y con el contenido', () => {
+    const other = { ...item, expiry_date: '2026-03-17' };
+    expect(fridgeFingerprint(item, 'both')).not.toBe(fridgeFingerprint(other, 'both'));
+    expect(fridgeFingerprint(item, 'both')).not.toBe(fridgeFingerprint(item, 'same-day'));
+    expect(fridgeFingerprint(item, 'both')).not.toBe(
+      fridgeFingerprint({ ...item, name: 'Leche entera' }, 'both'),
+    );
+    expect(fridgeFingerprint(item, 'both')).not.toBe(
+      fridgeFingerprint({ ...item, quantity: 3 }, 'both'),
+    );
+  });
+
+  it('contenido incluye el nombre y el tipo fridge', () => {
+    const content = buildFridgeContent(item, 'day-before');
+    expect(content.title).toContain('Leche');
+    expect(content.data).toEqual({ type: 'fridge', id: 'f1', slot: 'day-before' });
+    expect(notificationKey('fridge', 'f1', 'same-day')).toBe('fridge:f1:same-day');
+  });
+
+  it('sanea marcas bidireccionales y controles en el nombre', () => {
+    const content = buildFridgeContent({ ...item, name: 'Leche\u202E\u0007' }, 'same-day');
+    expect(content.title).not.toContain('\u202E');
+    expect(content.body).not.toContain('\u0007');
   });
 });

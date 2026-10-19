@@ -73,7 +73,7 @@ clientsClaim();
  * Rutas internas permitidas en el payload de una notificación. Evita que un
  * endpoint comprometido pueda usar MiCasa como redireccionador a cualquier URL.
  */
-const ALLOWED_ROUTES = ['/citas', '/cumpleanos'];
+const ALLOWED_ROUTES = ['/citas', '/cumpleanos', '/nevera'];
 
 function safeRoute(value) {
   return typeof value === 'string' && ALLOWED_ROUTES.includes(value) ? value : '/';
@@ -92,7 +92,10 @@ self.addEventListener('push', (event) => {
   const body = typeof payload.body === 'string' ? payload.body : 'Tienes un recordatorio';
   const data = payload.data && typeof payload.data === 'object' ? payload.data : {};
   const url = safeRoute(data.url);
-  const type = data.type === 'appointment' || data.type === 'birthday' ? data.type : 'generic';
+  const type =
+    data.type === 'appointment' || data.type === 'birthday' || data.type === 'fridge'
+      ? data.type
+      : 'generic';
   const id = typeof data.id === 'string' ? data.id : '';
 
   event.waitUntil(

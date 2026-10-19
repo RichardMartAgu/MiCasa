@@ -1,7 +1,13 @@
-# Pendiente — OAuth Google (bloque implementado)
+# Pendiente — OAuth Google (bloque implementado, botón oculto)
 
-Estado: código listo, tests OK (280), lint OK. Commit en rama `feat/oauth-google`.
-Pendiente: config dashboard (Google Cloud + Supabase) y PR.
+Estado 2026-10-19: el código está en `develop` (`src/lib/oauth.ts`,
+`signInWithGoogle` en `src/context/auth-context.tsx`), pero el botón «Continuar con
+Google» se ocultó de `src/app/login.tsx` porque el provider sigue deshabilitado en
+Supabase y el login siempre fallaba con «Este método de acceso no está disponible en
+este momento». La rama `feat/oauth-google` ya no existe.
+
+Para reactivarlo: configurar Google Cloud + Supabase (pasos abajo) y volver a
+renderizar el botón en `login.tsx` (bloque eliminado; recuperar de git history).
 
 ## Pasos configuración (requieren credenciales Google)
 

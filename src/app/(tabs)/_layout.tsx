@@ -39,6 +39,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="citas" options={{ title: 'Citas', tabBarIcon: icon('calendar-outline') }} />
       <Tabs.Screen name="gastos" options={{ title: 'Gastos', tabBarIcon: icon('wallet-outline') }} />
       <Tabs.Screen name="listas" options={{ title: 'Listas', tabBarIcon: icon('cart-outline') }} />
+      <Tabs.Screen name="nevera" options={{ title: 'Nevera', tabBarIcon: icon('snow-outline') }} />
       <Tabs.Screen
         name="cumpleanos"
         options={{ title: 'Cumpleaños', tabBarIcon: icon('gift-outline') }}

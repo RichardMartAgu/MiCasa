@@ -79,21 +79,13 @@ function Field({ label, icon, error, onFocus, onBlur, ...rest }: FieldProps) {
 }
 
 export default function LoginScreen() {
-  const { session, signIn, signInWithGoogle } = useAuth();
+  const { session, signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{ email?: string; password?: string; form?: string }>({});
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
 
   if (session) return <Redirect href="/" />;
-
-  async function handleGoogle() {
-    setGoogleLoading(true);
-    const error = await signInWithGoogle();
-    setGoogleLoading(false);
-    if (error) setErrors({ form: error.message });
-  }
 
   async function handleSubmit() {
     const emailCheck = validateEmail(email);
@@ -200,26 +192,6 @@ export default function LoginScreen() {
               Regístrate
             </Link>
           </Text>
-
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>o</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <Pressable
-            accessibilityRole="button"
-            disabled={googleLoading}
-            onPress={handleGoogle}
-            style={({ pressed }) => [
-              styles.googleButton,
-              (pressed || googleLoading) && styles.googleButtonPressed,
-            ]}>
-            <Ionicons name="logo-google" size={18} color={Palette.textSecondary} />
-            <Text style={styles.googleLabel}>
-              {googleLoading ? 'Abriendo Google…' : 'Continuar con Google'}
-            </Text>
-          </Pressable>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

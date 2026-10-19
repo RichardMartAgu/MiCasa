@@ -24,6 +24,7 @@ import { useAppInstall } from '@/hooks/use-app-install';
 import {
   fetchAppointments,
   fetchContacts,
+  fetchFridgeItems,
   removeCasaMember,
   setCasaMemberRole,
 } from '@/lib/api';
@@ -34,9 +35,12 @@ import {
   askEnableNotifications,
   canRequestPermissionAgain,
   getBirthdayChoice,
+  getFridgeChoice,
   requestPermissions,
   scheduleBirthdays,
+  scheduleFridgeItems,
   setBirthdayChoice,
+  setFridgeChoice,
   setNotificationsEnabled,
   syncAll,
 } from '@/lib/notifications';
@@ -46,12 +50,13 @@ import {
   type ReminderChoice,
 } from '@/lib/notification-schedule';
 import { showNotice } from '@/lib/notice';
-import type { Appointment, Casa, CasaMember, Contact } from '@/lib/types';
+import type { Appointment, Casa, CasaMember, Contact, FridgeItem } from '@/lib/types';
 import {
   disableWebPush,
   enableWebPush,
   getActiveSubscription,
   getStoredBirthdayChoice,
+  getStoredFridgeChoice,
   isPushSupported,
   notificationPermission,
   sendTestPush,
@@ -171,6 +176,11 @@ export default function AjustesScreen() {
   // sentido peligroso: la fila de la base manda sobre lo que el servidor avisa
   // aunque la pantalla diga otra cosa.
   const birthdayReadSeq = useRef(0);
+  // Misma forma que la de cumpleaños: `null` es "no se sabe" y no marca ningún
+  // chip. Lectura y escritura de la nevera tienen su propia secuencia para que
+  // una elección no invalide la lectura de la otra preferencia.
+  const [fridgeChoice, setFridgeChoiceState] = useState<ReminderChoice | null>(null);
+  const fridgeReadSeq = useRef(0);
   // Secuencia de la lectura del interruptor maestro en nativo, con contador propio.
   // El de `pushReadSeq` no sirve aquí: ese lo invalidan `handleToggleWebPush` y la
   // relectura de la suscripción, que son cosas de web, y en nativo no existen.
@@ -193,6 +203,11 @@ export default function AjustesScreen() {
     'contacts',
     currentCasa?.id ?? null,
   );
+  const { data: fridgeItems } = useRealtimeCollection<FridgeItem>(
+    () => (currentCasa ? fetchFridgeItems(currentCasa.id) : Promise.resolve([])),
+    'fridge_items',
+    currentCasa?.id ?? null,
+  );
 
   useEffect(() => {
     let active = true;
@@ -212,6 +227,7 @@ export default function AjustesScreen() {
     //   guardado.
     const masterSeq = isWeb ? 0 : ++masterReadSeq.current;
     const choiceSeq = ++birthdayReadSeq.current;
+    const fridgeSeq = ++fridgeReadSeq.current;
     // Un contador y no un `setPrefsLoading(false)` por lectura porque en nativo hay
     // dos y el interruptor no debe quedar habilitado hasta que las dos hayan
     // terminado: con un `false` en cada `finally`, la primera en resolverse lo dejaba
@@ -231,7 +247,7 @@ export default function AjustesScreen() {
     // cuando la suya llega a cero. `prefsLoading` es monótono (no hay ningún
     // `setPrefsLoading(true)`), así que a cero siempre quiere decir "ya se leyó todo
     // lo que había en vuelo".
-    let pendingHere = isWeb ? 1 : 2;
+    let pendingHere = isWeb ? 2 : 3;
     const release = () => {
       pendingHere -= 1;
       if (pendingHere === 0 && active) setPrefsLoading(false);
@@ -249,6 +265,17 @@ export default function AjustesScreen() {
           // liberando el interruptor y el motivo queda en consola en vez de ser un
           // rechazo sin capturar.
           console.warn('No se pudo leer la preferencia de cumpleaños', errorText(error));
+        } finally {
+          release();
+        }
+      })();
+
+      (async () => {
+        try {
+          const choice = await getStoredFridgeChoice(user);
+          if (active && fridgeSeq === fridgeReadSeq.current) setFridgeChoiceState(choice);
+        } catch (error) {
+          console.warn('No se pudo leer la preferencia de caducidad', errorText(error));
         } finally {
           release();
         }
@@ -277,6 +304,17 @@ export default function AjustesScreen() {
           if (active && choiceSeq === birthdayReadSeq.current) setBirthdayChoiceState(choice);
         } catch (error) {
           console.warn('No se pudo leer la preferencia de cumpleaños', errorText(error));
+        } finally {
+          release();
+        }
+      })();
+
+      (async () => {
+        try {
+          const choice = await getFridgeChoice();
+          if (active && fridgeSeq === fridgeReadSeq.current) setFridgeChoiceState(choice);
+        } catch (error) {
+          console.warn('No se pudo leer la preferencia de caducidad', errorText(error));
         } finally {
           release();
         }
@@ -554,7 +592,14 @@ export default function AjustesScreen() {
         // conservador que usa el resto de la pantalla: no programar un aviso que
         // quizá no se quiere es reversible; el otro sentido deja avisos activos que
         // la persona no pidió.
-        await syncAll(appointments, contacts, birthdayChoice ?? 'none');
+        await syncAll(
+          appointments,
+          contacts,
+          birthdayChoice ?? 'none',
+          new Date(),
+          fridgeItems,
+          fridgeChoice ?? 'none',
+        );
       } else {
         await setNotificationsEnabled(false);
         setNotificationsEnabledState(false);
@@ -614,6 +659,31 @@ export default function AjustesScreen() {
       // es el patrón que escondió el bug original.
       setBirthdayChoiceState(previous);
       console.warn('No se pudo guardar el aviso de cumpleaños elegido', errorText(error));
+    }
+  }
+
+  async function handleFridgeChoice(choice: ReminderChoice) {
+    if (fridgeChoice === choice) return;
+    ++fridgeReadSeq.current;
+    const previous = fridgeChoice;
+    try {
+      if (choice !== 'none' && !notificationsEnabled && !isWeb) {
+        const result = await askEnableNotifications(
+          'Activa las notificaciones para recibir avisos de caducidad.',
+        );
+        if (result !== 'enabled') return;
+        setNotificationsEnabledState(true);
+      }
+      setFridgeChoiceState(choice);
+      await setFridgeChoice(choice);
+      if (isWeb) {
+        await syncPushPreferences(user, { fridgeChoice: choice });
+      } else {
+        await scheduleFridgeItems(fridgeItems, choice);
+      }
+    } catch (error) {
+      setFridgeChoiceState(previous);
+      console.warn('No se pudo guardar el aviso de caducidad elegido', errorText(error));
     }
   }
 
@@ -813,6 +883,27 @@ export default function AjustesScreen() {
               accessibilityState={{ checked: birthdayChoice === value }}
               onPress={() => void handleBirthdayChoice(value)}>
               <Text style={[styles.chipText, birthdayChoice === value && styles.chipTextSelected]}>
+                {reminderChoiceLabels[value]}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={styles.settingLabel}>Nevera: avisar caducidad</Text>
+        {!prefsLoading && fridgeChoice === null ? (
+          <Text style={styles.cardMeta}>
+            No se ha podido leer el aviso que tienes guardado. Elige uno para fijarlo.
+          </Text>
+        ) : null}
+        <View style={styles.chipRow}>
+          {reminderChoices.map((value) => (
+            <Pressable
+              key={value}
+              style={[styles.chip, fridgeChoice === value && styles.chipSelected]}
+              accessibilityRole="radio"
+              accessibilityLabel={`Nevera: ${reminderChoiceLabels[value]}`}
+              accessibilityState={{ checked: fridgeChoice === value }}
+              onPress={() => void handleFridgeChoice(value)}>
+              <Text style={[styles.chipText, fridgeChoice === value && styles.chipTextSelected]}>
                 {reminderChoiceLabels[value]}
               </Text>
             </Pressable>

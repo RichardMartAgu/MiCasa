@@ -10,11 +10,15 @@ import {
   ensureChannel,
   ensureNotificationsEnabled,
   getBirthdayChoice,
+  getFridgeChoice,
   requestPermissions,
   scheduleAppointment,
   scheduleBirthday,
   scheduleBirthdays,
+  scheduleFridgeItem,
+  scheduleFridgeItems,
   setBirthdayChoice,
+  setFridgeChoice,
   setNotificationsEnabled,
   setupNotificationHandler,
   syncAll,
@@ -699,5 +703,68 @@ describe('cola: recuperación ante tarea colgada', () => {
       }),
     );
     expect(hungSettled).toHaveBeenCalled();
+  });
+});
+describe('nevera: programación local', () => {
+  const fridgeItem = {
+    id: 'f1',
+    casa_id: 'c1',
+    user_id: 'u1',
+    name: 'Leche',
+    expiry_date: '2026-09-26',
+    quantity: 2,
+    unit: 'L',
+    done: false,
+    created_at: '2026-09-01',
+  };
+
+  it('programa los dos avisos y guarda las claves', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    await scheduleFridgeItem(fridgeItem, 'both');
+    expect(mockSchedule).toHaveBeenCalledTimes(2);
+    const map = JSON.parse(mockStorage.get('notification_map_v1') ?? '{}');
+    expect(Object.keys(map).sort()).toEqual(['fridge:f1:day-before', 'fridge:f1:same-day']);
+  });
+
+  it('none cancela las claves existentes y no programa', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    await scheduleFridgeItem(fridgeItem, 'both');
+    mockSchedule.mockClear();
+    await scheduleFridgeItem(fridgeItem, 'none');
+    expect(mockSchedule).not.toHaveBeenCalled();
+    const map = JSON.parse(mockStorage.get('notification_map_v1') ?? '{}');
+    expect(Object.keys(map)).toEqual([]);
+  });
+
+  it('scheduleFridgeItem cancela y no agenda si el ítem ya está consumido', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    await scheduleFridgeItem(fridgeItem, 'both');
+    mockSchedule.mockClear();
+    await scheduleFridgeItem({ ...fridgeItem, done: true }, 'both');
+    expect(mockSchedule).not.toHaveBeenCalled();
+    const map = JSON.parse(mockStorage.get('notification_map_v1') ?? '{}');
+    expect(Object.keys(map)).toEqual([]);
+  });
+
+  it('scheduleFridgeItems ignora los consumidos', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    await scheduleFridgeItems([{ ...fridgeItem, done: true }], 'both');
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it('cancelEntityKey borra las dos claves de una nevera', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    await scheduleFridgeItem(fridgeItem, 'both');
+    await cancelEntityKey('fridge', 'f1');
+    const map = JSON.parse(mockStorage.get('notification_map_v1') ?? '{}');
+    expect(Object.keys(map)).toEqual([]);
+  });
+
+  it('get/set de preferencia usa AsyncStorage en nativo y none en web', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    await setFridgeChoice('same-day');
+    expect(await getFridgeChoice()).toBe('same-day');
+    jest.replaceProperty(Platform, 'OS', 'web');
+    expect(await getFridgeChoice()).toBe('none');
   });
 });

@@ -201,8 +201,8 @@ check(
   'el aviso se muestra desde la propia registro del SW'
 );
 check(
-  sw.includes('/citas') && sw.includes('/cumpleanos'),
-  'la allowlist de rutas del aviso incluye las pantallas de citas y cumpleaños'
+  sw.includes('/citas') && sw.includes('/cumpleanos') && sw.includes('/nevera'),
+  'la allowlist de rutas del aviso incluye citas, cumpleaños y nevera'
 );
 check(
   !/openWindow\(\s*data\.url\s*\)/.test(sw),

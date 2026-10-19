@@ -24,6 +24,7 @@ import {
   enableWebPush,
   getActiveSubscription,
   getStoredBirthdayChoice,
+  getStoredFridgeChoice,
   PERMISSION_TIMEOUT_MS,
   sendNowPush,
   sendTestPush,
@@ -209,7 +210,7 @@ describe('presupuestos de tiempo de la activación', () => {
 
 describe('ALLOWED_PUSH_ROUTES', () => {
   it('solo permite rutas internas conocidas', () => {
-    expect(ALLOWED_PUSH_ROUTES).toEqual(['/citas', '/cumpleanos']);
+    expect(ALLOWED_PUSH_ROUTES).toEqual(['/citas', '/cumpleanos', '/nevera']);
     for (const route of ALLOWED_PUSH_ROUTES) {
       expect(route.startsWith('/')).toBe(true);
       expect(route).not.toContain('//');
@@ -1409,6 +1410,56 @@ describe('getStoredBirthdayChoice: leer lo que se guardó', () => {
 
     expect(upsert).toHaveBeenCalledWith(
       { user_id: 'user-1', birthday_choice: 'same-day' },
+      { onConflict: 'user_id' },
+    );
+  });
+});
+
+describe('getStoredFridgeChoice: leer la caducidad guardada', () => {
+  const user = { id: 'user-1' } as unknown as Parameters<typeof getStoredFridgeChoice>[0];
+
+  beforeEach(() => {
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  function stub(result: { data: { fridge_choice: string } | null; error: { message: string } | null }) {
+    const maybeSingle = jest.fn(() => Promise.resolve(result));
+    const eq = jest.fn(() => ({ maybeSingle }));
+    const select = jest.fn(() => ({ eq }));
+    (supabase.from as jest.Mock).mockImplementation((table: string) =>
+      table === 'push_preferences' ? { select } : {},
+    );
+    return { select, eq, maybeSingle };
+  }
+
+  it('lee fridge_choice filtrando por usuario', async () => {
+    const db = stub({ data: { fridge_choice: 'same-day' }, error: null });
+    await expect(getStoredFridgeChoice(user)).resolves.toBe('same-day');
+    expect(db.select).toHaveBeenCalledWith('fridge_choice');
+    expect(db.eq).toHaveBeenCalledWith('user_id', 'user-1');
+  });
+
+  it('un valor ilegible o una fila ausente se leen como null, no como none', async () => {
+    stub({ data: { fridge_choice: 'cada-dos-dias' }, error: null });
+    await expect(getStoredFridgeChoice(user)).resolves.toBeNull();
+    stub({ data: null, error: null });
+    await expect(getStoredFridgeChoice(user)).resolves.toBeNull();
+    await expect(getStoredFridgeChoice(null)).resolves.toBeNull();
+  });
+
+  it('escribe la misma columna que lee', async () => {
+    const upsert = jest.fn(async () => ({ error: null }));
+    (supabase.from as jest.Mock).mockImplementation((table: string) =>
+      table === 'push_preferences' ? { upsert } : {},
+    );
+    await syncPushPreferences(user, { fridgeChoice: 'day-before' });
+    expect(upsert).toHaveBeenCalledWith(
+      { user_id: 'user-1', fridge_choice: 'day-before' },
       { onConflict: 'user_id' },
     );
   });
