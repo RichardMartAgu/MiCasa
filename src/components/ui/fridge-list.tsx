@@ -1,6 +1,6 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { Palette, Radius, Spacing } from '@/constants/theme';
+import { Palette, Spacing } from '@/constants/theme';
 import { FridgeListItem } from './fridge-list-item';
 
 export function FridgeList({
