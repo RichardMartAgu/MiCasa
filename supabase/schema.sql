@@ -159,6 +159,26 @@ create table if not exists public.contacts (
 );
 
 -- ============================================================================
+-- Ítems de nevera (caducidad + notificaciones)
+-- ============================================================================
+create table if not exists public.fridge_items (
+  id uuid primary key default gen_random_uuid(),
+  casa_id uuid not null references public.casas (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  name text not null,
+  expiry_date timestamptz not null,
+  quantity numeric(10, 2),
+  unit text,
+  done boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- Índices
+create index if not exists idx_fridge_items_casa on public.fridge_items (casa_id);
+create index if not exists idx_fridge_items_user on public.fridge_items (user_id);
+create index if not exists idx_fridge_items_expiry on public.fridge_items (expiry_date);
+
+-- ============================================================================
 -- Índices
 -- ============================================================================
 create index if not exists idx_casa_members_user on public.casa_members (user_id);

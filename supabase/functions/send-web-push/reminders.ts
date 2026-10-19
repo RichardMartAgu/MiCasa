@@ -314,6 +314,7 @@ export function truncate(input: string, max = 110): string {
 export interface PushPreference {
   enabled: boolean;
   birthday_choice?: string | null;
+  fridge_choice?: string | null;
 }
 
 /**
@@ -672,23 +673,39 @@ export function buildNowAppointmentDispatch(input: {
  * ventana de día antes / mismo día, lo que dejaba esta función sin efecto en el
  * caso normal de uso.
  */
-export function buildNowBirthdayDispatch(input: {
-  refId: string;
-  name: string;
-  birthDate: string | null;
-  choice: ReminderChoice;
-  today: string;
-}): NowDispatch | null {
-  if (input.choice === "none") return null;
-  const next = input.birthDate ? nextBirthdayDay(input.birthDate, input.today) : null;
-  if (next === null) return null;
-  return {
-    type: "birthday",
-    refId: input.refId,
-    title: `Cumpleaños: ${truncate(input.name, 60)}`,
-    body: confirmationBody(formatMonthDay(next), input.choice),
-    url: "/cumpleanos",
-  };
+export function buildFridgeDispatches(
+  fridgeItems: { expiry_date: string; name: string }[],
+  choice: ReminderChoice,
+  context: Context,
+): Dispatch[] {
+  const out: Dispatch[] = [];
+  if (choice === "none") return out;
+
+  const today = localDayUtc(context.now, context.timeZone);
+
+  for (const item of fridgeItems) {
+    if (!item.expiry_date) continue;
+    const expiryLocal = localDayUtc(new Date(item.expiry_date), context.timeZone);
+    if (expiryLocal.length === 0) continue;
+
+    for (const candidate of candidatesFor(today, choice)) {
+      if (expiryLocal !== candidate.eventDay) continue;
+
+      const fireAt = nineAmUtc(candidate.fireDay, context.timeZone);
+      if (!fireAt || !withinWindow(fireAt, context.window)) continue;
+
+      out.push({
+        type: "fridge",
+        refId: item.name,
+        slot: candidate.slot,
+        localDay: candidate.fireDay,
+        title: `Expira ${candidate.slot === "day-before" ? "mañana" : "hoy"}: ${truncate(item.name, 50)}`,
+        body: truncate(`El ${item.name} expira ${candidate.slot === "day-before" ? "el día antes" : "hoy"}.`),
+        url: "/nevera",
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -721,6 +738,26 @@ export function buildNowBirthdayDispatch(input: {
  */
 export function nowDedupeKey(userId: string, bucket: number): string {
   return `now:${userId}:${bucket}`;
+}
+
+/** Confirmación de un cumpleaños recién creado. `null` si no hay recordatorio que confirmar. */
+export function buildNowBirthdayDispatch(input: {
+  refId: string;
+  name: string;
+  birthDate: string | null;
+  choice: ReminderChoice;
+  today: string;
+}): NowDispatch | null {
+  if (input.choice === "none") return null;
+  const next = input.birthDate ? nextBirthdayDay(input.birthDate, input.today) : null;
+  if (next === null) return null;
+  return {
+    type: "birthday",
+    refId: input.refId,
+    title: `Cumpleaños: ${truncate(input.name, 60)}`,
+    body: confirmationBody(formatMonthDay(next), input.choice),
+    url: "/cumpleanos",
+  };
 }
 
 /** Fin de la ventana de consulta de citas: hoy más el horizonte. */

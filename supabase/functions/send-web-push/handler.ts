@@ -13,6 +13,7 @@ import {
   birthdayChoiceFor,
   buildAppointmentDispatches,
   buildBirthdayDispatches,
+  buildFridgeDispatches,
   buildNowAppointmentDispatch,
   buildNowBirthdayDispatch,
   dedupeKey,
@@ -23,6 +24,7 @@ import {
   nowDedupeKey,
   type AppointmentRow,
   type ContactRow,
+  type Dispatch,
   type NowDispatch,
   type PushPreference,
   type TargetedDispatch,
@@ -417,6 +419,31 @@ async function buildDispatches(
       const contacts = await fetchBirthdayContacts(db, casaIds);
       if (contacts !== null) {
         out.push(...buildBirthdayDispatches(contacts, choice, context).map((d) => ({ ...d, ...target })));
+      }
+    }
+
+    const { data: fridgePrefs, error: fridgePrefsError } = await db
+      .from("push_preferences")
+      .select("fridge_choice, enabled")
+      .eq("user_id", group.userId)
+      .maybeSingle();
+
+    if (!fridgePrefsError && fridgePrefs !== null && isPushEnabled(fridgePrefs as PushPreference | null)) {
+      const fridgeChoice = (fridgePrefs as PushPreference).fridge_choice;
+      if (fridgeChoice !== "none" && fridgeChoice !== undefined) {
+        const { data: fridgeItems } = await db
+          .from("fridge_items")
+          .select("id, name, expiry_date")
+          .eq("user_id", group.userId)
+          .in("casa_id", casaIds)
+          .gte("expiry_date", new Date(from.toISOString()).add(14, "day").toISOString())
+          .lte("expiry_date", new Date(now.toISOString()).add(14, "day").toISOString())
+          .order("expiry_date", { ascending: true });
+
+        if (fridgeItems !== null && fridgeItems.length > 0) {
+          const dispatches = buildFridgeDispatches(fridgeItems, fridgeChoice as ReminderChoice, context);
+          out.push(...dispatches.map((d) => ({ ...d, ...target })));
+        }
       }
     }
   }
