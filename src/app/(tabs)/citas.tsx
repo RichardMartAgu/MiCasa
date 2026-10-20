@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -41,9 +40,10 @@ import {
   updateAppointment,
   updateAppointmentKind,
 } from '@/lib/api';
-import { formatDateTime } from '@/lib/date';
+import { combineDateAndTimeISO, formatDateTime } from '@/lib/date';
 import { filterAppointments } from '@/lib/filter';
 import { confirmDialog } from '@/lib/confirm';
+import { showNotice } from '@/lib/notice';
 import {
   appointmentReminderDates,
   reminderChoiceLabels,
@@ -72,11 +72,6 @@ type KindUI = {
   name: string;
   icon: AppointmentIcon;
 };
-
-function toISOLocal(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
-}
 
 export default function CitasScreen() {
   const { user } = useAuth();
@@ -189,15 +184,7 @@ export default function CitasScreen() {
   }
 
   async function handleSave() {
-    const startsAt = toISOLocal(
-      new Date(
-        date.getFullYear(),
-        date.getMonth(),
-        date.getDate(),
-        time.getHours(),
-        time.getMinutes(),
-      ),
-    );
+    const startsAt = combineDateAndTimeISO(date, time);
     const titleCheck = validateTitle(title);
     const dateCheck = validateDate(startsAt);
     const personCheck = validateOptionalText(person, 120);
@@ -248,7 +235,7 @@ export default function CitasScreen() {
     }
     setSaving(false);
     if (error) {
-      Alert.alert('Error', error.message);
+      showNotice('Error', error.message);
       return;
     }
 
@@ -306,7 +293,7 @@ export default function CitasScreen() {
     );
     if (!ok) return;
     const error = await removeAppointment(id);
-    if (error) Alert.alert('Error', error.message);
+    if (error) showNotice('Error', error.message);
     else void cancelEntityKey('appointment', id);
   }
 
@@ -362,7 +349,7 @@ export default function CitasScreen() {
     );
     if (!ok) return;
     const error = await removeAppointmentKind(k.id as string);
-    if (error) Alert.alert('Error', error.message);
+    if (error) showNotice('Error', error.message);
   }
 
   return (

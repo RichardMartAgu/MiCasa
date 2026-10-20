@@ -44,6 +44,21 @@ export function fromISODate(iso: string): Date {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
+/**
+ * Combina un día de calendario y una hora local en un instante ISO con offset.
+ * Se usa para columnas `timestamptz`: si se envía `YYYY-MM-DDTHH:mm` sin zona,
+ * Postgres lo interpreta como UTC y la hora se desplaza en la UI.
+ */
+export function combineDateAndTimeISO(date: Date, time: Date): string {
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    time.getHours(),
+    time.getMinutes(),
+  ).toISOString();
+}
+
 export function safeDate(iso: string): Date | null {
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
     const [y, m, d] = iso.split('-').map(Number);

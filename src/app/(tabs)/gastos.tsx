@@ -1,4 +1,4 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
 
@@ -28,6 +28,7 @@ import {
   updateExpense,
 } from '@/lib/api';
 import { confirmDialog } from '@/lib/confirm';
+import { showNotice } from '@/lib/notice';
 import { monthKey, safeDate, toISODate } from '@/lib/date';
 import { filterExpenses } from '@/lib/filter';
 import { totalsByCategory } from '@/lib/finance';
@@ -126,7 +127,7 @@ export default function GastosScreen() {
       : await addExpense({ ...input, casa_id: currentCasa.id, user_id: user.id });
     setSaving(false);
     if (error) {
-      Alert.alert('Error', error.message);
+      showNotice('Error', error.message);
       return;
     }
     setExpenseModalVisible(false);
@@ -152,7 +153,7 @@ export default function GastosScreen() {
       : await addCategory({ ...input, casa_id: currentCasa.id });
     setSaving(false);
     if (error) {
-      Alert.alert('Error', error.message);
+      showNotice('Error', error.message);
       return;
     }
     setCategoryModalVisible(false);
@@ -166,7 +167,7 @@ export default function GastosScreen() {
     );
     if (!ok) return;
     const error = await removeCategory(id);
-    if (error) Alert.alert('Error', error.message);
+    if (error) showNotice('Error', error.message);
   }
 
   async function handleDeleteExpense(id: string) {
@@ -177,7 +178,7 @@ export default function GastosScreen() {
     );
     if (!ok) return;
     const error = await removeExpense(id);
-    if (error) Alert.alert('Error', error.message);
+    if (error) showNotice('Error', error.message);
   }
 
   return (

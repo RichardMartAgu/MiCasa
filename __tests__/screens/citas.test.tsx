@@ -80,6 +80,14 @@ jest.mock('@/lib/api', () => ({
 
 const mockFormatDateTime = jest.fn();
 jest.mock('@/lib/date', () => ({
+  combineDateAndTimeISO: (date: Date, time: Date) =>
+    new Date(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate(),
+      time.getHours(),
+      time.getMinutes(),
+    ).toISOString(),
   formatDateTime: (...args: unknown[]) => mockFormatDateTime(...args),
 }));
 
@@ -203,6 +211,8 @@ describe('CitasScreen', () => {
           kind: 'medico',
         }),
       );
+      const payload = mockAddAppointment.mock.calls[0][0] as { starts_at: string };
+      expect(payload.starts_at).toMatch(/Z$/);
     });
   });
 

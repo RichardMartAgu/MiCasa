@@ -40,22 +40,29 @@ export function useRealtimeCollection<T>(
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dataKey, setDataKey] = useState<string | null>(null);
   const fetchRef = useRef(fetchFn);
+
+  const channelFilter = casaId ? safeRealtimeFilter(filter, casaId, memberColumn) : null;
+  const queryKey = casaId && channelFilter ? `${table}|${casaId}|${channelFilter}` : null;
 
   useEffect(() => {
     fetchRef.current = fetchFn;
   }, [fetchFn]);
 
-  const runFetch = useCallback(async (active: () => boolean) => {
+  const runFetch = useCallback(async (active: () => boolean, key: string) => {
     try {
       const rows = await fetchRef.current();
       if (active()) {
         setData(rows);
+        setDataKey(key);
         setError(null);
         setLoading(false);
       }
     } catch (e) {
       if (active()) {
+        setData([]);
+        setDataKey(key);
         setError(e instanceof Error ? e.message : 'No se pudieron cargar los datos.');
         setLoading(false);
       }
@@ -63,19 +70,18 @@ export function useRealtimeCollection<T>(
   }, []);
 
   const reload = useCallback(async () => {
-    await runFetch(() => true);
-  }, [runFetch]);
+    if (queryKey && dataKey === queryKey) await runFetch(() => true, queryKey);
+  }, [dataKey, queryKey, runFetch]);
 
   useEffect(() => {
-    if (!casaId) {
+    if (!casaId || !channelFilter || !queryKey) {
       return;
     }
 
     let active = true;
     const isActive = () => active;
-    runFetch(isActive);
+    runFetch(isActive, queryKey);
 
-    const channelFilter = safeRealtimeFilter(filter, casaId, memberColumn);
     const channelName = `realtime-${table}-${casaId}-${channelFilter}-${channelSeq++}`;
     const channel = supabase
       .channel(channelName)
@@ -88,7 +94,7 @@ export function useRealtimeCollection<T>(
           filter: channelFilter,
         },
         () => {
-          runFetch(isActive);
+          runFetch(isActive, queryKey);
         },
       )
       .subscribe();
@@ -97,7 +103,13 @@ export function useRealtimeCollection<T>(
       active = false;
       supabase.removeChannel(channel);
     };
-  }, [casaId, table, filter, memberColumn, runFetch]);
+  }, [casaId, channelFilter, queryKey, table, runFetch]);
 
-  return { data, loading, error, reload };
+  const isCurrent = dataKey === queryKey;
+  return {
+    data: isCurrent ? data : [],
+    loading: queryKey ? (isCurrent ? loading : true) : false,
+    error: isCurrent ? error : null,
+    reload,
+  };
 }

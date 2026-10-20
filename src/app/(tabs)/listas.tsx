@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -33,6 +32,7 @@ import {
   toggleShoppingList,
 } from '@/lib/api';
 import { confirmDialog } from '@/lib/confirm';
+import { showNotice } from '@/lib/notice';
 import type { ShoppingItem, ShoppingList } from '@/lib/types';
 import { validateTitle } from '@/lib/validation';
 
@@ -45,7 +45,15 @@ export default function ListasScreen() {
     currentCasa?.id ?? null,
   );
 
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<{ casaId: string | null; listId: string | null }>({
+    casaId: null,
+    listId: null,
+  });
+  const expandedId = expanded.casaId === (currentCasa?.id ?? null) ? expanded.listId : null;
+
+  function setExpandedId(listId: string | null) {
+    setExpanded({ casaId: currentCasa?.id ?? null, listId });
+  }
   const [modalVisible, setModalVisible] = useState(false);
   const [listTitle, setListTitle] = useState('');
   const [newItemName, setNewItemName] = useState('');
@@ -80,11 +88,11 @@ export default function ListasScreen() {
     const err = await addShoppingList({
       casa_id: currentCasa.id,
       user_id: user.id,
-      title: listTitle,
+      title: listTitle.trim(),
     });
     setSaving(false);
     if (err) {
-      Alert.alert('Error', err.message);
+      showNotice('Error', err.message);
       return;
     }
     setListTitle('');
@@ -94,16 +102,39 @@ export default function ListasScreen() {
   async function handleAddItem(listId: string) {
     if (!currentCasa) return;
     const check = validateTitle(newItemName);
-    if (!check.valid) return;
-    const qty = newItemQty.trim() ? Number(newItemQty) : null;
-    await addShoppingItem({
+    if (!check.valid) {
+      showNotice('Error', check.message);
+      return;
+    }
+    const qtyRaw = newItemQty.trim().replace(',', '.');
+    const qty = qtyRaw ? Number(qtyRaw) : null;
+    const err = await addShoppingItem({
       list_id: listId,
       casa_id: currentCasa.id,
-      name: newItemName,
+      name: newItemName.trim(),
       quantity: qty && Number.isFinite(qty) && qty > 0 ? qty : null,
     });
+    if (err) {
+      showNotice('Error', err.message);
+      return;
+    }
     setNewItemName('');
     setNewItemQty('');
+  }
+
+  async function handleToggleList(id: string, done: boolean) {
+    const err = await toggleShoppingList(id, done);
+    if (err) showNotice('Error', err.message);
+  }
+
+  async function handleToggleItem(id: string, done: boolean) {
+    const err = await toggleShoppingItem(id, done);
+    if (err) showNotice('Error', err.message);
+  }
+
+  async function handleDeleteItem(id: string) {
+    const err = await removeShoppingItem(id);
+    if (err) showNotice('Error', err.message);
   }
 
   async function handleDeleteList(id: string) {
@@ -114,7 +145,7 @@ export default function ListasScreen() {
     );
     if (!ok) return;
     const err = await removeShoppingList(id);
-    if (err) Alert.alert('Error', err.message);
+    if (err) showNotice('Error', err.message);
     if (expandedId === id) setExpandedId(null);
   }
 
@@ -167,7 +198,7 @@ export default function ListasScreen() {
                   </Pressable>
                   <View style={styles.listActions}>
                     <Pressable
-                      onPress={() => toggleShoppingList(list.id, !list.done)}
+                      onPress={() => void handleToggleList(list.id, !list.done)}
                       hitSlop={14}
                       accessibilityRole="checkbox"
                       accessibilityState={{ checked: list.done }}
@@ -193,7 +224,7 @@ export default function ListasScreen() {
                     {listItems.map((item) => (
                       <View key={item.id} style={styles.itemRow}>
                         <Pressable
-                          onPress={() => toggleShoppingItem(item.id, !item.done)}
+                          onPress={() => void handleToggleItem(item.id, !item.done)}
                           hitSlop={14}
                           accessibilityRole="checkbox"
                           accessibilityState={{ checked: item.done }}
@@ -209,9 +240,7 @@ export default function ListasScreen() {
                           {item.quantity ? ` · ${item.quantity}${item.unit ? ` ${item.unit}` : ''}` : ''}
                         </Text>
                         <Pressable
-                          onPress={async () => {
-                            await removeShoppingItem(item.id);
-                          }}
+                          onPress={() => void handleDeleteItem(item.id)}
                           hitSlop={14}
                           accessibilityRole="button"
                           accessibilityLabel={`Quitar artículo ${item.name}`}>

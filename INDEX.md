@@ -1,6 +1,6 @@
 # INDEX — MiCasa
 
-App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.** Este índice es la fuente única de "qué hay": no crear documentos paralelos que lo dupliquen.
+App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 20 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.** Este índice es la fuente única de "qué hay": no crear documentos paralelos que lo dupliquen.
 
 ## Inventario completo
 
@@ -33,6 +33,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `
 |---|---|---|
 | [`docs/calendar-sync-plan.md`](docs/calendar-sync-plan.md) | Plan de sincronización anual de cumpleaños con calendario nativo. | Parcial; requiere build nativo. |
 | [`docs/list-filtering-plan.md`](docs/list-filtering-plan.md) | Búsqueda y filtros reutilizables en Gastos, Citas y Cumpleaños. | Completado; APROBADO/PASA. |
+| [`docs/plan-bloque-a-correctitud.md`](docs/plan-bloque-a-correctitud.md) | Plan del bloque A: timezone de citas, feedback web, errores de listas y reset al cambiar de casa. | Completado 2026-10-20; security APROBADO, QA PASA. |
 | [`docs/oauth-google-pendiente.md`](docs/oauth-google-pendiente.md) | Estado y pasos de OAuth Google. | Código en `develop`; botón oculto; faltan credenciales y dashboard. |
 | [`docs/pwa-installable.md`](docs/pwa-installable.md) | PWA instalable: manifest, service worker, iconos, decisiones de security. | Desplegado; quedan items en su «Qué falta». |
 | [`docs/usuarios-prueba.md`](docs/usuarios-prueba.md) | Cuentas de prueba en producción y sus límites de seguridad. | Vigente; credenciales en `.env.local`. |
@@ -48,6 +49,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 19 `
 | `docs/usuarios-prueba.md` | Por qué existen · `qa-toggle@micasa.dev` · Recrear cuenta · Reglas de seguridad |
 | `docs/calendar-sync-plan.md` | Objetivo · Opción seleccionada · Cambios necesarios · Edge cases · Build · Orden · Coste · Riesgos · Preguntas |
 | `docs/list-filtering-plan.md` | Objetivo · Alcance · Componentes · Filtrado por pantalla · Orden de implementación · Fuera de alcance |
+| `docs/plan-bloque-a-correctitud.md` | Objetivo · Alcance · Fuera de alcance · Criterios de aceptación · Riesgos |
 | `docs/oauth-google-pendiente.md` | Pasos de configuración · Archivos tocados |
 | `docs/bug-0X-*.md` | Reporte/Síntoma · Causa raíz · Fix · Test · Nota (nunca leer: bug ya cerrado) |
 | `AGENTS.md` | Expo v57 · Idioma · Acceso a info · Emails · Frontend · Agentes · Flujo por bloque · Git · Reglas duras (worktree, nada abierto) · **Despliegue** · Telegram |
@@ -79,7 +81,7 @@ Decisiones ya tomadas de forma explícita. No re-litigar sin motivo nuevo, y no 
 
 | Tema | Fuera de alcance | Dónde se decidió |
 |---|---|---|
-| Alert en web | `Alert.alert` es no-op en web. En `citas.tsx` (líneas 247, 296 y 352) una cita con recordatorio no agenda ni avisa | `estado-proyecto.md` → «Riesgos aceptados» |
+| Alert en web | Cerrado en bloque A: avisos de un mensaje usan `showNotice`; los de varios botones usan `confirmDialog` o quedan solo en nativo | `plan-bloque-a-correctitud.md` |
 | Longitud de `user_agent` | Sin check de longitud en la allowlist de VAPID | `estado-proyecto.md` → «Riesgos aceptados» |
 | CORS de previews | No es un pendiente: ya resuelto en el PR #83 | `estado-proyecto.md` → «CORS (falso positivo)» |
 | Filtros reutilizables | Cerrado y mergeado, no reabrir | `list-filtering-plan.md` → «Fuera de alcance» |

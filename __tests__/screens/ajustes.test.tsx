@@ -1832,6 +1832,26 @@ describe('AjustesScreen', () => {
     alertSpy.mockRestore();
   });
 
+  it('owner promueve miembro en web usando confirm nativo del navegador', async () => {
+    const original = Platform.OS;
+    const confirmSpy = jest.fn().mockReturnValue(true);
+    (globalThis as { confirm?: (message: string) => boolean }).confirm = confirmSpy;
+    try {
+      Platform.OS = 'web';
+      const { getByLabelText } = setup();
+
+      fireEvent.press(getByLabelText('Hacer administrador'));
+
+      await waitFor(() => {
+        expect(confirmSpy).toHaveBeenCalled();
+        expect(mockSetCasaMemberRole).toHaveBeenCalledWith('c1', 'u2', 'admin');
+      });
+    } finally {
+      Platform.OS = original;
+      delete (globalThis as { confirm?: unknown }).confirm;
+    }
+  });
+
   it('owner edita casa tras abrir modal', async () => {
     const { getByText, getByLabelText, getByDisplayValue } = setup();
 

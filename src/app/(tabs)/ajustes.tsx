@@ -723,7 +723,7 @@ export default function AjustesScreen() {
     );
     if (!ok) return;
     const err = await deleteCasa(casa.id);
-    if (err) Alert.alert('Error', err.message);
+    if (err) showNotice('Error', err.message);
   }
 
   function openAddCasa() {
@@ -751,25 +751,19 @@ export default function AjustesScreen() {
     setJoinModal(false);
   }
 
-  function handleToggleRole(member: CasaMember) {
+  async function handleToggleRole(member: CasaMember) {
     if (!currentCasa) return;
     const next = member.role === 'admin' ? 'member' : 'admin';
     const name = profiles[member.user_id]?.display_name ?? 'Este miembro';
-    Alert.alert(
+    const ok = await confirmDialog(
       next === 'admin' ? 'Hacer administrador' : 'Quitar administrador',
       `${name} pasará a ${next === 'admin' ? 'administrador' : 'miembro'}.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Confirmar',
-          onPress: async () => {
-            const err = await setCasaMemberRole(currentCasa.id, member.user_id, next);
-            if (err) Alert.alert('Error', err.message);
-            else await refreshMembers();
-          },
-        },
-      ],
+      { confirmText: 'Confirmar' },
     );
+    if (!ok) return;
+    const err = await setCasaMemberRole(currentCasa.id, member.user_id, next);
+    if (err) showNotice('Error', err.message);
+    else await refreshMembers();
   }
 
   async function handleRemoveMember(member: CasaMember) {
@@ -781,7 +775,7 @@ export default function AjustesScreen() {
     });
     if (!ok) return;
     const err = await removeCasaMember(currentCasa.id, member.user_id);
-    if (err) Alert.alert('Error', err.message);
+    if (err) showNotice('Error', err.message);
     else await refreshMembers();
   }
 
@@ -1010,7 +1004,7 @@ export default function AjustesScreen() {
             accessibilityState={{ checked: casa.id === currentCasa?.id }}
             onPress={() => {
               setCurrentCasa(casa);
-              Alert.alert('Casa seleccionada', `Ahora estás gestionando «${casa.name}».`);
+              showNotice('Casa seleccionada', `Ahora estás gestionando «${casa.name}».`);
             }}>
             <Ionicons name="home-outline" size={20} color={casa.id === currentCasa?.id ? Palette.primary : Palette.textMuted} />
             <Text
