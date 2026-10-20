@@ -40,14 +40,16 @@ jest.mock('@/hooks/use-realtime-collection', () => ({
 
 const mockAddShoppingList = jest.fn();
 const mockAddShoppingItem = jest.fn();
+const mockRemoveShoppingItem = jest.fn();
+const mockToggleShoppingItem = jest.fn();
 jest.mock('@/lib/api', () => ({
   addShoppingItem: (...args: unknown[]) => mockAddShoppingItem(...args),
   addShoppingList: (...args: unknown[]) => mockAddShoppingList(...args),
   fetchShoppingItems: jest.fn(),
   fetchShoppingLists: jest.fn(),
-  removeShoppingItem: jest.fn().mockResolvedValue(null),
+  removeShoppingItem: (...args: unknown[]) => mockRemoveShoppingItem(...args),
   removeShoppingList: jest.fn().mockResolvedValue(null),
-  toggleShoppingItem: jest.fn().mockResolvedValue(null),
+  toggleShoppingItem: (...args: unknown[]) => mockToggleShoppingItem(...args),
   toggleShoppingList: jest.fn().mockResolvedValue(null),
 }));
 
@@ -96,6 +98,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockAddShoppingList.mockResolvedValue(null);
   mockAddShoppingItem.mockResolvedValue(null);
+  mockRemoveShoppingItem.mockResolvedValue(null);
+  mockToggleShoppingItem.mockResolvedValue(null);
   mockValidateTitle.mockReturnValue({ valid: true });
 });
 
@@ -208,6 +212,73 @@ describe('ListasScreen', () => {
         }),
       );
     });
+  });
+
+  it('avisa y conserva el input si falla el alta de artículo', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockAddShoppingItem.mockResolvedValue({
+      message: 'Problema de conexión. Inténtalo de nuevo.',
+    });
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Nuevo artículo')).toBeTruthy());
+
+    const nameInput = getByLabelText('Nuevo artículo');
+    fireEvent.changeText(nameInput, 'Pan');
+    fireEvent.press(getByLabelText('Añadir artículo'));
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Error',
+        'Problema de conexión. Inténtalo de nuevo.',
+      );
+    });
+    expect(nameInput.props.value).toBe('Pan');
+    alertSpy.mockRestore();
+  });
+
+  it('normaliza nombre y acepta cantidad con coma', async () => {
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Nuevo artículo')).toBeTruthy());
+
+    fireEvent.changeText(getByLabelText('Nuevo artículo'), '  Pan  ');
+    fireEvent.changeText(getByLabelText('Cantidad'), '1,5');
+    fireEvent.press(getByLabelText('Añadir artículo'));
+
+    await waitFor(() => {
+      expect(mockAddShoppingItem).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Pan', quantity: 1.5 }),
+      );
+    });
+  });
+
+  it('avisa si falla el toggle de un artículo', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockToggleShoppingItem.mockResolvedValue({ message: 'Sin conexión.' });
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText(/Marcar artículo Leche/)).toBeTruthy());
+    fireEvent.press(getByLabelText(/Marcar artículo Leche/));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('Error', 'Sin conexión.'));
+    alertSpy.mockRestore();
+  });
+
+  it('avisa si falla el borrado de un artículo', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockRemoveShoppingItem.mockResolvedValue({ message: 'Sin conexión.' });
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Quitar artículo Leche')).toBeTruthy());
+    fireEvent.press(getByLabelText('Quitar artículo Leche'));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('Error', 'Sin conexión.'));
+    alertSpy.mockRestore();
   });
 
   it('mantiene visible el botón + de añadir artículo en fila estrecha', async () => {

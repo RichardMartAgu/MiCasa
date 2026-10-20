@@ -1,5 +1,5 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 
 import CumpleanosScreen from '@/app/(tabs)/cumpleanos';
 import type { Contact } from '@/lib/types';
@@ -160,6 +160,17 @@ describe('CumpleanosScreen', () => {
   it('muestra EmptyState sin cumpleaños próximos', () => {
     const { getByText } = setup();
     expect(getByText('Sin cumpleaños próximos')).toBeTruthy();
+  });
+
+  it('oculta el botón Calendario en web', () => {
+    const original = Platform.OS;
+    try {
+      Platform.OS = 'web';
+      const { queryByText } = setup([]);
+      expect(queryByText('Calendario')).toBeNull();
+    } finally {
+      Platform.OS = original;
+    }
   });
 
   it('avisa sin contactos al pulsar sincronizar', async () => {

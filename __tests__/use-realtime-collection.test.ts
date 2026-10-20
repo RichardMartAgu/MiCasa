@@ -193,4 +193,35 @@ describe('useRealtimeCollection', () => {
 
     expect(mockChannel.mock.calls[0][0]).not.toBe(mockChannel.mock.calls[1][0]);
   });
+
+  it('limpia datos y reactiva loading al cambiar de casa', async () => {
+    let resolveSecond: (rows: { id: string }[]) => void = () => {};
+    const fetchFn = jest
+      .fn()
+      .mockResolvedValueOnce([{ id: '1' }])
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ id: string }[]>((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+    const { result, rerender } = renderHook(
+      ({ casaId }: { casaId: string }) =>
+        useRealtimeCollection(fetchFn, 'expenses', casaId),
+      { initialProps: { casaId: 'casa-1' } },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.data).toEqual([{ id: '1' }]);
+
+    rerender({ casaId: 'casa-2' });
+    expect(result.current.data).toEqual([]);
+    await waitFor(() => expect(result.current.loading).toBe(true));
+
+    await act(async () => {
+      resolveSecond([{ id: '2' }]);
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.data).toEqual([{ id: '2' }]);
+  });
 });

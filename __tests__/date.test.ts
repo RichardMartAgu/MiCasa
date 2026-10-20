@@ -1,6 +1,7 @@
 import {
   addDays,
   addMonths,
+  combineDateAndTimeISO,
   daysBetween,
   formatDate,
   formatDateTime,
@@ -49,6 +50,21 @@ describe('addDays / addMonths', () => {
   it('conserva el día cuando el mes destino tiene ese día', () => {
     expect(toISODate(addMonths(new Date(2026, 3, 30), 1))).toBe('2026-05-30');
     expect(toISODate(addMonths(new Date(2026, 7, 3), 0))).toBe('2026-08-03');
+  });
+});
+
+describe('combineDateAndTimeISO', () => {
+  it('conserva la hora local al pasar por ISO/UTC', () => {
+    const iso = combineDateAndTimeISO(
+      new Date(2026, 8, 21, 12, 0),
+      new Date(2026, 8, 21, 8, 20),
+    );
+    const roundTrip = new Date(iso);
+
+    expect(iso).toMatch(/Z$/);
+    expect(roundTrip.getHours()).toBe(8);
+    expect(roundTrip.getMinutes()).toBe(20);
+    expect(roundTrip.getDate()).toBe(21);
   });
 });
 

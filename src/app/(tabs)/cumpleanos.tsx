@@ -35,6 +35,7 @@ import {
 import { birthdayLabel, upcomingBirthdays } from '@/lib/birthdays';
 import { syncBirthdays } from '@/lib/calendar-sync';
 import { confirmDialog } from '@/lib/confirm';
+import { showNotice } from '@/lib/notice';
 import { safeDate, toISODate } from '@/lib/date';
 import { filterContacts } from '@/lib/filter';
 import { getBirthdayChoice, scheduleBirthday, scheduleBirthdays } from '@/lib/notifications';
@@ -185,7 +186,7 @@ export default function CumpleanosScreen() {
       const error = await updateContact(editingId, input);
       setSaving(false);
       if (error) {
-        Alert.alert('Error', error.message);
+        showNotice('Error', error.message);
         return;
       }
       setName('');
@@ -200,7 +201,7 @@ export default function CumpleanosScreen() {
     const { error, data } = await addContact({ ...input, casa_id: currentCasa.id, user_id: user.id });
     setSaving(false);
     if (error) {
-      Alert.alert('Error', error.message);
+      showNotice('Error', error.message);
       return;
     }
     setName('');
@@ -233,13 +234,13 @@ export default function CumpleanosScreen() {
     );
     if (!ok) return;
     const error = await removeContact(id);
-    if (error) Alert.alert('Error', error.message);
+    if (error) showNotice('Error', error.message);
     else void rescheduleBirthdays();
   }
 
   function handleSync() {
     if (contacts.length === 0) {
-      Alert.alert('Sin contactos', 'Añade contactos primero para sincronizar sus cumpleaños.');
+      showNotice('Sin contactos', 'Añade contactos primero para sincronizar sus cumpleaños.');
       return;
     }
     Alert.alert(
@@ -257,9 +258,9 @@ export default function CumpleanosScreen() {
                 result.errors > 0
                   ? `${result.synced} sincronizados, ${result.errors} con error.`
                   : `${result.synced} cumpleaños sincronizados con el calendario.`;
-              Alert.alert('Sincronización completada', message);
+              showNotice('Sincronización completada', message);
             } catch {
-              Alert.alert('Error', 'No se pudo acceder al calendario. Revisa los permisos.');
+              showNotice('Error', 'No se pudo acceder al calendario. Revisa los permisos.');
             } finally {
               setSyncing(false);
             }
@@ -351,19 +352,21 @@ export default function CumpleanosScreen() {
           <Text style={styles.subtitle}>Nunca más olvides una fecha</Text>
         </View>
         <View style={styles.headerActions}>
-          <Pressable
-            style={[styles.syncButton, syncing && styles.syncButtonDisabled]}
-            disabled={syncing}
-            accessibilityRole="button"
-            accessibilityLabel="Sincronizar cumpleaños con el calendario del dispositivo"
-            onPress={handleSync}>
-            <Text style={styles.syncButtonLabel}>{syncing ? '…' : 'Calendario'}</Text>
-            <Ionicons
-              name={syncing ? 'sync' : 'calendar-outline'}
-              size={16}
-              color={Palette.primary}
-            />
-          </Pressable>
+          {Platform.OS !== 'web' ? (
+            <Pressable
+              style={[styles.syncButton, syncing && styles.syncButtonDisabled]}
+              disabled={syncing}
+              accessibilityRole="button"
+              accessibilityLabel="Sincronizar cumpleaños con el calendario del dispositivo"
+              onPress={handleSync}>
+              <Text style={styles.syncButtonLabel}>{syncing ? '…' : 'Calendario'}</Text>
+              <Ionicons
+                name={syncing ? 'sync' : 'calendar-outline'}
+                size={16}
+                color={Palette.primary}
+              />
+            </Pressable>
+          ) : null}
           <Pressable
             style={styles.fab}
             accessibilityRole="button"

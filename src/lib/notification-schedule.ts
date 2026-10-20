@@ -21,11 +21,6 @@ export const reminderChoiceLabels: Record<ReminderChoice, string> = {
 
 export const REMINDER_MARGIN_MS = 60_000;
 
-function toISOLocal(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
-}
-
 function atNine(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9, 0, 0, 0);
 }
@@ -67,7 +62,7 @@ export function appointmentReminderDates(
   if (choice === 'same-day' || choice === 'both') candidates.push(sameDay);
   const triggers = candidates.filter((date) => isFuture(date, now));
   return {
-    reminderAtRaw: triggers.length > 0 ? toISOLocal(triggers[0]) : null,
+    reminderAtRaw: triggers.length > 0 ? triggers[0].toISOString() : null,
     triggers,
     choice,
   };

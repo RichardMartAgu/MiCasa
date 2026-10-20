@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Alert,
   Modal,
   Platform,
   Pressable,
@@ -30,6 +29,7 @@ import {
   updateFridgeItem,
 } from '@/lib/api';
 import { confirmDialog } from '@/lib/confirm';
+import { showNotice } from '@/lib/notice';
 import { toISODate } from '@/lib/date';
 import { fridgeDaysLeft } from '@/lib/fridge';
 import { getFridgeChoice, scheduleFridgeItem, cancelEntityKey } from '@/lib/notifications';
@@ -129,7 +129,7 @@ export default function NeveraScreen() {
       : await addFridgeItem({ ...input, casa_id: currentCasa.id });
     setSaving(false);
     if (result.error) {
-      Alert.alert('Error', result.error.message);
+      showNotice('Error', result.error.message);
       return;
     }
     setModalVisible(false);
@@ -139,7 +139,7 @@ export default function NeveraScreen() {
   async function handleToggle(item: FridgeItem) {
     const errorResult = await toggleFridgeItem(item.id, !item.done);
     if (errorResult) {
-      Alert.alert('Error', errorResult.message);
+      showNotice('Error', errorResult.message);
       return;
     }
     if (item.done) {
@@ -158,7 +158,7 @@ export default function NeveraScreen() {
     if (!ok) return;
     const errorResult = await removeFridgeItem(item.id);
     if (errorResult) {
-      Alert.alert('Error', errorResult.message);
+      showNotice('Error', errorResult.message);
       return;
     }
     await cancelEntityKey('fridge', item.id);

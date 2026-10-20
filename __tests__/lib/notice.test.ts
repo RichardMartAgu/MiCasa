@@ -1,4 +1,4 @@
-import { Alert, Platform } from 'react-native';
+import { Alert, Platform, ToastAndroid } from 'react-native';
 
 import { showNotice } from '@/lib/notice';
 
@@ -18,6 +18,17 @@ describe('showNotice', () => {
       'Permiso denegado',
       'Actívalo desde los ajustes del sistema.',
     );
+  });
+
+  it('usa ToastAndroid en Android para no quedar detrás del Modal', () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const toastSpy = jest.spyOn(ToastAndroid, 'show').mockImplementation(() => {});
+
+    showNotice('Error', 'No se pudo guardar.');
+
+    expect(toastSpy).toHaveBeenCalledWith('No se pudo guardar.', ToastAndroid.LONG);
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 
   it('usa window.alert en web, porque Alert.alert es un no-op ahí', () => {

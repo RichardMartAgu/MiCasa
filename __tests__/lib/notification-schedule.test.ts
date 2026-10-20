@@ -66,21 +66,24 @@ describe('appointmentReminderDates', () => {
 
   it('day-before agenda 9:00 del día anterior', () => {
     const result = appointmentReminderDates(startsAt, 'day-before', now);
-    expect(result.reminderAtRaw).toBe('2026-09-24T09:00:00');
+    expect(result.reminderAtRaw).toBe(result.triggers[0].toISOString());
+    expect(result.reminderAtRaw).toMatch(/Z$/);
     expect(result.triggers).toEqual([new Date(2026, 8, 24, 9, 0, 0, 0)]);
     expect(result.choice).toBe('day-before');
   });
 
   it('same-day agenda 9:00 del mismo día', () => {
     const result = appointmentReminderDates(startsAt, 'same-day', now);
-    expect(result.reminderAtRaw).toBe('2026-09-25T09:00:00');
+    expect(result.reminderAtRaw).toBe(result.triggers[0].toISOString());
+    expect(result.reminderAtRaw).toMatch(/Z$/);
     expect(result.triggers).toEqual([new Date(2026, 8, 25, 9, 0, 0, 0)]);
     expect(result.choice).toBe('same-day');
   });
 
   it('both agenda día antes y mismo día', () => {
     const result = appointmentReminderDates(startsAt, 'both', now);
-    expect(result.reminderAtRaw).toBe('2026-09-24T09:00:00');
+    expect(result.reminderAtRaw).toBe(result.triggers[0].toISOString());
+    expect(result.reminderAtRaw).toMatch(/Z$/);
     expect(result.triggers).toEqual([
       new Date(2026, 8, 24, 9, 0, 0, 0),
       new Date(2026, 8, 25, 9, 0, 0, 0),
@@ -109,7 +112,8 @@ describe('round-trip reminder_choice', () => {
     const now = new Date(2026, 8, 20, 8, 0);
     const { reminderAtRaw, choice } = appointmentReminderDates(startsAt, 'day-before', now);
     expect(choice).toBe('day-before');
-    expect(reminderAtRaw).toBe('2026-09-24T09:00:00');
+    expect(reminderAtRaw).toBe(new Date(2026, 8, 24, 9, 0).toISOString());
+    expect(reminderAtRaw).toMatch(/Z$/);
     expect(choiceFromReminderAt(reminderAtRaw, startsAt)).toBe('both');
   });
 });
