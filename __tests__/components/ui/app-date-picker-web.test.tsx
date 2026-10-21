@@ -9,8 +9,8 @@ import {
 } from '@/components/ui/app-date-picker/index.web';
 
 describe('AppDatePicker web', () => {
-  it('monta un input real encima del botón, no uno oculto con opacity 0', () => {
-    const { getByLabelText } = render(
+  it('muestra un botón accesible con la fecha formateada', () => {
+    const { getByLabelText, getByText } = render(
       <AppDatePicker
         value={new Date(2026, 8, 21)}
         mode="date"
@@ -21,17 +21,13 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    const input = getByLabelText('Cambiar fecha');
-    expect(input.props.type).toBe('date');
-    expect(input.props['data-micasa-date-picker']).toBe('true');
-    expect(input.props.style.position).toBe('absolute');
-    expect(input.props.style.background).toBe('transparent');
-    expect(input.props.style.opacity).toBeUndefined();
+    expect(getByText('📅 2026-09-21')).toBeTruthy();
+    expect(getByLabelText('Cambiar fecha').props.accessibilityRole).toBe('button');
   });
 
-  it('emite onChange al cambiar la fecha', () => {
+  it('emite onChange al elegir fecha y pulsar Listo', () => {
     const onChange = jest.fn();
-    const { getByLabelText } = render(
+    const { getByLabelText, getByText } = render(
       <AppDatePicker
         value={new Date(2026, 8, 21)}
         mode="date"
@@ -42,15 +38,19 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    fireEvent(getByLabelText('Cambiar fecha'), 'change', { target: { value: '2026-10-01' } });
+    fireEvent.press(getByLabelText('Cambiar fecha'));
+    fireEvent(getByLabelText('Día'), 'change', { target: { value: '1' } });
+    fireEvent(getByLabelText('Mes'), 'change', { target: { value: '10' } });
+    fireEvent(getByLabelText('Año'), 'change', { target: { value: '2027' } });
+    fireEvent.press(getByText('Listo'));
 
-    expect(onChange).toHaveBeenCalledWith(new Date(2026, 9, 1));
+    expect(onChange).toHaveBeenCalledWith(new Date(2027, 10, 1));
   });
 
-  it('emite onChange al cambiar la hora', () => {
+  it('emite onChange al elegir hora y pulsar Listo', () => {
     const onChange = jest.fn();
     const base = new Date(2026, 8, 21, 8, 15);
-    const { getByLabelText } = render(
+    const { getByLabelText, getByText } = render(
       <AppDatePicker
         value={base}
         mode="time"
@@ -61,14 +61,17 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    fireEvent(getByLabelText('Cambiar hora'), 'change', { target: { value: '17:45' } });
+    fireEvent.press(getByLabelText('Cambiar hora'));
+    fireEvent(getByLabelText('Hora'), 'change', { target: { value: '17' } });
+    fireEvent(getByLabelText('Minuto'), 'change', { target: { value: '45' } });
+    fireEvent.press(getByText('Listo'));
 
     expect(onChange).toHaveBeenCalledWith(new Date(2026, 8, 21, 17, 45));
   });
 
-  it('no reemite en blur si el valor no cambió', () => {
+  it('no emite si se cancela', () => {
     const onChange = jest.fn();
-    const { getByLabelText } = render(
+    const { getByLabelText, getByText } = render(
       <AppDatePicker
         value={new Date(2026, 8, 21)}
         mode="date"
@@ -79,60 +82,98 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    fireEvent(getByLabelText('Cambiar fecha'), 'blur', {
-      target: { value: '2026-09-21' },
-    });
+    fireEvent.press(getByLabelText('Cambiar fecha'));
+    fireEvent(getByLabelText('Día'), 'change', { target: { value: '1' } });
+    fireEvent.press(getByText('Cancelar'));
 
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('emite en blur si el valor cambió', () => {
+  it('no mueve una fecha fuera de rango si no se toca', () => {
     const onChange = jest.fn();
-    const { getByLabelText } = render(
+    const { getByLabelText, getByText } = render(
       <AppDatePicker
-        value={new Date(2026, 8, 21)}
+        value={new Date(2020, 0, 1)}
         mode="date"
         icon="📅"
         formatValue={toDateInputValue}
         accessibilityLabel="Cambiar fecha"
         onChange={onChange}
+        min={new Date(2026, 9, 21)}
       />,
     );
 
-    fireEvent(getByLabelText('Cambiar fecha'), 'blur', {
-      target: { value: '2026-10-01' },
-    });
-
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledWith(new Date(2026, 9, 1));
-  });
-
-  it('ignora fechas inválidas o vacías', () => {
-    const onChange = jest.fn();
-    const { getByLabelText } = render(
-      <AppDatePicker
-        value={new Date(2026, 8, 21)}
-        mode="date"
-        icon="📅"
-        formatValue={toDateInputValue}
-        accessibilityLabel="Cambiar fecha"
-        onChange={onChange}
-      />,
-    );
-    const input = getByLabelText('Cambiar fecha');
-
-    fireEvent(input, 'change', { target: { value: '2026-02-31' } });
-    fireEvent(input, 'change', { target: { value: '' } });
-    fireEvent(input, 'blur', { target: { value: 'abc' } });
+    fireEvent.press(getByLabelText('Cambiar fecha'));
+    fireEvent.press(getByText('Listo'));
 
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('no reemite en date si la fecha es la misma aunque cambie la hora', () => {
-    const onChange = jest.fn();
+  it('clampa el día al cambiar a un mes más corto', () => {
     const { getByLabelText } = render(
       <AppDatePicker
-        value={new Date(2026, 8, 21, 10, 30)}
+        value={new Date(2026, 0, 31)}
+        mode="date"
+        icon="📅"
+        formatValue={toDateInputValue}
+        accessibilityLabel="Cambiar fecha"
+        onChange={jest.fn()}
+      />,
+    );
+
+    fireEvent.press(getByLabelText('Cambiar fecha'));
+    fireEvent(getByLabelText('Mes'), 'change', { target: { value: '1' } });
+
+    expect(getByLabelText('Día').props.value).toBe('28');
+  });
+
+  it('respeta min al confirmar', () => {
+    const onChange = jest.fn();
+    const { getByLabelText, getByText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21)}
+        mode="date"
+        icon="📅"
+        formatValue={toDateInputValue}
+        accessibilityLabel="Cambiar fecha"
+        onChange={onChange}
+        min={new Date(2026, 8, 30)}
+      />,
+    );
+
+    fireEvent.press(getByLabelText('Cambiar fecha'));
+    fireEvent(getByLabelText('Día'), 'change', { target: { value: '29' } });
+    fireEvent.press(getByText('Listo'));
+
+    expect(onChange).toHaveBeenCalledWith(new Date(2026, 8, 30));
+  });
+
+  it('respeta max al confirmar', () => {
+    const onChange = jest.fn();
+    const { getByLabelText, getByText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21)}
+        mode="date"
+        icon="📅"
+        formatValue={toDateInputValue}
+        accessibilityLabel="Cambiar fecha"
+        onChange={onChange}
+        max={new Date(2026, 8, 30)}
+      />,
+    );
+
+    fireEvent.press(getByLabelText('Cambiar fecha'));
+    fireEvent(getByLabelText('Mes'), 'change', { target: { value: '10' } });
+    fireEvent.press(getByText('Listo'));
+
+    expect(onChange).toHaveBeenCalledWith(new Date(2026, 8, 30));
+  });
+
+  it('no reemite si se confirma sin cambios', () => {
+    const onChange = jest.fn();
+    const { getByLabelText, getByText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21)}
         mode="date"
         icon="📅"
         formatValue={toDateInputValue}
@@ -141,9 +182,8 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    fireEvent(getByLabelText('Cambiar fecha'), 'blur', {
-      target: { value: '2026-09-21' },
-    });
+    fireEvent.press(getByLabelText('Cambiar fecha'));
+    fireEvent.press(getByText('Listo'));
 
     expect(onChange).not.toHaveBeenCalled();
   });

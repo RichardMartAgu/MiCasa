@@ -21,6 +21,8 @@ export interface AppDatePickerProps {
   icon: string;
   formatValue: (date: Date) => string;
   accessibilityLabel: string;
+  min?: Date;
+  max?: Date;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -29,7 +31,7 @@ export interface AppDatePickerProps {
  * - Android: API imperativa `DateTimePickerAndroid.open` (evita bugs del API por
  *   componente en new arch, issues upstream #980/#994).
  * - iOS: picker inline `display="spinner"` que se alterna al pulsar el botón.
- * - Web: resuelto por `index.web.tsx` (input DOM nativo del navegador).
+ * - Web: resuelto por `index.web.tsx` (modal propio con selects, sin el input nativo).
  */
 export function AppDatePicker({
   value,
@@ -38,6 +40,8 @@ export function AppDatePicker({
   icon,
   formatValue,
   accessibilityLabel,
+  min,
+  max,
   style,
 }: AppDatePickerProps) {
   const [showIOSPicker, setShowIOSPicker] = useState(false);
@@ -48,6 +52,8 @@ export function AppDatePicker({
         value,
         mode,
         is24Hour: true,
+        minimumDate: min,
+        maximumDate: max,
         onChange: (event, selected) => {
           if (event.type === 'set' && selected) onChange(selected);
         },
@@ -71,6 +77,8 @@ export function AppDatePicker({
       {Platform.OS === 'ios' && showIOSPicker ? (
         <DateTimePicker
           value={value}
+          minimumDate={min}
+          maximumDate={max}
           mode={mode}
           display="spinner"
           onChange={(event, selected) => {

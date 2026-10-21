@@ -430,6 +430,7 @@ export default function CumpleanosScreen() {
                 formatValue={toISODate}
                 accessibilityLabel={`Cambiar fecha de nacimiento: ${toISODate(birthDate)}`}
                 onChange={setBirthDate}
+                max={new Date()}
               />
               {errors.date ? (
                 <Text style={styles.error} accessibilityRole="alert">

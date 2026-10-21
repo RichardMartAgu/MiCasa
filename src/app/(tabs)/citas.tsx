@@ -512,6 +512,7 @@ export default function CitasScreen() {
                   formatValue={(d) => d.toLocaleDateString('es-ES')}
                   accessibilityLabel={`Cambiar fecha: ${date.toLocaleDateString('es-ES')}`}
                   onChange={setDate}
+                  min={new Date()}
                   style={styles.datePicker}
                 />
                 <AppDatePicker

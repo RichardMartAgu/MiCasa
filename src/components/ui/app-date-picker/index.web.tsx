@@ -1,12 +1,12 @@
 import {
   createElement,
-  useInsertionEffect,
   useState,
-  type CSSProperties,
   type ChangeEvent,
-  type FocusEvent,
+  type CSSProperties,
 } from 'react';
 import {
+  Modal,
+  Pressable,
   StyleSheet,
   Text,
   View,
@@ -14,7 +14,8 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { Palette, Radius, Spacing } from '@/constants/theme';
+import { Button } from '@/components/ui/button';
+import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
 
 export interface AppDatePickerProps {
   value: Date;
@@ -23,6 +24,8 @@ export interface AppDatePickerProps {
   icon: string;
   formatValue: (date: Date) => string;
   accessibilityLabel: string;
+  min?: Date;
+  max?: Date;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -58,16 +61,43 @@ export function parseTimeInput(raw: string, base: Date): Date | null {
   return next;
 }
 
+const MONTHS = [
+  'Ene',
+  'Feb',
+  'Mar',
+  'Abr',
+  'May',
+  'Jun',
+  'Jul',
+  'Ago',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dic',
+];
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+function range(from: number, to: number): number[] {
+  return Array.from({ length: to - from + 1 }, (_, index) => from + index);
+}
+
+function clampDate(date: Date, min?: Date, max?: Date): Date {
+  let time = date.getTime();
+  if (min) time = Math.max(time, min.getTime());
+  if (max) time = Math.min(time, max.getTime());
+  return new Date(time);
+}
+
 /**
- * Picker de fecha/hora para web (resuelto por Metro en `--platform web`).
- * Botón con look Dusk; encima, un input DOM real (`type="date"`/`type="time"`)
- * que abre el picker nativo del navegador. Sin react-dom: `createElement`.
- * Conversión local sin shift UTC: date `YYYY-MM-DD` → `new Date(y, m-1, d)`;
- * time `HH:mm` → copia horas/minutos sobre el `value` actual.
+ * Picker web propio, sin `<input type="date">` ni `<input type="time">`.
  *
- * El input no se oculta con `opacity: 0`: Safari iOS puede no abrir el picker de
- * un control que considera invisible. Se deja visible encima del botón, con el
- * texto nativo oculto por CSS, para que el área táctil sea la del propio input.
+ * Safari iOS no abre el picker nativo cuando React delega los eventos de click
+ * en un ancestro (bug de WebKit 294649), y `showPicker()` no está implementado
+ * en iOS. Por eso el control real son `<select>` nativos dentro de un modal:
+ * funcionan con teclado, lector de pantalla y táctil en todos los navegadores.
  */
 export function AppDatePicker({
   value,
@@ -76,114 +106,192 @@ export function AppDatePicker({
   icon,
   formatValue,
   accessibilityLabel,
+  min,
+  max,
   style,
 }: AppDatePickerProps) {
-  useDatePickerStyles();
-  const [focused, setFocused] = useState(false);
-  const inputType = mode === 'date' ? 'date' : 'time';
-  const inputValue = mode === 'date' ? toDateInputValue(value) : toTimeInputValue(value);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [dirty, setDirty] = useState(false);
 
-  function commit(raw: string) {
-    if (!raw) return;
-    if (mode === 'date') {
-      const parsed = parseDateInput(raw);
-      if (parsed && toDateInputValue(parsed) !== inputValue) onChange(parsed);
-    } else {
-      const parsed = parseTimeInput(raw, value);
-      if (parsed && parsed.getTime() !== value.getTime()) onChange(parsed);
+  const year = draft.getFullYear();
+  const month = draft.getMonth();
+  const day = draft.getDate();
+  const hour = draft.getHours();
+  const minute = draft.getMinutes();
+  const maxDay = daysInMonth(year, month);
+  const currentYear = new Date().getFullYear();
+  const firstYear = min?.getFullYear() ?? 1900;
+  const lastYear = max?.getFullYear() ?? Math.max(currentYear + 10, year);
+  const years = range(Math.min(firstYear, year), Math.max(firstYear, lastYear, year));
+
+  function openPicker() {
+    setDraft(value);
+    setDirty(false);
+    setOpen(true);
+  }
+
+  function closePicker() {
+    setOpen(false);
+  }
+
+  function confirm() {
+    // Abrir y pulsar Listo no debe mover una fecha ya guardada, aunque esté
+    // fuera del rango actual (p. ej. un producto caducado).
+    if (dirty && draft.getTime() !== value.getTime()) {
+      const clamped = clampDate(draft, min, max);
+      if (clamped.getTime() !== value.getTime()) onChange(clamped);
     }
+    setOpen(false);
   }
 
-  function handleChange(event: ChangeEvent<HTMLInputElement>) {
-    commit(event.target.value);
+  function setDatePart(nextYear: number, nextMonth: number, nextDay: number) {
+    const next = new Date(draft);
+    next.setFullYear(nextYear, nextMonth, Math.min(nextDay, daysInMonth(nextYear, nextMonth)));
+    setDraft(next);
+    setDirty(true);
   }
 
-  function handleBlur(event: FocusEvent<HTMLInputElement>) {
-    setFocused(false);
-    commit(event.target.value);
+  function setTimePart(nextHour: number, nextMinute: number) {
+    const next = new Date(draft);
+    next.setHours(nextHour, nextMinute, 0, 0);
+    setDraft(next);
+    setDirty(true);
   }
 
   return (
     <View style={style}>
-      <View
-        style={[styles.button, focused && styles.buttonFocused]}
-        pointerEvents="none"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants">
+      <Pressable
+        style={styles.button}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        onPress={openPicker}>
         <Text style={styles.label}>
           {icon} {formatValue(value)}
         </Text>
-      </View>
-      {createElement('input', {
-        type: inputType,
-        value: inputValue,
-        onChange: handleChange,
-        onFocus: () => setFocused(true),
-        onBlur: handleBlur,
-        'aria-label': accessibilityLabel,
-        'data-micasa-date-picker': 'true',
-        style: inputStyle,
-      })}
+      </Pressable>
+
+      <Modal
+        visible={open}
+        transparent
+        animationType="fade"
+        onRequestClose={closePicker}
+        accessibilityLabel={mode === 'date' ? 'Elegir fecha' : 'Elegir hora'}
+        accessibilityViewIsModal>
+        <View style={styles.overlay}>
+          <View style={styles.card}>
+            <Text style={styles.title} accessibilityRole="header">
+              {mode === 'date' ? 'Elegir fecha' : 'Elegir hora'}
+            </Text>
+
+            {mode === 'date' ? (
+              <View style={styles.selectRow}>
+                <SelectField
+                  label="Día"
+                  value={String(day)}
+                  options={range(1, maxDay).map((n) => ({ value: String(n), label: String(n) }))}
+                  onChange={(raw) => setDatePart(year, month, Number(raw))}
+                />
+                <SelectField
+                  label="Mes"
+                  value={String(month)}
+                  options={MONTHS.map((name, index) => ({
+                    value: String(index),
+                    label: name,
+                  }))}
+                  onChange={(raw) => setDatePart(year, Number(raw), day)}
+                />
+                <SelectField
+                  label="Año"
+                  value={String(year)}
+                  options={years.map((n) => ({ value: String(n), label: String(n) }))}
+                  onChange={(raw) => setDatePart(Number(raw), month, day)}
+                />
+              </View>
+            ) : (
+              <View style={styles.selectRow}>
+                <SelectField
+                  label="Hora"
+                  value={String(hour)}
+                  options={range(0, 23).map((n) => ({
+                    value: String(n),
+                    label: pad(n),
+                  }))}
+                  onChange={(raw) => setTimePart(Number(raw), minute)}
+                />
+                <SelectField
+                  label="Minuto"
+                  value={String(minute)}
+                  options={range(0, 59).map((n) => ({
+                    value: String(n),
+                    label: pad(n),
+                  }))}
+                  onChange={(raw) => setTimePart(hour, Number(raw))}
+                />
+              </View>
+            )}
+
+            <Text style={styles.preview}>{formatValue(draft)}</Text>
+
+            <View style={styles.actions}>
+              <Button title="Cancelar" variant="secondary" onPress={closePicker} />
+              <Button title="Listo" onPress={confirm} />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-const DATE_PICKER_STYLE_ID = 'micasa-date-picker-input-styles';
-
-const DATE_PICKER_CSS = `
-input[data-micasa-date-picker]::-webkit-datetime-edit,
-input[data-micasa-date-picker]::-webkit-datetime-edit-fields-wrapper,
-input[data-micasa-date-picker]::-webkit-datetime-edit-text,
-input[data-micasa-date-picker]::-webkit-datetime-edit-month-field,
-input[data-micasa-date-picker]::-webkit-datetime-edit-day-field,
-input[data-micasa-date-picker]::-webkit-datetime-edit-year-field,
-input[data-micasa-date-picker]::-webkit-datetime-edit-hour-field,
-input[data-micasa-date-picker]::-webkit-datetime-edit-minute-field,
-input[data-micasa-date-picker]::-webkit-datetime-edit-ampm-field {
-  color: transparent;
-}
-input[data-micasa-date-picker]::-webkit-calendar-picker-indicator {
-  opacity: 0;
-}
-input[data-micasa-date-picker]:focus-visible {
-  outline: 2px solid ${Palette.primary} !important;
-  outline-offset: 2px;
-}
-`;
-
-function useDatePickerStyles() {
-  useInsertionEffect(() => {
-    if (typeof document === 'undefined' || document.getElementById(DATE_PICKER_STYLE_ID)) {
-      return;
-    }
-    const style = document.createElement('style');
-    style.id = DATE_PICKER_STYLE_ID;
-    style.textContent = DATE_PICKER_CSS;
-    document.head.appendChild(style);
-  }, []);
+interface SelectOption {
+  value: string;
+  label: string;
 }
 
-const inputStyle: CSSProperties = {
-  position: 'absolute',
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: SelectOption[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <View style={styles.selectField}>
+      <Text style={styles.selectLabel}>{label}</Text>
+      {createElement(
+        'select',
+        {
+          value,
+          'aria-label': label,
+          onChange: (event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value),
+          style: selectStyle,
+        },
+        options.map((option) =>
+          createElement('option', { key: option.value, value: option.value }, option.label),
+        ),
+      )}
+    </View>
+  );
+}
+
+const selectStyle: CSSProperties = {
   width: '100%',
-  height: '100%',
+  minWidth: 0,
   margin: 0,
-  padding: 0,
-  border: 'none',
-  background: 'transparent',
-  color: 'transparent',
-  caretColor: 'transparent',
-  WebkitTextFillColor: 'transparent',
+  padding: '12px 8px',
+  border: `1px solid ${Palette.border}`,
+  borderRadius: Radius.md,
+  background: Palette.surface,
+  color: Palette.textStrong,
   fontSize: 16,
-  outline: 'none',
+  fontWeight: 600,
+  textAlign: 'center',
   cursor: 'pointer',
-  appearance: 'none',
-  WebkitAppearance: 'none',
-  zIndex: 1,
 };
 
 const styles = StyleSheet.create({
@@ -196,6 +304,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: Palette.surface,
   },
-  buttonFocused: { borderColor: Palette.primary },
   label: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  overlay: {
+    flex: 1,
+    backgroundColor: Palette.overlay,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.four,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: Palette.background,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Palette.border,
+    padding: Spacing.four,
+    gap: Spacing.three,
+    ...Shadow.card,
+  },
+  title: { fontSize: 20, fontWeight: '800', color: Palette.text },
+  selectRow: { flexDirection: 'row', gap: Spacing.two, alignItems: 'flex-end' },
+  selectField: { flex: 1, minWidth: 0, gap: Spacing.one },
+  selectLabel: { fontSize: 12, fontWeight: '700', color: Palette.textSecondary },
+  preview: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Palette.primary,
+    textAlign: 'center',
+  },
+  actions: { flexDirection: 'row', gap: Spacing.three },
 });
