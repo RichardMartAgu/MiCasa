@@ -31,7 +31,8 @@ export interface AppDatePickerProps {
  * - Android: API imperativa `DateTimePickerAndroid.open` (evita bugs del API por
  *   componente en new arch, issues upstream #980/#994).
  * - iOS: picker inline `display="spinner"` que se alterna al pulsar el botón.
- * - Web: resuelto por `index.web.tsx` (modal propio con selects, sin el input nativo).
+ * - Web iOS: `index.web.tsx` usa un modal con selects, sin input nativo.
+ * - Web Android/desktop: `index.web.tsx` usa el input nativo del navegador.
  */
 export function AppDatePicker({
   value,

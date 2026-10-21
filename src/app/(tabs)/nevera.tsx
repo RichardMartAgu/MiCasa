@@ -239,7 +239,7 @@ export default function NeveraScreen() {
               onChange={setExpiry}
               icon="📅"
               formatValue={(date) => toISODate(date)}
-              accessibilityLabel="Fecha de caducidad"
+              accessibilityLabel={`Fecha de caducidad: ${toISODate(expiry)}`}
               min={new Date()}
             />
             <View style={styles.modalActions}>
