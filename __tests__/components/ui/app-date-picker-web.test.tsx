@@ -9,6 +9,24 @@ import {
 } from '@/components/ui/app-date-picker/index.web';
 
 describe('AppDatePicker web', () => {
+  const originalNavigator = globalThis.navigator;
+  beforeEach(() => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        userAgent:
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+        maxTouchPoints: 5,
+      },
+    });
+  });
+  afterEach(() => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+  });
+
   it('muestra un botón accesible con la fecha formateada', () => {
     const { getByLabelText, getByText } = render(
       <AppDatePicker
@@ -186,6 +204,209 @@ describe('AppDatePicker web', () => {
     fireEvent.press(getByText('Listo'));
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('clampa min en el input nativo de Android', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        userAgent:
+          'Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 Chrome/140.0 Mobile',
+        maxTouchPoints: 5,
+      },
+    });
+    const onChange = jest.fn();
+    const { getByLabelText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21)}
+        mode="date"
+        icon="📅"
+        formatValue={toDateInputValue}
+        accessibilityLabel="Cambiar fecha"
+        onChange={onChange}
+        min={new Date(2026, 8, 30)}
+      />,
+    );
+
+    fireEvent(getByLabelText('Cambiar fecha'), 'change', {
+      target: { value: '2026-09-25' },
+    });
+
+    expect(onChange).toHaveBeenCalledWith(new Date(2026, 8, 30));
+  });
+
+  it('ignora min y max en el input nativo de hora', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        userAgent:
+          'Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 Chrome/140.0 Mobile',
+        maxTouchPoints: 5,
+      },
+    });
+    const { getByLabelText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21, 8, 15)}
+        mode="time"
+        icon="🕐"
+        formatValue={toTimeInputValue}
+        accessibilityLabel="Cambiar hora"
+        onChange={jest.fn()}
+        min={new Date(2026, 8, 21)}
+        max={new Date(2026, 8, 21, 23, 59)}
+      />,
+    );
+
+    const input = getByLabelText('Cambiar hora');
+    expect(input.props.min).toBeUndefined();
+    expect(input.props.max).toBeUndefined();
+  });
+
+  it('emite al cambiar la hora en el input nativo de Android', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        userAgent:
+          'Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 Chrome/140.0 Mobile',
+        maxTouchPoints: 5,
+      },
+    });
+    const onChange = jest.fn();
+    const { getByLabelText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21, 8, 15)}
+        mode="time"
+        icon="🕐"
+        formatValue={toTimeInputValue}
+        accessibilityLabel="Cambiar hora"
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent(getByLabelText('Cambiar hora'), 'change', {
+      target: { value: '17:45' },
+    });
+
+    expect(onChange).toHaveBeenCalledWith(new Date(2026, 8, 21, 17, 45));
+  });
+
+  it('no clampa al hacer blur sin cambio en nativo', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        userAgent:
+          'Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 Chrome/140.0 Mobile',
+        maxTouchPoints: 5,
+      },
+    });
+    const onChange = jest.fn();
+    const { getByLabelText } = render(
+      <AppDatePicker
+        value={new Date(2020, 0, 1)}
+        mode="date"
+        icon="📅"
+        formatValue={toDateInputValue}
+        accessibilityLabel="Cambiar fecha"
+        onChange={onChange}
+        min={new Date(2026, 9, 21)}
+      />,
+    );
+
+    fireEvent(getByLabelText('Cambiar fecha'), 'blur', {
+      target: { value: '2020-01-01' },
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('ignora min y max en modo hora custom', () => {
+    const onChange = jest.fn();
+    const { getByLabelText, getByText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21, 8, 15)}
+        mode="time"
+        icon="🕐"
+        formatValue={toTimeInputValue}
+        accessibilityLabel="Cambiar hora"
+        onChange={onChange}
+        min={new Date(2026, 8, 21, 12, 0)}
+        max={new Date(2026, 8, 21, 23, 59)}
+      />,
+    );
+
+    fireEvent.press(getByLabelText('Cambiar hora'));
+    fireEvent(getByLabelText('Hora'), 'change', { target: { value: '9' } });
+    fireEvent.press(getByText('Listo'));
+
+    expect(onChange).toHaveBeenCalledWith(new Date(2026, 8, 21, 9, 15));
+  });
+
+  it('trata iPadOS de escritorio como iOS', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', maxTouchPoints: 5 },
+    });
+    const { getByLabelText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21)}
+        mode="date"
+        icon="📅"
+        formatValue={toDateInputValue}
+        accessibilityLabel="Cambiar fecha"
+        onChange={jest.fn()}
+      />,
+    );
+
+    fireEvent.press(getByLabelText('Cambiar fecha'));
+    expect(getByLabelText('Día')).toBeTruthy();
+  });
+
+  it('mantiene el input nativo en macOS sin táctil', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', maxTouchPoints: 0 },
+    });
+    const { getByLabelText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21)}
+        mode="date"
+        icon="📅"
+        formatValue={toDateInputValue}
+        accessibilityLabel="Cambiar fecha"
+        onChange={jest.fn()}
+      />,
+    );
+
+    expect(getByLabelText('Cambiar fecha').props.type).toBe('date');
+  });
+
+  it('usa el input nativo en Android/Chrome', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        userAgent:
+          'Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 Chrome/140.0 Mobile',
+        maxTouchPoints: 5,
+      },
+    });
+    const onChange = jest.fn();
+    const { getByLabelText, queryByText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21)}
+        mode="date"
+        icon="📅"
+        formatValue={toDateInputValue}
+        accessibilityLabel="Cambiar fecha"
+        onChange={onChange}
+      />,
+    );
+
+    const input = getByLabelText('Cambiar fecha');
+    expect(input.props.type).toBe('date');
+    expect(queryByText('Listo')).toBeNull();
+
+    fireEvent(input, 'change', { target: { value: '2026-10-01' } });
+    expect(onChange).toHaveBeenCalledWith(new Date(2026, 9, 1));
   });
 
   it('toDateInputValue formatea YYYY-MM-DD local', () => {

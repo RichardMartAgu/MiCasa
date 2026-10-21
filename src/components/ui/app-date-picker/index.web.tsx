@@ -1,8 +1,10 @@
 import {
   createElement,
+  useInsertionEffect,
   useState,
   type ChangeEvent,
   type CSSProperties,
+  type FocusEvent,
 } from 'react';
 import {
   Modal,
@@ -99,7 +101,7 @@ function clampDate(date: Date, min?: Date, max?: Date): Date {
  * en iOS. Por eso el control real son `<select>` nativos dentro de un modal:
  * funcionan con teclado, lector de pantalla y táctil en todos los navegadores.
  */
-export function AppDatePicker({
+function CustomWebPicker({
   value,
   mode,
   onChange,
@@ -139,8 +141,8 @@ export function AppDatePicker({
     // Abrir y pulsar Listo no debe mover una fecha ya guardada, aunque esté
     // fuera del rango actual (p. ej. un producto caducado).
     if (dirty && draft.getTime() !== value.getTime()) {
-      const clamped = clampDate(draft, min, max);
-      if (clamped.getTime() !== value.getTime()) onChange(clamped);
+      const next = mode === 'date' ? clampDate(draft, min, max) : draft;
+      if (next.getTime() !== value.getTime()) onChange(next);
     }
     setOpen(false);
   }
@@ -244,6 +246,151 @@ export function AppDatePicker({
   );
 }
 
+/**
+ * Elige el picker segun el navegador:
+ * - iOS/Safari: modal propio con `<select>`, porque el input nativo no abre
+ *   (WebKit 294649) y `showPicker()` no existe en iOS.
+ * - Resto (Android/Chrome, desktop): input nativo, que ya funcionaba y gusta mas.
+ */
+export function AppDatePicker(props: AppDatePickerProps) {
+  const [useCustom] = useState(isIosWeb);
+  return useCustom ? <CustomWebPicker {...props} /> : <NativeWebPicker {...props} />;
+}
+
+export function isIosWeb(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+function NativeWebPicker({
+  value,
+  mode,
+  onChange,
+  icon,
+  formatValue,
+  accessibilityLabel,
+  min,
+  max,
+  style,
+}: AppDatePickerProps) {
+  useDatePickerStyles();
+  const [focused, setFocused] = useState(false);
+  const inputType = mode === 'date' ? 'date' : 'time';
+  const inputValue = mode === 'date' ? toDateInputValue(value) : toTimeInputValue(value);
+  // min/max son de fecha completa; en modo hora se ignoran para no mover el día.
+  const minValue = mode === 'date' && min ? toDateInputValue(min) : undefined;
+  const maxValue = mode === 'date' && max ? toDateInputValue(max) : undefined;
+
+  function commit(raw: string) {
+    if (!raw) return;
+    if (mode === 'date') {
+      const parsed = parseDateInput(raw);
+      if (!parsed) return;
+      const clamped = clampDate(parsed, min, max);
+      if (toDateInputValue(clamped) !== inputValue) onChange(clamped);
+    } else {
+      const parsed = parseTimeInput(raw, value);
+      if (parsed && parsed.getTime() !== value.getTime()) onChange(parsed);
+    }
+  }
+
+  function handleChange(event: ChangeEvent<HTMLInputElement>) {
+    commit(event.target.value);
+  }
+
+  function handleBlur(event: FocusEvent<HTMLInputElement>) {
+    setFocused(false);
+    // Sin cambio real no se toca el valor: un blur no debe clampar una fecha
+    // guardada fuera de rango ni borrar segundos.
+    if (event.target.value !== inputValue) commit(event.target.value);
+  }
+
+  return (
+    <View style={style}>
+      <View
+        style={[styles.button, focused && styles.buttonFocused]}
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants">
+        <Text style={styles.label}>
+          {icon} {formatValue(value)}
+        </Text>
+      </View>
+      {createElement('input', {
+        type: inputType,
+        value: inputValue,
+        min: minValue,
+        max: maxValue,
+        onChange: handleChange,
+        onFocus: () => setFocused(true),
+        onBlur: handleBlur,
+        'aria-label': accessibilityLabel,
+        'data-micasa-date-picker': 'true',
+        style: inputStyle,
+      })}
+    </View>
+  );
+}
+
+const DATE_PICKER_STYLE_ID = 'micasa-date-picker-input-styles';
+
+const DATE_PICKER_CSS = `
+input[data-micasa-date-picker]::-webkit-datetime-edit,
+input[data-micasa-date-picker]::-webkit-datetime-edit-fields-wrapper,
+input[data-micasa-date-picker]::-webkit-datetime-edit-text,
+input[data-micasa-date-picker]::-webkit-datetime-edit-month-field,
+input[data-micasa-date-picker]::-webkit-datetime-edit-day-field,
+input[data-micasa-date-picker]::-webkit-datetime-edit-year-field,
+input[data-micasa-date-picker]::-webkit-datetime-edit-hour-field,
+input[data-micasa-date-picker]::-webkit-datetime-edit-minute-field,
+input[data-micasa-date-picker]::-webkit-datetime-edit-ampm-field {
+  color: transparent;
+}
+input[data-micasa-date-picker]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+}
+input[data-micasa-date-picker]:focus-visible {
+  outline: 2px solid ${Palette.primary} !important;
+  outline-offset: 2px;
+}
+`;
+
+function useDatePickerStyles() {
+  useInsertionEffect(() => {
+    if (typeof document === 'undefined' || document.getElementById(DATE_PICKER_STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement('style');
+    style.id = DATE_PICKER_STYLE_ID;
+    style.textContent = DATE_PICKER_CSS;
+    document.head.appendChild(style);
+  }, []);
+}
+
+const inputStyle: CSSProperties = {
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  width: '100%',
+  height: '100%',
+  margin: 0,
+  padding: 0,
+  border: 'none',
+  background: 'transparent',
+  color: 'transparent',
+  caretColor: 'transparent',
+  WebkitTextFillColor: 'transparent',
+  fontSize: 16,
+  outline: 'none',
+  cursor: 'pointer',
+  appearance: 'none',
+  WebkitAppearance: 'none',
+  zIndex: 1,
+};
+
 interface SelectOption {
   value: string;
   label: string;
@@ -304,6 +451,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: Palette.surface,
   },
+  buttonFocused: { borderColor: Palette.primary },
   label: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
   overlay: {
     flex: 1,
