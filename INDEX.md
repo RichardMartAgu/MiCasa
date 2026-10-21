@@ -14,6 +14,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 20 `
 | [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-10-19. |
 | [`README.md`](README.md) | Producto, funcionalidades, stack, puesta en marcha, calidad, estructura, modelo de datos. | Vigente. |
 | [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global para continuar sesiones. **Empezar por «Pendientes»; las sesiones están en orden inverso (la primera «Sesión actual» es la más reciente).** | Actualizado 2026-10-19. |
+| [Guía maestra de proyectos](https://github.com/RichardMartAgu/proyecto-agentico) | Guía v2, skill `nuevo-proyecto` y plantillas para proyectos nuevos: coste 0, gates, Git, seguridad del agente y prompts. | Externa y versionada; fuente canónica, no duplicar en este repo. |
 
 ### Bugs resueltos o documentados
 
