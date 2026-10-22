@@ -1,6 +1,6 @@
 import {
   createElement,
-  useInsertionEffect,
+  useRef,
   useState,
   type ChangeEvent,
   type CSSProperties,
@@ -250,7 +250,8 @@ function CustomWebPicker({
  * Elige el picker segun el navegador:
  * - iOS/Safari: modal propio con `<select>`, porque el input nativo no abre
  *   (WebKit 294649) y `showPicker()` no existe en iOS.
- * - Resto (Android/Chrome, desktop): input nativo, que ya funcionaba y gusta mas.
+ * - Resto (Android/Chrome, desktop): botón propio que llama a
+ *   `input.showPicker()` sobre un input oculto.
  */
 export function AppDatePicker(props: AppDatePickerProps) {
   const [useCustom] = useState(isIosWeb);
@@ -261,6 +262,19 @@ export function isIosWeb(): boolean {
   if (typeof navigator === 'undefined') return false;
   const ua = navigator.userAgent;
   return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+export function openNativePicker(input: HTMLInputElement): void {
+  if (typeof input.showPicker === 'function') {
+    try {
+      input.showPicker();
+      return;
+    } catch {
+      // Fallback si el navegador rechaza showPicker().
+    }
+  }
+  input.focus();
+  input.click();
 }
 
 function NativeWebPicker({
@@ -274,8 +288,7 @@ function NativeWebPicker({
   max,
   style,
 }: AppDatePickerProps) {
-  useDatePickerStyles();
-  const [focused, setFocused] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const inputType = mode === 'date' ? 'date' : 'time';
   const inputValue = mode === 'date' ? toDateInputValue(value) : toTimeInputValue(value);
   // min/max son de fecha completa; en modo hora se ignoran para no mover el día.
@@ -300,32 +313,37 @@ function NativeWebPicker({
   }
 
   function handleBlur(event: FocusEvent<HTMLInputElement>) {
-    setFocused(false);
     // Sin cambio real no se toca el valor: un blur no debe clampar una fecha
     // guardada fuera de rango ni borrar segundos.
     if (event.target.value !== inputValue) commit(event.target.value);
   }
 
+  function openPicker() {
+    if (inputRef.current) openNativePicker(inputRef.current);
+  }
+
   return (
     <View style={style}>
-      <View
-        style={[styles.button, focused && styles.buttonFocused]}
-        pointerEvents="none"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants">
+      <Pressable
+        style={styles.button}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        onPress={openPicker}>
         <Text style={styles.label}>
           {icon} {formatValue(value)}
         </Text>
-      </View>
+      </Pressable>
       {createElement('input', {
+        ref: inputRef,
         type: inputType,
         value: inputValue,
         min: minValue,
         max: maxValue,
         onChange: handleChange,
-        onFocus: () => setFocused(true),
         onBlur: handleBlur,
-        'aria-label': accessibilityLabel,
+        'aria-hidden': 'true',
+        tabIndex: -1,
+        testID: 'date-picker-input',
         'data-micasa-date-picker': 'true',
         style: inputStyle,
       })}
@@ -333,62 +351,17 @@ function NativeWebPicker({
   );
 }
 
-const DATE_PICKER_STYLE_ID = 'micasa-date-picker-input-styles';
-
-const DATE_PICKER_CSS = `
-input[data-micasa-date-picker]::-webkit-datetime-edit,
-input[data-micasa-date-picker]::-webkit-datetime-edit-fields-wrapper,
-input[data-micasa-date-picker]::-webkit-datetime-edit-text,
-input[data-micasa-date-picker]::-webkit-datetime-edit-month-field,
-input[data-micasa-date-picker]::-webkit-datetime-edit-day-field,
-input[data-micasa-date-picker]::-webkit-datetime-edit-year-field,
-input[data-micasa-date-picker]::-webkit-datetime-edit-hour-field,
-input[data-micasa-date-picker]::-webkit-datetime-edit-minute-field,
-input[data-micasa-date-picker]::-webkit-datetime-edit-ampm-field {
-  color: transparent;
-}
-input[data-micasa-date-picker]::-webkit-calendar-picker-indicator {
-  opacity: 0;
-}
-input[data-micasa-date-picker]:focus-visible {
-  outline: 2px solid ${Palette.primary} !important;
-  outline-offset: 2px;
-}
-`;
-
-function useDatePickerStyles() {
-  useInsertionEffect(() => {
-    if (typeof document === 'undefined' || document.getElementById(DATE_PICKER_STYLE_ID)) {
-      return;
-    }
-    const style = document.createElement('style');
-    style.id = DATE_PICKER_STYLE_ID;
-    style.textContent = DATE_PICKER_CSS;
-    document.head.appendChild(style);
-  }, []);
-}
-
 const inputStyle: CSSProperties = {
   position: 'absolute',
-  top: 0,
   left: 0,
-  right: 0,
   bottom: 0,
-  width: '100%',
-  height: '100%',
+  width: 1,
+  height: 1,
   margin: 0,
   padding: 0,
   border: 'none',
-  background: 'transparent',
-  color: 'transparent',
-  caretColor: 'transparent',
-  WebkitTextFillColor: 'transparent',
-  fontSize: 16,
-  outline: 'none',
-  cursor: 'pointer',
-  appearance: 'none',
-  WebkitAppearance: 'none',
-  zIndex: 1,
+  opacity: 0,
+  pointerEvents: 'none',
 };
 
 interface SelectOption {
@@ -451,7 +424,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: Palette.surface,
   },
-  buttonFocused: { borderColor: Palette.primary },
   label: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
   overlay: {
     flex: 1,

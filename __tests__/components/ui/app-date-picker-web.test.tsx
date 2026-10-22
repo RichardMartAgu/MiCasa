@@ -2,6 +2,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 
 import { AppDatePicker } from '@/components/ui/app-date-picker/index.web';
 import {
+  openNativePicker,
   parseDateInput,
   parseTimeInput,
   toDateInputValue,
@@ -216,7 +217,7 @@ describe('AppDatePicker web', () => {
       },
     });
     const onChange = jest.fn();
-    const { getByLabelText } = render(
+    const { getByTestId } = render(
       <AppDatePicker
         value={new Date(2026, 8, 21)}
         mode="date"
@@ -228,7 +229,7 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    fireEvent(getByLabelText('Cambiar fecha'), 'change', {
+    fireEvent(getByTestId('date-picker-input', { includeHiddenElements: true }), 'change', {
       target: { value: '2026-09-25' },
     });
 
@@ -244,7 +245,7 @@ describe('AppDatePicker web', () => {
         maxTouchPoints: 5,
       },
     });
-    const { getByLabelText } = render(
+    const { getByTestId } = render(
       <AppDatePicker
         value={new Date(2026, 8, 21, 8, 15)}
         mode="time"
@@ -257,7 +258,7 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    const input = getByLabelText('Cambiar hora');
+    const input = getByTestId('date-picker-input', { includeHiddenElements: true });
     expect(input.props.min).toBeUndefined();
     expect(input.props.max).toBeUndefined();
   });
@@ -272,7 +273,7 @@ describe('AppDatePicker web', () => {
       },
     });
     const onChange = jest.fn();
-    const { getByLabelText } = render(
+    const { getByTestId } = render(
       <AppDatePicker
         value={new Date(2026, 8, 21, 8, 15)}
         mode="time"
@@ -283,7 +284,7 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    fireEvent(getByLabelText('Cambiar hora'), 'change', {
+    fireEvent(getByTestId('date-picker-input', { includeHiddenElements: true }), 'change', {
       target: { value: '17:45' },
     });
 
@@ -300,7 +301,7 @@ describe('AppDatePicker web', () => {
       },
     });
     const onChange = jest.fn();
-    const { getByLabelText } = render(
+    const { getByTestId } = render(
       <AppDatePicker
         value={new Date(2020, 0, 1)}
         mode="date"
@@ -312,7 +313,7 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    fireEvent(getByLabelText('Cambiar fecha'), 'blur', {
+    fireEvent(getByTestId('date-picker-input', { includeHiddenElements: true }), 'blur', {
       target: { value: '2020-01-01' },
     });
 
@@ -361,12 +362,48 @@ describe('AppDatePicker web', () => {
     expect(getByLabelText('Día')).toBeTruthy();
   });
 
+  it('abre el picker nativo al pulsar el botón', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        userAgent:
+          'Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 Chrome/140.0 Mobile',
+        maxTouchPoints: 5,
+      },
+    });
+    const showPicker = jest.fn();
+    const { getByLabelText } = render(
+      <AppDatePicker
+        value={new Date(2026, 8, 21)}
+        mode="date"
+        icon="📅"
+        formatValue={toDateInputValue}
+        accessibilityLabel="Cambiar fecha"
+        onChange={jest.fn()}
+      />,
+      {
+        createNodeMock: (element) => {
+          const props = element.props as { 'data-micasa-date-picker'?: string };
+          return props['data-micasa-date-picker']
+            ? { showPicker, focus: jest.fn(), click: jest.fn() }
+            : null;
+        },
+      },
+    );
+
+    const button = getByLabelText('Cambiar fecha');
+    expect(button.props.accessibilityRole).toBe('button');
+    fireEvent.press(button);
+
+    expect(showPicker).toHaveBeenCalledTimes(1);
+  });
+
   it('mantiene el input nativo en macOS sin táctil', () => {
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', maxTouchPoints: 0 },
     });
-    const { getByLabelText } = render(
+    const { getByTestId } = render(
       <AppDatePicker
         value={new Date(2026, 8, 21)}
         mode="date"
@@ -377,7 +414,7 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    expect(getByLabelText('Cambiar fecha').props.type).toBe('date');
+    expect(getByTestId('date-picker-input', { includeHiddenElements: true }).props.type).toBe('date');
   });
 
   it('usa el input nativo en Android/Chrome', () => {
@@ -390,7 +427,7 @@ describe('AppDatePicker web', () => {
       },
     });
     const onChange = jest.fn();
-    const { getByLabelText, queryByText } = render(
+    const { getByTestId, queryByText } = render(
       <AppDatePicker
         value={new Date(2026, 8, 21)}
         mode="date"
@@ -401,7 +438,7 @@ describe('AppDatePicker web', () => {
       />,
     );
 
-    const input = getByLabelText('Cambiar fecha');
+    const input = getByTestId('date-picker-input', { includeHiddenElements: true });
     expect(input.props.type).toBe('date');
     expect(queryByText('Listo')).toBeNull();
 
@@ -461,5 +498,40 @@ describe('AppDatePicker web', () => {
     expect(parseTimeInput('12', base)).toBeNull();
     expect(parseTimeInput('abc', base)).toBeNull();
     expect(parseTimeInput('12:30:45', base)).toBeNull();
+  });
+
+  it('abre el picker nativo con showPicker()', () => {
+    const showPicker = jest.fn();
+    const focus = jest.fn();
+    const click = jest.fn();
+
+    openNativePicker({ showPicker, focus, click } as unknown as HTMLInputElement);
+
+    expect(showPicker).toHaveBeenCalledTimes(1);
+    expect(focus).not.toHaveBeenCalled();
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it('cae a focus y click si showPicker() no está disponible', () => {
+    const focus = jest.fn();
+    const click = jest.fn();
+
+    openNativePicker({ focus, click } as unknown as HTMLInputElement);
+
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it('cae a focus y click si showPicker() lanza', () => {
+    const showPicker = jest.fn(() => {
+      throw new Error('NotAllowedError');
+    });
+    const focus = jest.fn();
+    const click = jest.fn();
+
+    openNativePicker({ showPicker, focus, click } as unknown as HTMLInputElement);
+
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(click).toHaveBeenCalledTimes(1);
   });
 });
