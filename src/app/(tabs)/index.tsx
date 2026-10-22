@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/ui/card';
+import { InviteCode } from '@/components/ui/invite-code';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { NoCasaState } from '@/components/ui/no-casa-state';
 import { Spinner } from '@/components/ui/spinner';
@@ -13,7 +14,7 @@ import { fetchAppointments, fetchContacts, fetchExpenses, fetchShoppingLists } f
 import { birthdayLabel, upcomingBirthdays } from '@/lib/birthdays';
 import { formatDateTime, monthKey, safeDate } from '@/lib/date';
 import { totalExpenses } from '@/lib/finance';
-import { formatCurrency, initials } from '@/lib/format';
+import { formatCurrency, formatInviteCode, initials } from '@/lib/format';
 import type { Appointment, Contact, Expense, ShoppingList } from '@/lib/types';
 
 export default function HomeScreen() {
@@ -86,9 +87,11 @@ export default function HomeScreen() {
         </View>
       </View>
       <Text style={styles.memberCount}>
-        {members.length} {members.length === 1 ? 'miembro' : 'miembros'} · código de
-        invitación: <Text style={styles.code}>{currentCasa?.invite_code}</Text>
+        {members.length} {members.length === 1 ? 'miembro' : 'miembros'}
       </Text>
+      {currentCasa?.invite_code ? (
+        <InviteCode code={formatInviteCode(currentCasa.invite_code)} compact />
+      ) : null}
     </View>
   );
 
@@ -184,7 +187,6 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: Palette.onPrimary, fontSize: 18, fontWeight: '700' },
   memberCount: { fontSize: 13, color: Palette.textSecondary },
-  code: { fontFamily: 'monospace', fontWeight: '700', color: Palette.primary },
   statsRow: { flexDirection: 'row', gap: Spacing.three },
   statCard: {
     flex: 1,

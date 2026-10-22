@@ -15,6 +15,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { InviteCode } from '@/components/ui/invite-code';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -803,12 +804,12 @@ export default function AjustesScreen() {
       <Card>
         <Text style={styles.sectionTitle}>Tu casa</Text>
         <Text style={styles.casaName}>{currentCasa?.name ?? 'Sin casa'}</Text>
-        <View style={styles.inviteRow}>
-          <Text style={styles.cardMeta}>Código de invitación</Text>
-          <Text style={styles.inviteCode}>
-            {formatInviteCode(currentCasa?.invite_code ?? '--------')}
-          </Text>
-        </View>
+        <Text style={styles.cardMeta}>Código de invitación</Text>
+        {currentCasa?.invite_code ? (
+          <InviteCode code={formatInviteCode(currentCasa.invite_code)} />
+        ) : (
+          <Text style={styles.inviteCode}>--------</Text>
+        )}
         <Text style={styles.cardMeta}>Comparte el código para que tu pareja o familia entre.</Text>
       </Card>
 
@@ -1119,7 +1120,6 @@ const styles = StyleSheet.create({
   avatarText: { color: Palette.onPrimary, fontSize: 18, fontWeight: '700' },
   profileName: { fontSize: 17, fontWeight: '700', color: Palette.text },
   casaName: { fontSize: 22, fontWeight: '800', color: Palette.text },
-  inviteRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   inviteCode: {
     fontFamily: 'monospace',
     fontSize: 18,
