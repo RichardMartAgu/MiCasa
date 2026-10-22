@@ -19,6 +19,7 @@ import { NoCasaState } from '@/components/ui/no-casa-state';
 import { Spinner } from '@/components/ui/spinner';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radius, Shadow, Spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useCasa } from '@/context/casa-context';
 import { useRealtimeCollection } from '@/hooks/use-realtime-collection';
 import {
@@ -34,6 +35,12 @@ import { toISODate } from '@/lib/date';
 import { fridgeDaysLeft } from '@/lib/fridge';
 import { getFridgeChoice, scheduleFridgeItem, cancelEntityKey } from '@/lib/notifications';
 import type { FridgeItem } from '@/lib/types';
+import {
+  isValidNotifyAudience,
+  notifyAudienceLabels,
+  notifyAudiences,
+  type NotifyAudience,
+} from '@/lib/notification-audience';
 import { validateTitle } from '@/lib/validation';
 
 function defaultExpiry(): Date {
@@ -48,6 +55,7 @@ function parseQuantity(raw: string): number | null {
 }
 
 export default function NeveraScreen() {
+  const { user } = useAuth();
   const { currentCasa, loading } = useCasa();
   const { data: items, error } = useRealtimeCollection<FridgeItem>(
     () => (currentCasa ? fetchFridgeItems(currentCasa.id) : Promise.resolve([])),
@@ -61,6 +69,7 @@ export default function NeveraScreen() {
   const [quantity, setQuantity] = useState('');
   const [unit, setUnit] = useState('');
   const [expiry, setExpiry] = useState<Date>(defaultExpiry);
+  const [notifyAudience, setNotifyAudience] = useState<NotifyAudience>('me');
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -85,6 +94,7 @@ export default function NeveraScreen() {
     setQuantity('');
     setUnit('');
     setExpiry(defaultExpiry());
+    setNotifyAudience('me');
     setNameError(null);
     setModalVisible(true);
   }
@@ -95,6 +105,9 @@ export default function NeveraScreen() {
     setQuantity(item.quantity !== null && item.quantity !== undefined ? String(item.quantity) : '');
     setUnit(item.unit ?? '');
     setExpiry(new Date(`${item.expiry_date}T00:00:00`));
+    setNotifyAudience(
+      isValidNotifyAudience(item.notify_audience) ? item.notify_audience : 'me',
+    );
     setNameError(null);
     setModalVisible(true);
   }
@@ -107,7 +120,7 @@ export default function NeveraScreen() {
     }
     const choice = await getFridgeChoice();
     if (choice === 'none') return;
-    await scheduleFridgeItem(item, choice);
+    await scheduleFridgeItem(item, choice, user?.id);
   }
 
   async function handleSave() {
@@ -122,6 +135,7 @@ export default function NeveraScreen() {
       expiry_date: toISODate(expiry),
       quantity: parseQuantity(quantity),
       unit: unit.trim() || null,
+      notify_audience: notifyAudience,
     };
     setSaving(true);
     const result = editingId
@@ -242,6 +256,22 @@ export default function NeveraScreen() {
               accessibilityLabel={`Fecha de caducidad: ${toISODate(expiry)}`}
               min={new Date()}
             />
+            <Text style={styles.fieldLabel}>Avisar a</Text>
+            <View style={styles.audienceRow}>
+              {notifyAudiences.map((value) => (
+                <Pressable
+                  key={value}
+                  style={[styles.chip, notifyAudience === value && styles.chipSelected]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: notifyAudience === value }}
+                  onPress={() => setNotifyAudience(value)}>
+                  <Text
+                    style={[styles.chipText, notifyAudience === value && styles.chipTextSelected]}>
+                    {notifyAudienceLabels[value]}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
             <View style={styles.modalActions}>
               <Button
                 title="Cancelar"
@@ -309,5 +339,17 @@ const styles = StyleSheet.create({
     backgroundColor: Palette.surface,
   },
   fieldLabel: { fontSize: 14, fontWeight: '600', color: Palette.textStrong },
+  audienceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  chip: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Palette.border,
+    backgroundColor: Palette.surface,
+  },
+  chipSelected: { backgroundColor: Palette.primary, borderColor: Palette.primary },
+  chipText: { fontSize: 13, fontWeight: '600', color: Palette.textSecondary },
+  chipTextSelected: { color: Palette.onPrimary },
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: Spacing.two },
 });

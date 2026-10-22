@@ -58,6 +58,7 @@ interface Call {
    * y mezclarlos haría ambiguo leer una aserción.
    */
   inList: Record<string, unknown[]>;
+  orFilter?: string;
   lt?: [string, unknown];
   /** `maybeSingle` Was llamado: la respuesta es una fila, no una lista. */
   single?: boolean;
@@ -121,6 +122,15 @@ class Query {
 
   in(columna: string, valores: unknown[]): Query {
     this.call.inList[columna] = valores;
+    return this;
+  }
+
+  or(filtro: string): Query {
+    this.call.orFilter = filtro;
+    return this;
+  }
+
+  order(): Query {
     return this;
   }
 
@@ -221,7 +231,7 @@ class FakeDb {
   }
 
   from(table: string): Query {
-    const call: Call = { table, op: "select", eq: {}, inList: {} };
+    const call: Call = { table, op: "select", eq: {}, inList: {}, orFilter: undefined };
     this.calls.push(call);
     return new Query(call, this);
   }
@@ -272,6 +282,15 @@ class FakeDb {
         }
         for (const [columna, valores] of Object.entries(call.inList)) {
           if (!valores.includes(fila[columna])) return false;
+        }
+        if (call.orFilter) {
+          const ramas = call.orFilter.split(",");
+          const cumple = ramas.some((rama) => {
+            const partes = rama.split(".");
+            if (partes.length !== 3 || partes[1] !== "eq") return false;
+            return String(fila[partes[0]]) === partes[2];
+          });
+          if (!cumple) return false;
         }
         return true;
       });
@@ -866,6 +885,32 @@ function guionReparto(extra: Guion = {}): FakeDb {
 }
 
 const AHORA_EN_LA_VENTANA = Date.parse("2026-03-16T08:05:00Z");
+
+Deno.test("el reparto filtra la audiencia también en PostgREST", async () => {
+  const db = guionReparto({
+    "push_preferences:select": [
+      filas([{ user_id: USER, enabled: true, birthday_choice: "none", fridge_choice: "same-day" }]),
+      filas([{ user_id: USER, enabled: true, birthday_choice: "none", fridge_choice: "same-day" }]),
+    ],
+    "fridge_items:select": [
+      filas([{ id: "f1", user_id: USER, casa_id: CASA, name: "Leche", expiry_date: "2026-03-16" }]),
+      filas([{ id: "f1", user_id: USER, casa_id: CASA, name: "Leche", expiry_date: "2026-03-16" }]),
+    ],
+  });
+
+  const res = await handle(peticionCron(), ENV, {
+    createDb: () => db as unknown as SupabaseClient,
+    now: () => AHORA_EN_LA_VENTANA,
+    push: pushSinInteres(),
+  });
+  assertEquals(res.status, 200);
+
+  const filtroEsperado = `user_id.eq.${USER},notify_audience.eq.all`;
+  const citas = db.calls.find((c) => c.table === "appointments" && c.op === "select");
+  const nevera = db.calls.find((c) => c.table === "fridge_items" && c.op === "select");
+  assertEquals(citas?.orFilter, filtroEsperado);
+  assertEquals(nevera?.orFilter, filtroEsperado);
+});
 
 Deno.test("el reparto configura VAPID con las claves de Vault antes de enviar", async () => {
   const push = pushSinInteres();

@@ -90,6 +90,8 @@ create table if not exists public.appointments (
   reminder_at timestamptz,
   reminder_choice text not null default 'none'
     check (reminder_choice in ('none', 'day-before', 'same-day', 'both')),
+  notify_audience text not null default 'me'
+    check (notify_audience in ('me', 'all')),
   created_at timestamptz not null default now()
 );
 
@@ -167,6 +169,8 @@ create table if not exists public.fridge_items (
   user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   name text not null,
   expiry_date date not null,
+  notify_audience text not null default 'me'
+    check (notify_audience in ('me', 'all')),
   quantity numeric(10, 2),
   unit text,
   done boolean not null default false,
@@ -435,6 +439,36 @@ create policy "appointments_update_member" on public.appointments
 create policy "appointments_delete_member" on public.appointments
   for delete using (public.is_casa_member(casa_id));
 
+-- Autoría y audiencia inmutables fuera del autor, igual que en la migración.
+create or replace function public.appointments_freeze_author()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+begin
+  -- `ON DELETE SET NULL` de la FK también llega aquí: borrar la cuenta debe
+  -- poder dejar la cita huérfana, pero nadie puede reasignarla a otra persona.
+  if new.user_id is distinct from old.user_id
+     and not (
+       new.user_id is null
+       and old.user_id is not null
+       and not exists (select 1 from auth.users u where u.id = old.user_id)
+     ) then
+    raise exception 'no se puede cambiar el autor de una cita';
+  end if;
+  if new.notify_audience is distinct from old.notify_audience and auth.uid() is distinct from old.user_id then
+    raise exception 'solo el autor puede cambiar la audiencia de una cita';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists appointments_freeze_author on public.appointments;
+create trigger appointments_freeze_author
+  before update on public.appointments
+  for each row execute function public.appointments_freeze_author();
+
+revoke all on function public.appointments_freeze_author() from public, anon, authenticated;
+
 drop policy if exists "appointment_kinds_all_member" on public.appointment_kinds;
 create policy "appointment_kinds_all_member" on public.appointment_kinds
   for all using (public.is_casa_member(casa_id))
@@ -520,6 +554,25 @@ drop trigger if exists fridge_items_freeze_owner on public.fridge_items;
 create trigger fridge_items_freeze_owner
   before update on public.fridge_items
   for each row execute function public.fridge_items_freeze_owner();
+
+create or replace function public.fridge_items_freeze_audience()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+begin
+  if new.notify_audience is distinct from old.notify_audience and auth.uid() is distinct from old.user_id then
+    raise exception 'solo el autor puede cambiar la audiencia de un ítem de nevera';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists fridge_items_freeze_audience on public.fridge_items;
+create trigger fridge_items_freeze_audience
+  before update on public.fridge_items
+  for each row execute function public.fridge_items_freeze_audience();
+
+revoke all on function public.fridge_items_freeze_audience() from public, anon, authenticated;
 
 create or replace function public.fridge_items_limit_per_casa()
 returns trigger

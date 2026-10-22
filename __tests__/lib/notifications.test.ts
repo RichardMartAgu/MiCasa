@@ -108,6 +108,7 @@ const appointment: Appointment = {
   starts_at: toISOLocal(START),
   reminder_at: null,
   reminder_choice: 'none',
+  notify_audience: 'me',
   created_at: '2026-09-01',
 };
 
@@ -200,7 +201,7 @@ describe('preferencias', () => {
   });
 
   it('setNotificationsEnabled(false) cancela todo y limpia mapa', async () => {
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     await setNotificationsEnabled(false);
     expect(mockCancelAll).toHaveBeenCalled();
     expect(await areNotificationsEnabled()).toBe(false);
@@ -217,7 +218,7 @@ describe('preferencias', () => {
 
 describe('scheduleAppointment', () => {
   it('agenda avisos y guarda mapa con fingerprint', async () => {
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     expect(mockSchedule).toHaveBeenCalledTimes(2);
     const map = JSON.parse((await AsyncStorage.getItem('notification_map_v1')) ?? '{}');
     expect(map['appointment:a1:day-before'].identifiers).toEqual(['notif-id-1']);
@@ -226,31 +227,31 @@ describe('scheduleAppointment', () => {
   });
 
   it('cancela avisos previos al reprogramar', async () => {
-    await scheduleAppointment(appointment, 'day-before');
+    await scheduleAppointment(appointment, 'day-before', 'u1');
     expect(mockCancel).not.toHaveBeenCalled();
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     expect(mockCancel).toHaveBeenCalledWith('notif-id-1');
   });
 
   it('cancela previos y no agenda nada si todos los triggers pasados', async () => {
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     mockCancel.mockClear();
     mockSchedule.mockClear();
     const past = { ...appointment, starts_at: '2020-01-01T10:00:00' };
-    await scheduleAppointment(past, 'both');
+    await scheduleAppointment(past, 'both', 'u1');
     expect(mockCancel).toHaveBeenCalledTimes(2);
     expect(mockSchedule).not.toHaveBeenCalled();
   });
 
   it('web: no-op', async () => {
     jest.replaceProperty(Platform, 'OS', 'web');
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     expect(mockSchedule).not.toHaveBeenCalled();
   });
 
   it('serializa: dos scheduleAppointment consecutivos conservan ambas entradas', async () => {
     const second = { ...appointment, id: 'a2' };
-    await Promise.all([scheduleAppointment(appointment, 'both'), scheduleAppointment(second, 'both')]);
+    await Promise.all([scheduleAppointment(appointment, 'both', 'u1'), scheduleAppointment(second, 'both', 'u1')]);
     const map = JSON.parse((await AsyncStorage.getItem('notification_map_v1')) ?? '{}');
     expect(map['appointment:a1:day-before']).toBeDefined();
     expect(map['appointment:a1:same-day']).toBeDefined();
@@ -391,7 +392,7 @@ describe('scheduleBirthday', () => {
 
 describe('cancelEntityKey', () => {
   it('cancela identificadores y limpia mapa', async () => {
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     await cancelEntityKey('appointment', 'a1');
     expect(mockCancel).toHaveBeenCalledWith('notif-id-1');
     expect(mockCancel).toHaveBeenCalledWith('notif-id-2');
@@ -403,26 +404,26 @@ describe('cancelEntityKey', () => {
 
 describe('syncAll', () => {
   it('skip si fingerprint coincide', async () => {
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     mockSchedule.mockClear();
     mockCancel.mockClear();
-    await syncAll([{ ...appointment, reminder_choice: 'both' }], [], 'none', NOW);
+    await syncAll([{ ...appointment, reminder_choice: 'both' }], [], 'none', NOW, [], 'none', 'u1');
     expect(mockSchedule).not.toHaveBeenCalled();
     expect(mockCancel).not.toHaveBeenCalled();
   });
 
   it('reprograma si cambia el aviso', async () => {
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     mockSchedule.mockClear();
     mockCancel.mockClear();
-    await syncAll([{ ...appointment, reminder_choice: 'same-day' }], [], 'none', NOW);
+    await syncAll([{ ...appointment, reminder_choice: 'same-day' }], [], 'none', NOW, [], 'none', 'u1');
     expect(mockCancel).toHaveBeenCalledWith('notif-id-1');
     expect(mockCancel).toHaveBeenCalledWith('notif-id-2');
     expect(mockSchedule).toHaveBeenCalledTimes(1);
   });
 
   it('usa fallback legacy si reminder_choice vacío', async () => {
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     mockSchedule.mockClear();
     mockCancel.mockClear();
     const dayBefore = toISOLocal(new Date(2026, 8, 24, 9, 0));
@@ -431,6 +432,9 @@ describe('syncAll', () => {
       [],
       'none',
       NOW,
+      [],
+      'none',
+      'u1',
     );
     expect(mockSchedule).not.toHaveBeenCalled();
     expect(mockCancel).not.toHaveBeenCalled();
@@ -439,7 +443,7 @@ describe('syncAll', () => {
   it('toleran JSON corrupto en el mapa', async () => {
     await AsyncStorage.setItem('notification_map_v1', '{not-json');
     mockSchedule.mockClear();
-    await syncAll([{ ...appointment, reminder_choice: 'both' }], [], 'none', NOW);
+    await syncAll([{ ...appointment, reminder_choice: 'both' }], [], 'none', NOW, [], 'none', 'u1');
     expect(mockSchedule).toHaveBeenCalledTimes(2);
   });
 
@@ -462,7 +466,7 @@ describe('syncAll', () => {
   });
 
   it('cancela entidades borradas', async () => {
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     await scheduleBirthdays([contact], 'both');
     mockCancel.mockClear();
     await syncAll([], [], 'none', NOW);
@@ -472,10 +476,10 @@ describe('syncAll', () => {
   });
 
   it('no deja entradas stale para cita pasada (mapa limpio)', async () => {
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     mockCancel.mockClear();
     const past = { ...appointment, starts_at: '2020-01-01T10:00:00', reminder_choice: 'both' };
-    await syncAll([past], [], 'none', NOW);
+    await syncAll([past], [], 'none', NOW, [], 'none', 'u1');
     expect(mockCancel).toHaveBeenCalledTimes(2);
     const map = JSON.parse((await AsyncStorage.getItem('notification_map_v1')) ?? '{}');
     expect(Object.keys(map)).toHaveLength(0);
@@ -483,15 +487,66 @@ describe('syncAll', () => {
 
   it('syncAll no agenda si desactivadas', async () => {
     mockStorage.delete('notifications_enabled');
-    await syncAll([{ ...appointment, reminder_choice: 'both' }], [contact], 'both', NOW);
+    await syncAll([{ ...appointment, reminder_choice: 'both' }], [contact], 'both', NOW, [], 'none', 'u1');
     expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it('no agenda una cita "me" en el dispositivo de otro usuario', async () => {
+    await syncAll(
+      [{ ...appointment, reminder_choice: 'both', notify_audience: 'me' }],
+      [],
+      'none',
+      NOW,
+      [],
+      'none',
+      'u2',
+    );
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it('agenda una cita "all" en el dispositivo de otro usuario', async () => {
+    await syncAll(
+      [{ ...appointment, reminder_choice: 'both', notify_audience: 'all' }],
+      [],
+      'none',
+      NOW,
+      [],
+      'none',
+      'u2',
+    );
+    expect(mockSchedule).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancela el aviso local si la cita deja de ser "all"', async () => {
+    await syncAll(
+      [{ ...appointment, reminder_choice: 'both', notify_audience: 'all' }],
+      [],
+      'none',
+      NOW,
+      [],
+      'none',
+      'u2',
+    );
+    mockSchedule.mockClear();
+    mockCancel.mockClear();
+    await syncAll(
+      [{ ...appointment, reminder_choice: 'both', notify_audience: 'me' }],
+      [],
+      'none',
+      NOW,
+      [],
+      'none',
+      'u2',
+    );
+    expect(mockSchedule).not.toHaveBeenCalled();
+    expect(mockCancel).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('gate cuando notificaciones desactivadas', () => {
   it('scheduleAppointment no agenda si desactivadas', async () => {
     mockStorage.delete('notifications_enabled');
-    await scheduleAppointment(appointment, 'both');
+    await scheduleAppointment(appointment, 'both', 'u1');
     expect(mockSchedule).not.toHaveBeenCalled();
   });
 
@@ -690,13 +745,13 @@ describe('cola: recuperación ante tarea colgada', () => {
 
     // Primera operación se cuelga para siempre (expo-notifications no responde).
     mockSchedule.mockImplementationOnce(() => new Promise<string>(() => undefined));
-    const hung = scheduleAppointment({ ...appointment, reminder_choice: 'both' }, 'both');
+    const hung = scheduleAppointment({ ...appointment, reminder_choice: 'both' }, 'both', 'u1');
     const hungSettled = jest.fn();
     void hung.then(hungSettled, hungSettled);
 
     // La segunda debe ejecutarse igual gracias al corte por tiempo de la cola.
     mockSchedule.mockImplementation(() => Promise.resolve('notif-luego'));
-    await expect(scheduleAppointment({ ...appointment, id: 'a2' }, 'both')).resolves.toBeUndefined();
+    await expect(scheduleAppointment({ ...appointment, id: 'a2' }, 'both', 'u1')).resolves.toBeUndefined();
     expect(mockSchedule).toHaveBeenCalledWith(
       expect.objectContaining({
         content: expect.objectContaining({ data: expect.objectContaining({ id: 'a2' }) }),
@@ -712,6 +767,7 @@ describe('nevera: programación local', () => {
     user_id: 'u1',
     name: 'Leche',
     expiry_date: '2026-09-26',
+    notify_audience: 'me' as 'me' | 'all',
     quantity: 2,
     unit: 'L',
     done: false,
@@ -720,7 +776,7 @@ describe('nevera: programación local', () => {
 
   it('programa los dos avisos y guarda las claves', async () => {
     jest.replaceProperty(Platform, 'OS', 'android');
-    await scheduleFridgeItem(fridgeItem, 'both');
+    await scheduleFridgeItem(fridgeItem, 'both', 'u1');
     expect(mockSchedule).toHaveBeenCalledTimes(2);
     const map = JSON.parse(mockStorage.get('notification_map_v1') ?? '{}');
     expect(Object.keys(map).sort()).toEqual(['fridge:f1:day-before', 'fridge:f1:same-day']);
@@ -728,9 +784,9 @@ describe('nevera: programación local', () => {
 
   it('none cancela las claves existentes y no programa', async () => {
     jest.replaceProperty(Platform, 'OS', 'android');
-    await scheduleFridgeItem(fridgeItem, 'both');
+    await scheduleFridgeItem(fridgeItem, 'both', 'u1');
     mockSchedule.mockClear();
-    await scheduleFridgeItem(fridgeItem, 'none');
+    await scheduleFridgeItem(fridgeItem, 'none', 'u1');
     expect(mockSchedule).not.toHaveBeenCalled();
     const map = JSON.parse(mockStorage.get('notification_map_v1') ?? '{}');
     expect(Object.keys(map)).toEqual([]);
@@ -738,9 +794,9 @@ describe('nevera: programación local', () => {
 
   it('scheduleFridgeItem cancela y no agenda si el ítem ya está consumido', async () => {
     jest.replaceProperty(Platform, 'OS', 'android');
-    await scheduleFridgeItem(fridgeItem, 'both');
+    await scheduleFridgeItem(fridgeItem, 'both', 'u1');
     mockSchedule.mockClear();
-    await scheduleFridgeItem({ ...fridgeItem, done: true }, 'both');
+    await scheduleFridgeItem({ ...fridgeItem, done: true, notify_audience: 'me' as const }, 'both', 'u1');
     expect(mockSchedule).not.toHaveBeenCalled();
     const map = JSON.parse(mockStorage.get('notification_map_v1') ?? '{}');
     expect(Object.keys(map)).toEqual([]);
@@ -748,13 +804,13 @@ describe('nevera: programación local', () => {
 
   it('scheduleFridgeItems ignora los consumidos', async () => {
     jest.replaceProperty(Platform, 'OS', 'android');
-    await scheduleFridgeItems([{ ...fridgeItem, done: true }], 'both');
+    await scheduleFridgeItems([{ ...fridgeItem, done: true, notify_audience: 'me' as const }], 'both', 'u1');
     expect(mockSchedule).not.toHaveBeenCalled();
   });
 
   it('cancelEntityKey borra las dos claves de una nevera', async () => {
     jest.replaceProperty(Platform, 'OS', 'android');
-    await scheduleFridgeItem(fridgeItem, 'both');
+    await scheduleFridgeItem(fridgeItem, 'both', 'u1');
     await cancelEntityKey('fridge', 'f1');
     const map = JSON.parse(mockStorage.get('notification_map_v1') ?? '{}');
     expect(Object.keys(map)).toEqual([]);
@@ -766,5 +822,51 @@ describe('nevera: programación local', () => {
     expect(await getFridgeChoice()).toBe('same-day');
     jest.replaceProperty(Platform, 'OS', 'web');
     expect(await getFridgeChoice()).toBe('none');
+  });
+
+  it('syncAll respeta la audiencia del ítem de nevera', async () => {
+    await syncAll([], [], 'none', NOW, [{ ...fridgeItem, notify_audience: 'all' }], 'both', 'u2');
+    expect(mockSchedule).toHaveBeenCalledTimes(2);
+
+    mockSchedule.mockClear();
+    await syncAll([], [], 'none', NOW, [{ ...fridgeItem, notify_audience: 'me' }], 'both', 'u2');
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+});
+
+describe('audiencia en programación directa', () => {
+  const item = {
+    id: 'f2',
+    casa_id: 'c1',
+    user_id: 'u1',
+    name: 'Pan',
+    expiry_date: '2026-09-26',
+    notify_audience: 'me' as 'me' | 'all',
+    quantity: 1,
+    unit: null,
+    done: false,
+    created_at: '2026-09-01',
+  };
+
+  it('no agenda una cita "me" en el dispositivo de otro usuario', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    await scheduleAppointment({ ...appointment, user_id: 'u2' }, 'both', 'u1');
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it('no agenda un ítem "me" en el dispositivo de otro usuario', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    await scheduleFridgeItem({ ...item, user_id: 'u2' }, 'both', 'u1');
+    expect(mockSchedule).not.toHaveBeenCalled();
+  });
+
+  it('no agenda un lote con ítems "me" ajenos', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    await scheduleFridgeItems(
+      [{ ...item, user_id: 'u2' }],
+      'both',
+      'u1',
+    );
+    expect(mockSchedule).not.toHaveBeenCalled();
   });
 });

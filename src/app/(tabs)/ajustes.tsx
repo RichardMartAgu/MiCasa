@@ -599,6 +599,7 @@ export default function AjustesScreen() {
           new Date(),
           fridgeItems,
           fridgeChoice ?? 'none',
+          user?.id,
         );
       } else {
         await setNotificationsEnabled(false);
@@ -679,7 +680,7 @@ export default function AjustesScreen() {
       if (isWeb) {
         await syncPushPreferences(user, { fridgeChoice: choice });
       } else {
-        await scheduleFridgeItems(fridgeItems, choice);
+        await scheduleFridgeItems(fridgeItems, choice, user?.id);
       }
     } catch (error) {
       setFridgeChoiceState(previous);

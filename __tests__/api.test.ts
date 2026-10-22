@@ -299,3 +299,39 @@ describe('addAppointment', () => {
     );
   });
 });
+describe('audiencia de avisos', () => {
+  it('rechaza una audiencia inválida sin tocar la base', async () => {
+    mockFrom.mockClear();
+    const appointment = await addAppointment({
+      casa_id: 'c',
+      user_id: 'u',
+      title: 't',
+      kind: 'otro',
+      starts_at: '2026-01-01',
+      notify_audience: 'casa' as unknown as 'me',
+    });
+    const fridge = await addFridgeItem({
+      casa_id: 'c',
+      name: 'Leche',
+      expiry_date: '2026-01-01',
+      notify_audience: 'todos' as unknown as 'all',
+    });
+    const appointmentUpdate = await updateAppointment('1', {
+      title: 't',
+      kind: 'otro',
+      starts_at: '2026-01-01',
+      notify_audience: 'casa' as unknown as 'me',
+    });
+    const fridgeUpdate = await updateFridgeItem('1', {
+      name: 'Leche',
+      expiry_date: '2026-01-01',
+      notify_audience: 'todos' as unknown as 'all',
+    });
+
+    expect(appointment.error).toEqual({ message: 'Audiencia de aviso no válida.' });
+    expect(fridge.error).toEqual({ message: 'Audiencia de aviso no válida.' });
+    expect(appointmentUpdate).toEqual({ message: 'Audiencia de aviso no válida.' });
+    expect(fridgeUpdate.error).toEqual({ message: 'Audiencia de aviso no válida.' });
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+});

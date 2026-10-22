@@ -114,6 +114,7 @@ const upcomingAppointment: Appointment = {
   starts_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   reminder_at: null,
   reminder_choice: 'none',
+  notify_audience: 'me',
   created_at: '2026-09-01',
 };
 const pastAppointment: Appointment = {
@@ -128,6 +129,7 @@ const pastAppointment: Appointment = {
   starts_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
   reminder_at: null,
   reminder_choice: 'none',
+  notify_audience: 'me',
   created_at: '2026-08-01',
 };
 
@@ -213,6 +215,39 @@ describe('CitasScreen', () => {
       );
       const payload = mockAddAppointment.mock.calls[0][0] as { starts_at: string };
       expect(payload.starts_at).toMatch(/Z$/);
+    });
+  });
+
+  it('guarda la audiencia elegida al crear cita', async () => {
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+
+    expect(getByText('Solo yo')).toBeTruthy();
+    fireEvent.press(getByText('Toda la casa'));
+    fireEvent.changeText(getByLabelText('Título'), 'Cena de vecinos');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockAddAppointment).toHaveBeenCalledWith(
+        expect.objectContaining({ notify_audience: 'all' }),
+      );
+    });
+  });
+
+  it('por defecto avisa solo a quien crea la cita', async () => {
+    const { getByText, getByLabelText } = setup([]);
+
+    fireEvent.press(getByText('add'));
+    await waitFor(() => expect(getByText('Nueva cita')).toBeTruthy());
+    fireEvent.changeText(getByLabelText('Título'), 'Cena de vecinos');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockAddAppointment).toHaveBeenCalledWith(
+        expect.objectContaining({ notify_audience: 'me' }),
+      );
     });
   });
 
@@ -345,6 +380,7 @@ describe('CitasScreen', () => {
       expect(mockScheduleAppointment).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'a1', title: 'Vacunación' }),
         'both',
+        'u1',
       );
     });
   });
@@ -466,6 +502,7 @@ describe('CitasScreen', () => {
       expect(mockScheduleAppointment).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'a1', title: 'Vacunación' }),
         'both',
+        'u1',
       );
     });
   });

@@ -58,6 +58,12 @@ import {
 } from '@/lib/notifications';
 import { sendNowPush } from '@/lib/web-push';
 import type { Appointment, AppointmentKindRow } from '@/lib/types';
+import {
+  isValidNotifyAudience,
+  notifyAudienceLabels,
+  notifyAudiences,
+  type NotifyAudience,
+} from '@/lib/notification-audience';
 import { validateDate, validateOptionalText, validateTitle } from '@/lib/validation';
 
 const DEFAULT_KINDS: { name: string; icon: AppointmentIcon }[] = [
@@ -104,6 +110,7 @@ export default function CitasScreen() {
   const [date, setDate] = useState(new Date());
   const [time, setTime] = useState(new Date());
   const [reminderChoice, setReminderChoice] = useState<ReminderChoice>('none');
+  const [notifyAudience, setNotifyAudience] = useState<NotifyAudience>('me');
   const [errors, setErrors] = useState<{
     title?: string;
     date?: string;
@@ -157,6 +164,7 @@ export default function CitasScreen() {
     setDate(new Date());
     setTime(new Date());
     setReminderChoice('none');
+    setNotifyAudience('me');
     setErrors({});
     setModalVisible(true);
   }
@@ -171,6 +179,9 @@ export default function CitasScreen() {
       reminderChoices.includes(appointment.reminder_choice as ReminderChoice)
         ? (appointment.reminder_choice as ReminderChoice)
         : 'none',
+    );
+    setNotifyAudience(
+      isValidNotifyAudience(appointment.notify_audience) ? appointment.notify_audience : 'me',
     );
     const parsed = new Date(appointment.starts_at);
     if (!Number.isNaN(parsed.getTime())) {
@@ -218,6 +229,7 @@ export default function CitasScreen() {
       starts_at: startsAt,
       reminder_at: reminderAtRaw,
       reminder_choice: choice,
+      notify_audience: notifyAudience,
     };
     let error: { message: string } | null = null;
     let saved: Appointment | null = null;
@@ -274,11 +286,11 @@ export default function CitasScreen() {
           'Esta cita tiene recordatorio, pero las notificaciones están apagadas. No recibirás el aviso.',
         );
         if (result === 'enabled') {
-          await scheduleAppointment(appointment, choice);
+          await scheduleAppointment(appointment, choice, user?.id);
         }
         return;
       }
-      await scheduleAppointment(appointment, choice);
+      await scheduleAppointment(appointment, choice, user?.id);
     } catch {
       // el sync por realtime reintentará
     }
@@ -545,6 +557,26 @@ export default function CitasScreen() {
                     <Text
                       style={[styles.chipText, reminderChoice === value && styles.chipTextSelected]}>
                       {reminderChoiceLabels[value]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={styles.fieldLabel}>Avisar a</Text>
+              <View style={styles.kindRow}>
+                {notifyAudiences.map((value) => (
+                  <Pressable
+                    key={value}
+                    style={[styles.chip, notifyAudience === value && styles.chipSelected]}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: notifyAudience === value }}
+                    onPress={() => setNotifyAudience(value)}>
+                    <Text
+                      style={[
+                        styles.chipText,
+                        notifyAudience === value && styles.chipTextSelected,
+                      ]}>
+                      {notifyAudienceLabels[value]}
                     </Text>
                   </Pressable>
                 ))}

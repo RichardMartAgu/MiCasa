@@ -50,7 +50,15 @@ export function useNotificationSync(): void {
       if (!active || !enabled) return;
       const birthdayChoice = await getBirthdayChoice();
       const fridgeChoice = await getFridgeChoice();
-      await syncAll(appointments, contacts, birthdayChoice, new Date(), fridgeItems, fridgeChoice);
+      await syncAll(
+        appointments,
+        contacts,
+        birthdayChoice,
+        new Date(),
+        fridgeItems,
+        fridgeChoice,
+        user.id,
+      );
     })();
     return () => {
       active = false;

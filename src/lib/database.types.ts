@@ -17,6 +17,7 @@ export type Database = {
           id: string
           kind: string
           location: string | null
+          notify_audience: 'me' | 'all'
           person: string | null
           reminder_at: string | null
           reminder_choice: string
@@ -31,6 +32,7 @@ export type Database = {
           id?: string
           kind?: string
           location?: string | null
+          notify_audience?: 'me' | 'all'
           person?: string | null
           reminder_at?: string | null
           reminder_choice?: string
@@ -45,6 +47,7 @@ export type Database = {
           id?: string
           kind?: string
           location?: string | null
+          notify_audience?: 'me' | 'all'
           person?: string | null
           reminder_at?: string | null
           reminder_choice?: string
@@ -233,6 +236,7 @@ export type Database = {
           expiry_date: string
           id: string
           name: string
+          notify_audience: 'me' | 'all'
           quantity: number | null
           unit: string | null
           user_id: string
@@ -244,6 +248,7 @@ export type Database = {
           expiry_date: string
           id?: string
           name: string
+          notify_audience?: 'me' | 'all'
           quantity?: number | null
           unit?: string | null
           user_id?: string
@@ -255,6 +260,7 @@ export type Database = {
           expiry_date?: string
           id?: string
           name?: string
+          notify_audience?: 'me' | 'all'
           quantity?: number | null
           unit?: string | null
           user_id?: string

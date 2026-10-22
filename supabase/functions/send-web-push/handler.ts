@@ -326,7 +326,7 @@ async function fetchCasaIds(db: Db, userId: string): Promise<string[] | null> {
   return ((data ?? []) as { casa_id: string }[]).map((m) => m.casa_id);
 }
 
-/** Citas propias, en casas de las que sigue siendo miembro, con recordatorio. */
+/** Citas visibles para el usuario (propias o de toda la casa), con recordatorio. */
 async function fetchAppointments(
   db: Db,
   userId: string,
@@ -334,13 +334,14 @@ async function fetchAppointments(
   now: Date,
   from: Date,
 ): Promise<AppointmentRow[] | null> {
+  const viewerId = userId;
   if (casaIds.length === 0) return [];
 
   const { data, error } = await db
     .from("appointments")
-    .select("id, title, starts_at, reminder_choice")
-    .eq("user_id", userId)
+    .select("id, title, starts_at, reminder_choice, user_id, notify_audience")
     .in("casa_id", casaIds)
+    .or(`user_id.eq.${userId},notify_audience.eq.all`)
     .in("reminder_choice", ["day-before", "same-day", "both"])
     .gte("starts_at", from.toISOString())
     .lte("starts_at", appointmentQueryUpperBound(now).toISOString());
@@ -381,6 +382,7 @@ async function fetchFridgeItems(
   casaIds: string[],
   now: Date,
   timeZone: string,
+  viewerId: string,
 ): Promise<FridgeItemRow[] | null> {
   if (casaIds.length === 0) return [];
 
@@ -390,8 +392,9 @@ async function fetchFridgeItems(
 
   const { data, error } = await db
     .from("fridge_items")
-    .select("id, name, expiry_date")
+    .select("id, name, expiry_date, user_id, notify_audience")
     .in("casa_id", casaIds)
+    .or(`user_id.eq.${viewerId},notify_audience.eq.all`)
     .eq("done", false)
     .in("expiry_date", [today, tomorrow])
     .order("expiry_date", { ascending: true })
@@ -449,7 +452,12 @@ async function buildDispatches(
 
     const appointments = await fetchAppointments(db, group.userId, casaIds, now, from);
     if (appointments !== null) {
-      out.push(...buildAppointmentDispatches(appointments, context).map((d) => ({ ...d, ...target })));
+      out.push(
+        ...buildAppointmentDispatches(appointments, context, group.userId).map((d) => ({
+          ...d,
+          ...target,
+        })),
+      );
 
     }
 
@@ -463,10 +471,10 @@ async function buildDispatches(
 
     const fridgeChoice = fridgeChoiceFor(pref);
     if (fridgeChoice !== "none") {
-      const fridgeItems = await fetchFridgeItems(db, casaIds, now, group.timezone);
+      const fridgeItems = await fetchFridgeItems(db, casaIds, now, group.timezone, group.userId);
       if (fridgeItems !== null && fridgeItems.length > 0) {
         out.push(
-          ...buildFridgeDispatches(fridgeItems, fridgeChoice, context).map((d) => ({
+          ...buildFridgeDispatches(fridgeItems, fridgeChoice, context, group.userId).map((d) => ({
             ...d,
             ...target,
           })),

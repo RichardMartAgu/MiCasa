@@ -904,3 +904,65 @@ Deno.test("buildFridgeDispatches ignora fechas inválidas y nombres con controle
   assertEquals(out[0].refId, "f1");
   assert(!out[0].title.includes("\u202E"));
 });
+
+Deno.test("buildAppointmentDispatches respeta notify_audience", () => {
+  const appointment = {
+    id: "a1",
+    title: "Médico",
+    starts_at: "2026-03-16T10:00:00Z",
+    reminder_choice: "same-day",
+    user_id: "u1",
+    notify_audience: "me",
+  };
+  const contexto = ctx("2026-03-16T08:05:00Z", MADRID);
+  assertEquals(buildAppointmentDispatches([appointment], contexto, "u1").length, 1);
+  assertEquals(buildAppointmentDispatches([appointment], contexto, "u2").length, 0);
+
+  const paraCasa = { ...appointment, notify_audience: "all" };
+  assertEquals(buildAppointmentDispatches([paraCasa], contexto, "u2").length, 1);
+
+  // Un valor ilegible se repliega a "me", no a "all".
+  const ilegible = { ...appointment, notify_audience: "casa" };
+  assertEquals(buildAppointmentDispatches([ilegible], contexto, "u2").length, 0);
+
+  // Fila legacy sin la columna: también se repliega a "me".
+  const legacy = { id: "a1", title: "Médico", starts_at: "2026-03-16T10:00:00Z", reminder_choice: "same-day", user_id: "u1" };
+  assertEquals(buildAppointmentDispatches([legacy], contexto, "u1").length, 1);
+  assertEquals(buildAppointmentDispatches([legacy], contexto, "u2").length, 0);
+
+  // Sin viewer no se filtra (llamadores antiguos y tests previos).
+  assertEquals(buildAppointmentDispatches([appointment], contexto).length, 1);
+
+  // reminder_choice "none" no genera avisos aunque la audiencia sea "all".
+  const sinAviso = { ...appointment, notify_audience: "all", reminder_choice: "none" };
+  assertEquals(buildAppointmentDispatches([sinAviso], contexto, "u2").length, 0);
+});
+
+Deno.test("buildFridgeDispatches respeta notify_audience", () => {
+  const item = {
+    id: "f1",
+    name: "Leche",
+    expiry_date: "2026-03-16",
+    user_id: "u1",
+    notify_audience: "me",
+  };
+  const contexto = ctx("2026-03-16T08:05:00Z", MADRID);
+  assertEquals(buildFridgeDispatches([item], "same-day", contexto, "u1").length, 1);
+  assertEquals(buildFridgeDispatches([item], "same-day", contexto, "u2").length, 0);
+
+  const paraCasa = { ...item, notify_audience: "all" };
+  assertEquals(buildFridgeDispatches([paraCasa], "same-day", contexto, "u2").length, 1);
+
+  // Un valor ilegible se repliega a "me", no a "all".
+  const ilegible = { ...item, notify_audience: "casa" };
+  assertEquals(buildFridgeDispatches([ilegible], "same-day", contexto, "u2").length, 0);
+  assertEquals(buildFridgeDispatches([ilegible], "same-day", contexto, "u1").length, 1);
+
+  // Fila legacy sin la columna: también se repliega a "me".
+  const legacy = { id: "f1", name: "Leche", expiry_date: "2026-03-16", user_id: "u1" };
+  assertEquals(buildFridgeDispatches([legacy], "same-day", contexto, "u1").length, 1);
+  assertEquals(buildFridgeDispatches([legacy], "same-day", contexto, "u2").length, 0);
+
+  // preference "none" no genera avisos aunque la audiencia sea "all".
+  assertEquals(buildFridgeDispatches([paraCasa], "none", contexto, "u2").length, 0);
+});

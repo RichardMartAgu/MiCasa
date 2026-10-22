@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { friendlyError } from './errors';
+import { isValidNotifyAudience } from './notification-audience';
 import { isAppointmentIcon, type AppointmentIcon } from './appointment-icons';
 import type {
   Appointment,
@@ -109,6 +110,7 @@ export type AppointmentInput = {
   starts_at: string;
   reminder_at?: string | null;
   reminder_choice?: string;
+  notify_audience?: 'me' | 'all';
 };
 
 export async function fetchAppointments(casaId: string): Promise<Appointment[]> {
@@ -124,6 +126,9 @@ export async function fetchAppointments(casaId: string): Promise<Appointment[]> 
 export async function addAppointment(
   input: { casa_id: string; user_id: string } & AppointmentInput,
 ): Promise<{ error: ApiError | null; data?: Appointment }> {
+  if (input.notify_audience !== undefined && !isValidNotifyAudience(input.notify_audience)) {
+    return { error: { message: 'Audiencia de aviso no válida.' } };
+  }
   const { data, error } = await supabase
     .from('appointments')
     .insert({ ...input, reminder_choice: input.reminder_choice ?? 'none' })
@@ -136,6 +141,9 @@ export async function updateAppointment(
   id: string,
   input: AppointmentInput,
 ): Promise<ApiError | null> {
+  if (input.notify_audience !== undefined && !isValidNotifyAudience(input.notify_audience)) {
+    return { message: 'Audiencia de aviso no válida.' };
+  }
   const { error } = await supabase
     .from('appointments')
     .update({ ...input, reminder_choice: input.reminder_choice ?? 'none' })
@@ -260,6 +268,7 @@ export type FridgeItemInput = {
   expiry_date: string;
   quantity?: number | null;
   unit?: string | null;
+  notify_audience?: 'me' | 'all';
 };
 
 export async function fetchFridgeItems(casaId: string): Promise<FridgeItem[]> {
@@ -276,6 +285,9 @@ export async function fetchFridgeItems(casaId: string): Promise<FridgeItem[]> {
 export async function addFridgeItem(
   input: { casa_id: string } & FridgeItemInput,
 ): Promise<{ error: ApiError | null; data?: FridgeItem }> {
+  if (input.notify_audience !== undefined && !isValidNotifyAudience(input.notify_audience)) {
+    return { error: { message: 'Audiencia de aviso no válida.' } };
+  }
   const { data, error } = await supabase.from('fridge_items').insert(input).select().single();
   return { error: toError(error), data: (data as FridgeItem | null) ?? undefined };
 }
@@ -284,6 +296,9 @@ export async function updateFridgeItem(
   id: string,
   input: FridgeItemInput,
 ): Promise<{ error: ApiError | null; data?: FridgeItem }> {
+  if (input.notify_audience !== undefined && !isValidNotifyAudience(input.notify_audience)) {
+    return { error: { message: 'Audiencia de aviso no válida.' } };
+  }
   const { data, error } = await supabase
     .from('fridge_items')
     .update(input)

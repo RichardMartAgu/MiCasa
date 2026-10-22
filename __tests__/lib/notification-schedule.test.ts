@@ -29,6 +29,7 @@ const appointment: Appointment = {
   starts_at: '2026-09-25T10:00:00',
   reminder_at: null,
   reminder_choice: 'none',
+  notify_audience: 'me',
   created_at: '2026-09-01',
 };
 
@@ -365,6 +366,7 @@ describe('nevera', () => {
     user_id: 'u1',
     name: 'Leche',
     expiry_date: '2026-03-16',
+    notify_audience: 'me' as 'me' | 'all',
     quantity: 2,
     unit: 'L',
     done: false,
