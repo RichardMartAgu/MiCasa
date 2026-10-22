@@ -88,6 +88,7 @@ const milk: FridgeItem = {
   user_id: 'u1',
   name: 'Leche',
   expiry_date: isoInDays(1),
+  notify_audience: 'me',
   quantity: 2,
   unit: 'L',
   done: false,
@@ -151,7 +152,25 @@ describe('NeveraScreen', () => {
       expect(mockAddFridgeItem).toHaveBeenCalledWith(
         expect.objectContaining({ casa_id: 'c1', name: 'Leche' }),
       );
-      expect(mockScheduleFridgeItem).toHaveBeenCalledWith(milk, 'both');
+      expect(mockScheduleFridgeItem).toHaveBeenCalledWith(milk, 'both', 'u1');
+    });
+  });
+
+  it('guarda la audiencia elegida al crear producto', async () => {
+    const { getByText, getByLabelText, getAllByDisplayValue } = setup([]);
+    fireEvent.press(getByLabelText('Añadir producto a la nevera'));
+    await waitFor(() => expect(getByText('Nuevo producto')).toBeTruthy());
+
+    expect(getByText('Solo yo')).toBeTruthy();
+    fireEvent.press(getByText('Toda la casa'));
+    const [nameInput] = getAllByDisplayValue('');
+    fireEvent.changeText(nameInput, 'Leche');
+    fireEvent.press(getByText('Añadir'));
+
+    await waitFor(() => {
+      expect(mockAddFridgeItem).toHaveBeenCalledWith(
+        expect.objectContaining({ notify_audience: 'all' }),
+      );
     });
   });
 

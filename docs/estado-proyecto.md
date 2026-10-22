@@ -436,3 +436,12 @@ ajena en `develop`, se documenta aquí en el momento; no de forma preventiva.
 - Commit/push: <pendiente/SHA/URL>
 - Siguiente: <acción>
 ```
+
+## Bloque audiencia de avisos — 2026-10-21
+
+- Objetivo: decidir por cita y por ítem de nevera si el aviso va solo al autor (`me`) o a toda la casa (`all`).
+- Archivos: `supabase/migrations/20261021_push_audiencia.sql`, `supabase/schema.sql`, `supabase/functions/send-web-push/{handler,reminders}.ts`, `src/lib/{notification-audience,notifications,api,database.types}.ts`, `src/app/(tabs)/{ajustes,citas,nevera}.tsx`, `src/hooks/use-notification-sync.ts` y tests.
+- Security: APROBADO tras cerrar la fuga de `syncAll`, el viewer de nevera y el borrado de usuario con el trigger de autoría.
+- QA: PASA — `tsc`, lint, 912 tests Jest, 128 tests Deno. `verify:deps` sigue fallando por 50 vulnerabilidades preexistentes del árbol Expo/Metro, igual que en `develop`.
+- Commit/push: pendiente de este bloque.
+- Siguiente: aplicar la migración, desplegar `send-web-push`, desplegar la web y probar el selector en dispositivo real.

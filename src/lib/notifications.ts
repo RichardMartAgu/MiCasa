@@ -21,6 +21,7 @@ import {
   type ReminderChoice,
 } from './notification-schedule';
 import type { Appointment, Contact, FridgeItem } from './types';
+import { isAudienceVisible } from './notification-audience';
 
 const CHANNEL_ID = 'recordatorios';
 const ENABLED_KEY = 'notifications_enabled';
@@ -250,6 +251,7 @@ async function cancelIdentifiers(identifiers: string[]): Promise<void> {
 export async function scheduleAppointment(
   appointment: Appointment,
   choice: ReminderChoice,
+  viewerId?: string,
 ): Promise<void> {
   if (Platform.OS === 'web') return;
   if (!(await areNotificationsEnabled())) return;
@@ -260,6 +262,11 @@ export async function scheduleAppointment(
       notificationKey('appointment', appointment.id, 'same-day'),
     ];
     await cancelIdentifiers(await cancelKeys(map, keys));
+    // Si no es audiencia visible, se cancelan los avisos antiguos y no se reagenda.
+    if (!isAudienceVisible(appointment, viewerId)) {
+      await writeMap(map);
+      return;
+    }
     const { triggers } = appointmentReminderDates(new Date(appointment.starts_at), choice);
     const fingerprint = appointmentFingerprint(appointment, choice);
     for (const trigger of triggers) {
@@ -366,6 +373,7 @@ export async function scheduleBirthdays(
 export async function scheduleFridgeItem(
   item: FridgeItem,
   choice: ReminderChoice,
+  viewerId?: string,
 ): Promise<void> {
   if (Platform.OS === 'web') return;
   if (!(await areNotificationsEnabled())) return;
@@ -376,6 +384,11 @@ export async function scheduleFridgeItem(
       notificationKey('fridge', item.id, 'same-day'),
     ];
     await cancelIdentifiers(await cancelKeys(map, keys));
+    // Si no es audiencia visible, se cancelan los avisos antiguos y no se reagenda.
+    if (!isAudienceVisible(item, viewerId)) {
+      await writeMap(map);
+      return;
+    }
     // Un ítem ya consumido no debe agendar nada; si se edita, sus avisos viejos
     // se acaban de cancelar arriba.
     if (item.done) {
@@ -409,6 +422,7 @@ export async function scheduleFridgeItem(
 export async function scheduleFridgeItems(
   items: FridgeItem[],
   choice: ReminderChoice,
+  viewerId?: string,
 ): Promise<void> {
   if (Platform.OS === 'web') return;
   if (!(await areNotificationsEnabled())) return;
@@ -418,6 +432,7 @@ export async function scheduleFridgeItems(
     await cancelIdentifiers(await cancelKeys(map, fridgeKeys));
     const now = new Date();
     for (const item of items) {
+      if (!isAudienceVisible(item, viewerId)) continue;
       if (item.done) continue;
       const expiry = safeDate(item.expiry_date);
       if (expiry === null) continue;
@@ -463,6 +478,7 @@ export async function syncAll(
   now = new Date(),
   fridgeItems: FridgeItem[] = [],
   fridgeChoice: ReminderChoice = 'none',
+  viewerId?: string,
 ): Promise<void> {
   if (Platform.OS === 'web') return;
   if (!(await areNotificationsEnabled())) return;
@@ -472,6 +488,7 @@ export async function syncAll(
     const toCancel: string[] = [];
 
     for (const appointment of appointments) {
+      if (!isAudienceVisible(appointment, viewerId)) continue;
       const choice = reminderChoices.includes(appointment.reminder_choice as ReminderChoice)
         ? (appointment.reminder_choice as ReminderChoice)
         : choiceFromReminderAt(appointment.reminder_at, new Date(appointment.starts_at));
@@ -562,6 +579,7 @@ export async function syncAll(
     }
 
     for (const item of fridgeItems) {
+      if (!isAudienceVisible(item, viewerId)) continue;
       if (item.done) continue;
       const expiry = safeDate(item.expiry_date);
       if (expiry === null) continue;

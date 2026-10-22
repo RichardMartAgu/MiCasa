@@ -37,6 +37,8 @@ export interface AppointmentRow {
   title: string;
   starts_at: string;
   reminder_choice: string;
+  user_id?: string | null;
+  notify_audience?: string | null;
 }
 
 export interface ContactRow {
@@ -49,6 +51,28 @@ export interface FridgeItemRow {
   id: string;
   name: string;
   expiry_date: string;
+  user_id?: string | null;
+  notify_audience?: string | null;
+}
+
+/**
+ * ¿El aviso de esta fila le corresponde a `viewerId`?
+ *
+ * Sin `viewerId` no se filtra: es el modo de los tests y de cualquier llamador
+ * anterior a la audiencia. En producción siempre llega, porque el reparto se
+ * hace por usuario y enviar el aviso a quien no le toca es peor que no enviarlo.
+ *
+ * Un `notify_audience` que no sea exactamente `all` se interpreta como `me`. La
+ * columna tiene `check` en la base, pero aquí el valor viene de una fila leída y
+ * el repliegue tiene que ser el que menos expone.
+ */
+function isVisibleTo(
+  row: { user_id?: string | null; notify_audience?: string | null },
+  viewerId?: string,
+): boolean {
+  if (!viewerId) return true;
+  if (row.notify_audience === "all") return true;
+  return row.user_id === viewerId;
 }
 
 export const REMINDER_HOUR = 9;
@@ -389,11 +413,13 @@ function withinWindow(fireAt: Date, window: Window): boolean {
 export function buildAppointmentDispatches(
   appointments: AppointmentRow[],
   context: Context,
+  viewerId?: string,
 ): Dispatch[] {
   const out: Dispatch[] = [];
   const today = localDayUtc(context.now, context.timeZone);
 
   for (const appointment of appointments) {
+    if (!isVisibleTo(appointment, viewerId)) continue;
     const choice = isValidChoice(appointment.reminder_choice)
       ? appointment.reminder_choice
       : "none";
@@ -685,6 +711,7 @@ export function buildFridgeDispatches(
   fridgeItems: FridgeItemRow[],
   choice: ReminderChoice,
   context: Context,
+  viewerId?: string,
 ): Dispatch[] {
   const out: Dispatch[] = [];
   if (choice === "none") return out;
@@ -692,6 +719,7 @@ export function buildFridgeDispatches(
   const today = localDayUtc(context.now, context.timeZone);
 
   for (const item of fridgeItems) {
+    if (!isVisibleTo(item, viewerId)) continue;
     if (!item.expiry_date) continue;
     const expiryLocal = item.expiry_date.slice(0, 10);
     if (expiryLocal.length !== 10) continue;
