@@ -257,11 +257,11 @@ Deno.test("preferencia both genera los dos avisos cuando toca", () => {
   assertEquals(nextDay[0].slot, "same-day");
 });
 
-Deno.test("nada se emite antes de las 09:00 ni después de la ventana", () => {
+Deno.test("el aviso de hoy no sale antes de las 09:00 ni después de empezar la cita", () => {
   const appointment = [{
     id: "a1",
     title: "Dentista",
-    starts_at: "2026-03-16T10:00:00Z",
+    starts_at: "2026-03-16T14:00:00Z",
     reminder_choice: "same-day" as const,
   }];
 
@@ -272,11 +272,28 @@ Deno.test("nada se emite antes de las 09:00 ni después de la ventana", () => {
     buildAppointmentDispatches(appointment, ctx("2026-03-16T08:00:00Z", MADRID)).length,
     1,
   );
-  // Fuera de la ventana de 180 min: ya no se reenvía.
+  // 14:00Z son las 15:00 en Madrid y la cita ya empezó: avisar "hoy" llega tarde.
   assertEquals(
-    buildAppointmentDispatches(appointment, ctx("2026-03-16T12:00:00Z", MADRID)),
+    buildAppointmentDispatches(appointment, ctx("2026-03-16T15:00:00Z", MADRID)),
     [],
   );
+});
+
+Deno.test("una cita de hoy creada después de las 09:00 avisa igual", () => {
+  // Antes esta cita nacía fuera de la ventana de 3 h y no avisaba nunca: la app
+  // se cerraba y no llegaba nada. `push_log` impide repetirlo, así que el aviso
+  // puede salir a cualquier hora mientras la cita no haya empezado.
+  const appointment = [{
+    id: "a1",
+    title: "Dentista",
+    starts_at: "2026-03-16T18:00:00Z",
+    reminder_choice: "same-day" as const,
+  }];
+
+  const dispatch = buildAppointmentDispatches(appointment, ctx("2026-03-16T15:30:00Z", MADRID));
+  assertEquals(dispatch.length, 1);
+  assertEquals(dispatch[0].slot, "same-day");
+  assertEquals(dispatch[0].title, "Cita hoy: Dentista");
 });
 
 Deno.test("la zona horaria del usuario decide la hora del aviso", () => {
@@ -879,8 +896,17 @@ Deno.test("buildFridgeDispatches avisa el día antes y el mismo día", () => {
   assertEquals(buildFridgeDispatches([item], "same-day", ctx("2026-03-17T08:05:00Z", MADRID)), []);
 });
 
-Deno.test("buildFridgeDispatches compara el día de calendario sin desplazarlo por zona", () => {
-  const item = { id: "f1", name: "Yogur", expiry_date: "2026-03-16" };
+Deno.test("buildFridgeDispatches avisa de una caducidad de hoy aunque se cree por la tarde", () => {
+  // Un producto metido a las 13:00 que caduca hoy nacía fuera de la ventana de
+  // 09:00–12:00 y no generaba aviso. Sigue siendo útil mientras dure el día.
+  const item = { id: "f1", name: "Leche", expiry_date: "2026-03-16" };
+  const tarde = buildFridgeDispatches([item], "same-day", ctx("2026-03-16T15:00:00Z", MADRID));
+  assertEquals(tarde.length, 1);
+  assertEquals(tarde[0].slot, "same-day");
+  assertEquals(tarde[0].title, "Caduca hoy: Leche");
+});
+
+Deno.test("buildFridgeDispatches compara el día de calendario sin desplazarlo por zona", () => {  const item = { id: "f1", name: "Yogur", expiry_date: "2026-03-16" };
   // En Ciudad de México (UTC-6) el aviso del mismo día sale a las 15:00Z.
   const mexico = buildFridgeDispatches(
     [item],

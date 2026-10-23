@@ -195,6 +195,10 @@ check(
   /addEventListener\(\s*["']notificationclick["']/.test(sw),
   'listener de notificationclick registrado: el aviso abre la app'
 );
+check(
+  /addEventListener\(\s*["']pushsubscriptionchange["']/.test(sw),
+  'listener de pushsubscriptionchange registrado: la suscripción se renueva sola'
+);
 check(sw.includes('showNotification'), 'showNotification presente para pintar el aviso');
 check(
   /self\.registration\.showNotification|registration\.showNotification/.test(sw),

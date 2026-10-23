@@ -130,6 +130,72 @@ export const VAPID_KEY_VERSION = '2026-09-28-v3';
 /** Rutas internas a las que puede llevar un aviso. Espejo de sw-src.js. */
 export const ALLOWED_PUSH_ROUTES = ['/citas', '/cumpleanos', '/nevera'] as const;
 
+/**
+ * Marca local de que en **este navegador** alguien activó los avisos.
+ *
+ * `push_preferences.enabled` es global del usuario, así que por sí sola no dice
+ * si este navegador llegó a optar por recibir avisos. La reconciliación la exige
+ * para no suscribir un equipo compartido donde nadie pulsó el interruptor.
+ */
+const PUSH_OPT_IN_PREFIX = 'micasa:web-push:opt-in:';
+const PUSH_LOCK_NAME = 'micasa:web-push';
+
+/**
+ * La marca es **por usuario**, no por navegador. Dos cuentas pueden compartir
+ * equipo: la segunda no puede heredar el consentimiento de la primera.
+ */
+function optInKey(userId: string): string {
+  return `${PUSH_OPT_IN_PREFIX}${userId}`;
+}
+
+function readOptIn(userId: string): boolean {
+  try {
+    return localStorage.getItem(optInKey(userId)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeOptIn(userId: string, value: boolean): void {
+  try {
+    if (value) localStorage.setItem(optInKey(userId), '1');
+    else localStorage.removeItem(optInKey(userId));
+  } catch {
+    // Sin localStorage no se puede recordar el opt-in; no es motivo para fallar.
+  }
+}
+
+/**
+ * Serializa alta, baja y reconciliación entre pestañas del mismo origen.
+ *
+ * Sin esto, dos pestañas que reconcilian a la vez pueden borrar e insertar la
+ * misma fila: la que pierde recibe 23505 y, si se trata como fila ajena, da de
+ * baja la suscripción compartida del navegador. El lock solo existe donde hay
+ * Web Locks; sin él, el camino de 23505 de `subscribeAndStore` relee la fila.
+ */
+async function withPushLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = (
+    navigator as unknown as {
+      locks?: { request: (name: string, callback: () => Promise<T>) => Promise<T> };
+    }
+  ).locks;
+  if (!locks || typeof locks.request !== 'function') return fn();
+  return locks.request(PUSH_LOCK_NAME, fn);
+}
+
+/** ¿La suscripción está firmada con la VAPID pública que usa ahora el servidor? */
+function usesCurrentVapid(subscription: PushSubscription | null): boolean {
+  const key = subscription?.options?.applicationServerKey;
+  if (!key) return true;
+  try {
+    const actual = new Uint8Array(key);
+    const expected = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+    return actual.length === expected.length && actual.every((byte, i) => byte === expected[i]);
+  } catch {
+    return true;
+  }
+}
+
 export type PushPermission = 'granted' | 'denied' | 'default' | 'unsupported';
 
 export interface PushSubscriptionRecord {
@@ -677,30 +743,34 @@ export async function getActiveSubscription(): Promise<PushSubscription | null> 
 export async function enableWebPush(user: User | null): Promise<EnableResult> {
   if (!isPushSupported()) return { status: 'unsupported' };
 
-  let permission: NotificationPermission;
-  try {
-    permission = await withTimeout(
-      Notification.requestPermission(),
-      PERMISSION_TIMEOUT_MS,
-      'el navegador no respondió al pedir permiso',
-    );
-  } catch (error) {
-    return failedBy(error);
-  }
-  if (permission !== 'granted') return { status: 'denied' };
+  return withPushLock(async () => {
+    let permission: NotificationPermission;
+    try {
+      permission = await withTimeout(
+        Notification.requestPermission(),
+        PERMISSION_TIMEOUT_MS,
+        'el navegador no respondió al pedir permiso',
+      );
+    } catch (error) {
+      return failedBy(error);
+    }
+    if (permission !== 'granted') return { status: 'denied' };
 
-  try {
-    const record = await withTimeout(
-      subscribeAndStore(user),
-      ACTIVATION_TIMEOUT_MS,
-      'la activación no ha terminado a tiempo',
-    );
-    return { status: 'enabled', record };
-  } catch (error) {
-    return failedBy(error);
-  }
+    try {
+      const record = await withTimeout(
+        subscribeAndStore(user),
+        ACTIVATION_TIMEOUT_MS,
+        'la activación no ha terminado a tiempo',
+      );
+      // Solo aquí, con el alta confirmada, este navegador queda marcado como
+      // opt-in de esta cuenta. La reconciliación depende de esta marca.
+      if (user) writeOptIn(user.id, true);
+      return { status: 'enabled', record };
+    } catch (error) {
+      return failedBy(error);
+    }
+  });
 }
-
 
 /**
  * Anota en `push_log` que el alta falló y por qué, para poder diagnosticarlo
@@ -722,6 +792,38 @@ async function noteSubscriptionProblem(
   if (error) {
     // El diagnóstico no puede ser la razón por la que el alta falle.
     console.warn('No se pudo anotar el motivo del alta de avisos', reason);
+  }
+}
+
+/**
+ * ¿La fila de este endpoint es de este usuario?
+ *
+ * Se consulta tras un 23505 para distinguir la carrera entre pestañas (la fila
+ * es mía y está bien: no hay que dar de baja nada) de un endpoint que pertenece
+ * a otra cuenta. `unknown` es un fallo de lectura, y no se puede tratar como
+ * "es de otro": el mensaje diría una mentira y podría llevar a decisiones
+ * equivocadas sobre una suscripción que no se ha podido comprobar.
+ */
+type EndpointOwnership = 'own' | 'other' | 'unknown';
+
+async function endpointOwnership(user: User, endpoint: string): Promise<EndpointOwnership> {
+  try {
+    const { data, error } = await withTimeout(
+      Promise.resolve(
+        supabase
+          .from('push_subscriptions')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('endpoint', endpoint)
+          .maybeSingle(),
+      ),
+      PREFS_READ_TIMEOUT_MS,
+      'la comprobación de la suscripción no ha terminado a tiempo',
+    );
+    if (error) return 'unknown';
+    return data ? 'own' : 'other';
+  } catch {
+    return 'unknown';
   }
 }
 
@@ -853,15 +955,28 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
   });
 
   if (error) {
-    // La suscripción ya existe en el navegador aunque el alta haya fallado. Si
-    // el endpoint es de otra cuenta (23505), dejarla viva significa que este
-    // navegador sigue recibiendo los avisos de la cuenta anterior mientras el
-    // interruptor marca que no hay nada que arreglar. Se da de baja local para
-    // que el estado visible y el real coincidan.
+    // La suscripción ya existe en el navegador aunque el alta haya fallado.
+    //
+    // 23505 puede ser otra cuenta (este navegador no debe recibir sus avisos) o
+    // la carrera de dos pestañas que reconcilian a la vez: la una insertó y la
+    // otra chocó. En el segundo caso la fila es propia y está bien; dar de baja
+    // aquí mataría la suscripción compartida que la primera pestaña acaba de
+    // guardar. En el primero NO se da de baja: la suscripción es la de la otra
+    // cuenta y soltarla desde aquí le quitaría los avisos a quien no hizo nada.
+    if (error.code === '23505') {
+      const propiedad = await endpointOwnership(user, record.endpoint);
+      if (propiedad === 'own') {
+        await syncPushPreferences(user, { enabled: true });
+        return record;
+      }
+      throw new Error(
+        propiedad === 'unknown'
+          ? 'no se pudo comprobar la suscripción; inténtalo otra vez'
+          : 'este navegador ya está registrado en otra cuenta',
+      );
+    }
     await darDeBaja(subscription);
-    throw new Error(
-      error.code === '23505' ? 'este navegador ya está registrado en otra cuenta' : error.message,
-    );
+    throw new Error('no se pudo guardar la suscripción de avisos');
   }
 
   try {
@@ -880,16 +995,22 @@ async function subscribeAndStore(user: User | null): Promise<PushSubscriptionRec
 export async function disableWebPush(user: User | null): Promise<EnableResult> {
   if (!isPushSupported()) return { status: 'unsupported' };
 
-  try {
-    await withTimeout(
-      unsubscribeAndDelete(user),
-      ACTIVATION_TIMEOUT_MS,
-      'la baja no ha terminado a tiempo',
-    );
-    return { status: 'disabled' };
-  } catch (error) {
-    return failedBy(error);
-  }
+  return withPushLock(async () => {
+    try {
+      await withTimeout(
+        unsubscribeAndDelete(user),
+        ACTIVATION_TIMEOUT_MS,
+        'la baja no ha terminado a tiempo',
+      );
+      // La marca local se borra solo con la baja confirmada: si se borrara antes
+      // y la baja fallara, este navegador podría volver a suscribirse solo en la
+      // siguiente apertura, justo lo que la persona acaba de apagar.
+      if (user) writeOptIn(user.id, false);
+      return { status: 'disabled' };
+    } catch (error) {
+      return failedBy(error);
+    }
+  });
 }
 
 async function unsubscribeAndDelete(user: User | null): Promise<void> {
@@ -1087,6 +1208,153 @@ export async function getStoredFridgeChoice(user: User | null): Promise<Reminder
   }
 
   return reminderChoices.includes(value as ReminderChoice) ? (value as ReminderChoice) : null;
+}
+
+/**
+ * ¿El interruptor maestro está encendido en la base?
+ *
+ * No usa `syncPushPreferences`, que solo escribe. Devuelve `false` si no se
+ * puede leer: reconciliar no debe crear una suscripción para quien apagó los
+ * avisos, y ante la duda lo prudente es no reactivar nada.
+ */
+async function isPushEnabledOnServer(user: User | null): Promise<boolean> {
+  if (!user) return false;
+  try {
+    const { data, error } = await withTimeout(
+      Promise.resolve(
+        supabase.from('push_preferences').select('enabled').eq('user_id', user.id).maybeSingle(),
+      ),
+      PREFS_READ_TIMEOUT_MS,
+      'la lectura del interruptor de avisos no ha terminado a tiempo',
+    );
+    if (error) throw new Error(error.message);
+    return (data as { enabled?: boolean | null } | null)?.enabled === true;
+  } catch (error) {
+    console.warn('No se pudo leer el interruptor de avisos guardado', errorText(error));
+    return false;
+  }
+}
+
+export type ReconcileResult = 'ok' | 'unsupported' | 'denied' | 'disabled' | 'failed';
+
+/**
+ * ¿La fila de la base ya apunta a este endpoint y usuario?
+ *
+ * Sirve para no volver a escribir en cada arranque. `subscribeAndStore` borra e
+ * inserta, y esa pareja desde dos pestañas a la vez puede acabar en un 23505 y
+ * en una baja local de una suscripción que la otra pestaña acaba de dejar bien.
+ * Si la fila ya está, solo se corrige la zona horaria, que no participa en el
+ * trigger de protección de estado.
+ */
+async function storedSubscriptionIsCurrent(
+  user: User,
+  endpoint: string,
+  timezone: string,
+): Promise<boolean> {
+  try {
+    const { data, error } = await withTimeout(
+      Promise.resolve(
+        supabase
+          .from('push_subscriptions')
+          .select('timezone, active')
+          .eq('user_id', user.id)
+          .eq('endpoint', endpoint)
+          .maybeSingle(),
+      ),
+      PREFS_READ_TIMEOUT_MS,
+      'la lectura de la suscripción guardada no ha terminado a tiempo',
+    );
+    if (error) throw new Error(error.message);
+    if (!data) return false;
+    const fila = data as { timezone?: string | null; active?: boolean | null };
+    // Una fila desactivada por fallos acumulados no está sirviendo: tratarla como
+    // actual haría que el interruptor dijera "activado" con los avisos muertos.
+    if (fila.active === false) return false;
+    if (fila.timezone !== timezone) {
+      await supabase
+        .from('push_subscriptions')
+        .update({ timezone })
+        .eq('user_id', user.id)
+        .eq('endpoint', endpoint);
+    }
+    return true;
+  } catch {
+    console.warn('No se pudo comprobar la suscripción guardada');
+    return false;
+  }
+}
+
+/**
+ * Revisa al arrancar que la suscripción de este navegador siga viva.
+ *
+ * El alta solo ocurría al pulsar el interruptor. Si Chrome rota el endpoint, se
+ * reinstala la PWA o se pierde la fila, `push_subscriptions` conserva un endpoint
+ * muerto: el servidor lo borra al recibir 410, el navegador sigue con una
+ * suscripción distinta que nadie subió, y el interruptor sigue en "activado".
+ * Desde ahí los avisos no vuelven a llegar nunca con la PWA cerrada, y no hay
+ * ningún error visible.
+ *
+ * Sin permiso no se pide nada: una PWA cerrada no puede enseñar el diálogo. Sin
+ * preferencia no se recrea nada: apagar los avisos es una decisión explícita.
+ */
+export async function reconcileWebPush(user: User | null): Promise<ReconcileResult> {
+  if (!user || !isPushSupported()) return 'unsupported';
+  if (notificationPermission() !== 'granted') return 'denied';
+
+  return withPushLock(async () => {
+    // Se relee dentro del lock: entre la comprobación y la escritura, otra
+    // pestaña puede haber apagado los avisos.
+    if (!(await isPushEnabledOnServer(user))) return 'disabled';
+
+    // Si la VAPID cambió, la suscripción vieja está firmada con otra clave y el
+    // servidor no puede usarla. Se compara la clave real de la suscripción y no
+    // solo la marca de localStorage: esa marca puede faltar.
+    let vapidChanged = false;
+    try {
+      const version = localStorage.getItem('micasa:vapid-key-version');
+      vapidChanged = version !== null && version !== VAPID_KEY_VERSION;
+    } catch {
+      // Sin localStorage no se puede saber; queda la comparación de la clave.
+    }
+
+    try {
+      const subscription = await getActiveSubscription();
+      const record = subscription ? toSubscriptionRecord(subscription) : null;
+
+      // Opt-in por navegador y por cuenta: la preferencia es global del usuario,
+      // así que por sí sola suscribiría un equipo compartido donde nadie pulsó el
+      // interruptor. Una suscripción que ya existe se adopta solo si la fila es de
+      // esta cuenta (alguien la activó aquí antes de que existiera esta marca);
+      // si pertenece a otra cuenta, no se hereda ni se da de baja sin acción suya.
+      if (!readOptIn(user.id)) {
+        const propiedad = record ? await endpointOwnership(user, record.endpoint) : 'other';
+        if (propiedad === 'unknown') return 'failed';
+        if (propiedad !== 'own') return 'disabled';
+        writeOptIn(user.id, true);
+      }
+
+      const current =
+        !vapidChanged &&
+        usesCurrentVapid(subscription) &&
+        record !== null &&
+        (await storedSubscriptionIsCurrent(user, record.endpoint, record.timezone));
+      if (current) return 'ok';
+
+      await withTimeout(
+        subscribeAndStore(user),
+        ACTIVATION_TIMEOUT_MS,
+        'la reconciliación de los avisos no ha terminado a tiempo',
+      );
+      return 'ok';
+    } catch {
+      // Silencioso a propósito: ocurre en segundo plano al abrir la app y no hay
+      // ningún sitio donde enseñarlo sin interrumpir. No se vuelca el error
+      // crudo: un mensaje de PostgREST podría llevar el endpoint, que es una
+      // credencial. El estado del interruptor ya se lee de la base en Ajustes.
+      console.warn('No se pudo reconciliar la suscripción de avisos');
+      return 'failed';
+    }
+  });
 }
 
 export type TestPushResult =

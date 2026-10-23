@@ -112,6 +112,33 @@ self.addEventListener('push', (event) => {
   );
 });
 
+/**
+ * Renueva la suscripción si el navegador la invalida.
+ *
+ * Chrome puede rotar el endpoint por su cuenta y avisa aquí. Sin este listener
+ * la suscripción se queda muerta en el navegador; el servidor recibe 410, borra
+ * la fila y desde entonces no hay a quién enviar. No se puede escribir en
+ * Supabase desde aquí: no hay sesión. Se vuelve a suscribir con la misma clave
+ * VAPID y la app sube el endpoint nuevo en la siguiente apertura, que es lo que
+ * hace `reconcileWebPush`.
+ */
+self.addEventListener('pushsubscriptionchange', (event) => {
+  const anterior = event.oldSubscription;
+  const clave = anterior && anterior.options && anterior.options.applicationServerKey;
+  if (!clave) return;
+
+  event.waitUntil(
+    self.registration.pushManager
+      .subscribe({ userVisibleOnly: true, applicationServerKey: clave })
+      .catch((error) => {
+        // Solo el nombre: el mensaje del navegador puede llevar la URL del
+        // endpoint, que es una credencial.
+        const nombre = error && error.name ? error.name : 'Error';
+        console.error('MiCasa: no se pudo renovar la suscripción push', nombre);
+      }),
+  );
+});
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = safeRoute(event.notification.data && event.notification.data.url);

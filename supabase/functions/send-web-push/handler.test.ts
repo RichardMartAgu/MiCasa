@@ -60,6 +60,8 @@ interface Call {
   inList: Record<string, unknown[]>;
   orFilter?: string;
   lt?: [string, unknown];
+  /** Filtro `.is(columna, null)`, que usa la recuperación de reservas. */
+  is?: [string, unknown];
   /** `maybeSingle` Was llamado: la respuesta es una fila, no una lista. */
   single?: boolean;
 }
@@ -148,6 +150,11 @@ class Query {
 
   lt(columna: string, valor: unknown): Query {
     this.call.lt = [columna, valor];
+    return this;
+  }
+
+  is(columna: string, valor: unknown): Query {
+    this.call.is = [columna, valor];
     return this;
   }
 
@@ -260,6 +267,11 @@ class FakeDb {
       // libre para volver a insertarla, y aquí se quedaría bloqueada para siempre.
       this.insertadas.delete(String(call.eq.dedupe_key));
       return SIN_ERROR;
+    }
+    if (call.table === "push_log" && call.op === "update" && this.guion["push_log:update"] === undefined) {
+      // Por defecto, ninguna fila cumple el filtro: marca de entrega ignorada y
+      // reserva no retomada. Los tests que quieren retomar una reserva lo guionizan.
+      return { data: [], error: null };
     }
 
     const cola = this.guion[`${call.table}:${call.op}`];
@@ -932,6 +944,65 @@ Deno.test("el reparto configura VAPID con las claves de Vault antes de enviar", 
   // `configureWebPush` a otro módulo, esto sigue atando que lee las suyas.
   assertEquals(push.configured?.publicKey, VAPID_PUBLIC);
   assertEquals(push.configured?.privateKey, VAPID_PRIVATE);
+});
+
+Deno.test("al entregar, el reparto marca la reserva con delivered_at", async () => {
+  const db = guionReparto();
+  await handle(peticionCron(), ENV, {
+    createDb: () => db as unknown as SupabaseClient,
+    now: () => AHORA_EN_LA_VENTANA,
+    push: pushSinInteres(),
+  });
+
+  const marca = db
+    .callsTo("push_log", "update")
+    .find((call) => typeof call.payload?.delivered_at === "string");
+  assert(marca, "el aviso se envió pero la reserva quedó sin marca de entrega");
+});
+
+Deno.test("una reserva entregada no se retoma en la siguiente vuelta", async () => {
+  const db = guionReparto();
+  const push = pushSinInteres();
+  const deps = { createDb: () => db as unknown as SupabaseClient, push };
+
+  await handle(peticionCron(), ENV, { ...deps, now: () => AHORA_EN_LA_VENTANA });
+  assertEquals(push.llamadas.filter((l) => l === "sendNotification").length, 1);
+
+  // Quince minutos después el mismo aviso vuelve a entrar en el reparto. La clave
+  // ya está, pero con `delivered_at`: no se reenvía ni se toca la reserva.
+  const cuerpoSegunda = await cuerpo(
+    await handle(peticionCron(), ENV, { ...deps, now: () => AHORA_EN_LA_VENTANA + 16 * 60_000 }),
+  );
+  assertEquals(cuerpoSegunda.skipped, 1);
+  assertEquals(push.llamadas.filter((l) => l === "sendNotification").length, 1);
+  assert(
+    db.callsTo("push_log", "update").some((call) => call.lt !== undefined),
+    "no se intentó comprobar si la reserva estaba abandonada",
+  );
+});
+
+Deno.test("una reserva abandonada se retoma y se envía", async () => {
+  // El guion devuelve una fila solo en la segunda escritura: la primera es la
+  // marca de entrega del primer envío, la segunda es la retomada.
+  const db = guionReparto({
+    "push_log:update": [
+      { data: null, error: null },
+      filas([{ id: "1", user_id: USER, dedupe_key: `appointment:${CITA}:same-day:2026-03-16:${MADRID}` }]),
+    ],
+  });
+  const push = pushSinInteres();
+  const deps = { createDb: () => db as unknown as SupabaseClient, push };
+
+  await handle(peticionCron(), ENV, { ...deps, now: () => AHORA_EN_LA_VENTANA });
+  assertEquals(push.llamadas.filter((l) => l === "sendNotification").length, 1);
+
+  // La invocación anterior murió entre reservar y enviar: con el reloj avanzado
+  // la reserva sin `delivered_at` es vieja y se puede reclamar.
+  const cuerpoSegunda = await cuerpo(
+    await handle(peticionCron(), ENV, { ...deps, now: () => AHORA_EN_LA_VENTANA + 16 * 60_000 }),
+  );
+  assertEquals(cuerpoSegunda.sent, 1);
+  assertEquals(push.llamadas.filter((l) => l === "sendNotification").length, 2);
 });
 
 Deno.test("el aviso de prueba también configura VAPID antes de enviar", async () => {
