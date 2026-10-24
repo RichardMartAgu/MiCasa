@@ -1,6 +1,6 @@
 # Web Push — recordatorios en la web
 
-Estado: **implementado y verificado en código y en producción. Pendiente: PR, deploy y prueba en un navegador real.**
+Estado: **implementado, mergeado (PR #122) y desplegado en producción el 2026-10-24 (función v17). Pendiente: prueba en un navegador real.**
 
 ## Qué resuelve
 
@@ -139,7 +139,7 @@ update public.push_log
 
 Si se despliega la función antes que la migración, la consulta de retoma falla (no existe `delivered_at`) y los duplicados no se recuperan; no se pierden avisos nuevos, pero el arreglo queda inerte. Un rollback de la función tampoco escribe `delivered_at`: repetir el backfill tras volver a desplegar.
 
-Comprobado en este bloque: `npx tsc --noEmit` limpio, `npx expo lint` limpio, `npx jest` 57/57 suites y 936/936 tests, `deno test` 133/133, `npm run build:web` correcto y `npm run verify:pwa` 67/67 (incluye la comprobación del listener `pushsubscriptionchange`). El `npm audit` sigue en rojo por vulnerabilidades heredadas de `develop`, no de este bloque; es lo que tumba el job de CI en todas las ramas. El conteo cambia con cada lock, así que no se fija aquí.
+Comprobado en este bloque: `npx tsc --noEmit` limpio, `npx expo lint` limpio, `npx jest` 57/57 suites y 936/936 tests, `deno test` 133/133, `npm run build:web` correcto y `npm run verify:pwa` 67/67 (incluye la comprobación del listener `pushsubscriptionchange`). `npm run verify:deps` limpio: `source-map-js` parcheado a 1.2.2 y `scripts/check-audit.mjs` deja pasar solo los dos advisories sin parche publicado (`node-forge@1.4.0` y `zod@3.25.76`), con fecha de revisión 2027-01-31. Cualquier advisory nuevo rompe CI.
 
 
 
