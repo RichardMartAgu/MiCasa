@@ -27,4 +27,5 @@ comment on column public.push_log.reclaimed_at is
 -- el cron recalcula la misma ventana en cada vuelta.
 update public.push_log
    set delivered_at = sent_at
- where delivered_at is null;
+ where delivered_at is null
+   and sent_at < now() - interval '15 minutes';

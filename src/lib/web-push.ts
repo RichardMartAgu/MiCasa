@@ -805,6 +805,7 @@ async function noteSubscriptionProblem(
  * equivocadas sobre una suscripción que no se ha podido comprobar.
  */
 type EndpointOwnership = 'own' | 'other' | 'unknown';
+type StoredSubscriptionState = 'current' | 'inactive' | 'missing' | 'unknown';
 
 async function endpointOwnership(user: User, endpoint: string): Promise<EndpointOwnership> {
   try {
@@ -1246,11 +1247,11 @@ export type ReconcileResult = 'ok' | 'unsupported' | 'denied' | 'disabled' | 'fa
  * Si la fila ya está, solo se corrige la zona horaria, que no participa en el
  * trigger de protección de estado.
  */
-async function storedSubscriptionIsCurrent(
+async function storedSubscriptionState(
   user: User,
   endpoint: string,
   timezone: string,
-): Promise<boolean> {
+): Promise<StoredSubscriptionState> {
   try {
     const { data, error } = await withTimeout(
       Promise.resolve(
@@ -1265,22 +1266,27 @@ async function storedSubscriptionIsCurrent(
       'la lectura de la suscripción guardada no ha terminado a tiempo',
     );
     if (error) throw new Error(error.message);
-    if (!data) return false;
+    if (!data) return 'missing';
     const fila = data as { timezone?: string | null; active?: boolean | null };
-    // Una fila desactivada por fallos acumulados no está sirviendo: tratarla como
-    // actual haría que el interruptor dijera "activado" con los avisos muertos.
-    if (fila.active === false) return false;
+    // Una fila desactivada por fallos acumulados no está sirviendo. No se
+    // reactiva sola: eso desharía la baja del servidor en cada apertura y
+    // volvería a enviar a un endpoint que falla. Solo la enciende una acción
+    // explícita del usuario desde Ajustes.
+    if (fila.active === false) return 'inactive';
     if (fila.timezone !== timezone) {
-      await supabase
+      const { error: timezoneError } = await supabase
         .from('push_subscriptions')
         .update({ timezone })
         .eq('user_id', user.id)
         .eq('endpoint', endpoint);
+      if (timezoneError) {
+        console.warn('No se pudo corregir la zona horaria de la suscripción');
+      }
     }
-    return true;
+    return 'current';
   } catch {
     console.warn('No se pudo comprobar la suscripción guardada');
-    return false;
+    return 'unknown';
   }
 }
 
@@ -1329,22 +1335,35 @@ export async function reconcileWebPush(user: User | null): Promise<ReconcileResu
       if (!readOptIn(user.id)) {
         const propiedad = record ? await endpointOwnership(user, record.endpoint) : 'other';
         if (propiedad === 'unknown') return 'failed';
+        // Sin marca local solo se adopta una fila que ya es de esta cuenta. Si
+        // localStorage se perdió, se exige volver a activar a mano: en un equipo
+        // compartido el permiso del navegador no demuestra quién dio el opt-in.
         if (propiedad !== 'own') return 'disabled';
-        writeOptIn(user.id, true);
       }
+
+      const estado =
+        record === null
+          ? 'missing'
+          : await storedSubscriptionState(user, record.endpoint, record.timezone);
+      if (estado === 'inactive') return 'disabled';
+      if (estado === 'unknown') return 'failed';
 
       const current =
         !vapidChanged &&
         usesCurrentVapid(subscription) &&
         record !== null &&
-        (await storedSubscriptionIsCurrent(user, record.endpoint, record.timezone));
-      if (current) return 'ok';
+        estado === 'current';
+      if (current) {
+        writeOptIn(user.id, true);
+        return 'ok';
+      }
 
       await withTimeout(
         subscribeAndStore(user),
         ACTIVATION_TIMEOUT_MS,
         'la reconciliación de los avisos no ha terminado a tiempo',
       );
+      writeOptIn(user.id, true);
       return 'ok';
     } catch {
       // Silencioso a propósito: ocurre en segundo plano al abrir la app y no hay

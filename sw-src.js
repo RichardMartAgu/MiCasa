@@ -125,7 +125,12 @@ self.addEventListener('push', (event) => {
 self.addEventListener('pushsubscriptionchange', (event) => {
   const anterior = event.oldSubscription;
   const clave = anterior && anterior.options && anterior.options.applicationServerKey;
-  if (!clave) return;
+  if (!clave) {
+    // Chrome puede entregar `oldSubscription` nulo. Sin la clave no se puede
+    // renovar; la reconciliación de la próxima apertura lo reintenta.
+    console.warn('MiCasa: pushsubscriptionchange sin clave VAPID anterior');
+    return;
+  }
 
   event.waitUntil(
     self.registration.pushManager

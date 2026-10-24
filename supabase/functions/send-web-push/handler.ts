@@ -1129,7 +1129,7 @@ async function runDispatch(db: Db, push: WebPushLike, secrets: PushSecrets, now:
 
   for (const dispatch of dispatches) {
     const key = dedupeKey(dispatch);
-
+    let reservaRetomada = false;
 
     // Idempotencia: solo envía la ejecución que gana la restricción de unicidad.
     const { error: claimError } = await db
@@ -1158,6 +1158,7 @@ async function runDispatch(db: Db, push: WebPushLike, secrets: PushSecrets, now:
           console.error("send-web-push: no se pudo retomar la reserva", String(retomarError));
         }
         if (!retomarError && Array.isArray(retomada) && retomada.length > 0) {
+          reservaRetomada = true;
           console.log(
             `send-web-push: reserva abandonada retomada key=${claveDeDiagnostico(dispatch)}`,
           );
@@ -1276,8 +1277,16 @@ async function runDispatch(db: Db, push: WebPushLike, secrets: PushSecrets, now:
       // Lo que nunca se reintenta es el `failure_count`: un fallo de
       // infraestructura no toca el contador, y por eso una suscripción válida no
       // se apaga porque el servidor tuviera la clave VAPID mal puesta.
-      await db.from("push_log").delete().eq("user_id", dispatch.userId).eq("dedupe_key", key);
-      console.log(`send-web-push: aviso reservado y no entregado, reserva liberada key=${claveDeDiagnostico(dispatch)}`);
+      if (reservaRetomada) {
+        // Una reserva ya retomada no se vuelve a liberar: `reclaimed_at` acota
+        // el reintento a una sola vez dentro de la ventana.
+        console.log(
+          `send-web-push: reserva retomada sin entrega, no se libera key=${claveDeDiagnostico(dispatch)}`,
+        );
+      } else {
+        await db.from("push_log").delete().eq("user_id", dispatch.userId).eq("dedupe_key", key);
+        console.log(`send-web-push: aviso reservado y no entregado, reserva liberada key=${claveDeDiagnostico(dispatch)}`);
+      }
     }
   }
 

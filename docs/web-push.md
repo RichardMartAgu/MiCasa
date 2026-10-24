@@ -139,7 +139,7 @@ update public.push_log
 
 Si se despliega la función antes que la migración, la consulta de retoma falla (no existe `delivered_at`) y los duplicados no se recuperan; no se pierden avisos nuevos, pero el arreglo queda inerte. Un rollback de la función tampoco escribe `delivered_at`: repetir el backfill tras volver a desplegar.
 
-Comprobado en este bloque: `npx tsc --noEmit` limpio, `npx expo lint` limpio, `npx jest` 57/57 suites y 936/936 tests, `deno test` 133/133, `npm run build:web` correcto y `npm run verify:pwa` 67/67 (incluye la comprobación del listener `pushsubscriptionchange`). El `npm audit` sigue con 50 hallazgos (21 moderados, 29 altos) heredados de `develop`, no de este bloque; es lo que tumba el job de CI en todas las ramas.
+Comprobado en este bloque: `npx tsc --noEmit` limpio, `npx expo lint` limpio, `npx jest` 57/57 suites y 936/936 tests, `deno test` 133/133, `npm run build:web` correcto y `npm run verify:pwa` 67/67 (incluye la comprobación del listener `pushsubscriptionchange`). El `npm audit` sigue en rojo por vulnerabilidades heredadas de `develop`, no de este bloque; es lo que tumba el job de CI en todas las ramas. El conteo cambia con cada lock, así que no se fija aquí.
 
 
 

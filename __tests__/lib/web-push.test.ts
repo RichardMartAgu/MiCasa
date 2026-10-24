@@ -2001,6 +2001,18 @@ describe('reconcileWebPush repara la suscripción al arrancar', () => {
     expect(db.insert).not.toHaveBeenCalled();
   });
 
+  it('no resucita una fila desactivada por fallos', async () => {
+    global.localStorage.setItem('micasa:web-push:opt-in:user-1', '1');
+    const db = stubSupabase({
+      enabled: true,
+      fila: { timezone: detectTimeZone(), active: false },
+    });
+
+    await expect(reconcileWebPush({ id: 'user-1' } as never)).resolves.toBe('disabled');
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
   it('no adopta la suscripción de otra cuenta en un equipo compartido', async () => {
     // Sin marca para esta cuenta y sin fila propia, no se hereda el consentimiento
     // de la cuenta anterior ni se da de baja su suscripción.
