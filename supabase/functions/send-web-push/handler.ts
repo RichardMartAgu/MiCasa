@@ -66,6 +66,16 @@ type EnvReader = { get(name: string): string | undefined };
 
 /** Ventana de normalización hacia atrás: cubre reintentos y retrasos del cron. */
 const CATCHUP_MINUTES = 180;
+/**
+ * Antigüedad a partir de la cual una reserva sin `delivered_at` se da por muerta.
+ *
+ * La reserva se escribe antes de enviar. Si la invocación se cae entre las dos
+ * cosas, la fila se queda y el cron la ve como duplicado en cada vuelta: el
+ * recordatorio no sale nunca. Quince minutos son varias vueltas del cron y
+ * muchísimo más que un envío normal, así que una reserva tan vieja sin confirmar
+ * no está en vuelo, está abandonada.
+ */
+const STALE_CLAIM_MINUTES = 15;
 /** Envíos fallidos seguidos antes de marcar la suscripción como inactiva. */
 const MAX_FAILURES = 5;
 /** Días que se conservan los registros de push_log. */
@@ -1119,7 +1129,7 @@ async function runDispatch(db: Db, push: WebPushLike, secrets: PushSecrets, now:
 
   for (const dispatch of dispatches) {
     const key = dedupeKey(dispatch);
-
+    let reservaRetomada = false;
 
     // Idempotencia: solo envía la ejecución que gana la restricción de unicidad.
     const { error: claimError } = await db
@@ -1127,14 +1137,40 @@ async function runDispatch(db: Db, push: WebPushLike, secrets: PushSecrets, now:
       .insert({ user_id: dispatch.userId, dedupe_key: key });
 
     if (claimError) {
-      // 23505 = clave duplicada: otra ejecución ya lo envió.
+      // 23505 = clave duplicada: otra ejecución ya la reservó. Puede ser un
+      // aviso ya entregado o una reserva abandonada (la invocación murió entre
+      // reservar y enviar). Solo se retoma la segunda: la primera lleva
+      // `delivered_at` y no se toca, o el cron reenviaría el mismo recordatorio
+      // en cada vuelta dentro de la ventana.
       if (claimError.code === "23505") {
-        console.log(`send-web-push: dispatch skipped (duplicate) key=${claveDeDiagnostico(dispatch)}`);
-        skipped++;
+        const staleBefore = new Date(now - STALE_CLAIM_MINUTES * 60_000).toISOString();
+        const { data: retomada, error: retomarError } = await db
+          .from("push_log")
+          .update({ sent_at: new Date(now).toISOString(), reclaimed_at: new Date(now).toISOString() })
+          .eq("user_id", dispatch.userId)
+          .eq("dedupe_key", key)
+          .is("delivered_at", null)
+          .is("reclaimed_at", null)
+          .lt("sent_at", staleBefore)
+          .select("id");
+
+        if (retomarError) {
+          console.error("send-web-push: no se pudo retomar la reserva", String(retomarError));
+        }
+        if (!retomarError && Array.isArray(retomada) && retomada.length > 0) {
+          reservaRetomada = true;
+          console.log(
+            `send-web-push: reserva abandonada retomada key=${claveDeDiagnostico(dispatch)}`,
+          );
+        } else {
+          console.log(`send-web-push: dispatch skipped (duplicate) key=${claveDeDiagnostico(dispatch)}`);
+          skipped++;
+          continue;
+        }
+      } else {
+        console.error("send-web-push: no se pudo reservar el envio", String(claimError));
         continue;
       }
-      console.error("send-web-push: no se pudo reservar el envio", String(claimError));
-      continue;
     }
 
     console.log(`send-web-push: reservada key=${claveDeDiagnostico(dispatch)}`);
@@ -1212,6 +1248,18 @@ async function runDispatch(db: Db, push: WebPushLike, secrets: PushSecrets, now:
     }
 
     if (delivered > 0) {
+      // Confirmación de entrega: sin esto una reserva viva y una abandonada son
+      // indistinguibles, y la recuperación de reservas viejas reenviaría avisos
+      // ya entregados. El fallo al escribir no pierde el aviso: como mucho, la
+      // reserva se recupera pasados quince minutos y el push se repite.
+      const { error: deliveredError } = await db
+        .from("push_log")
+        .update({ delivered_at: new Date(now).toISOString() })
+        .eq("user_id", dispatch.userId)
+        .eq("dedupe_key", key);
+      if (deliveredError) {
+        console.error("send-web-push: no se pudo marcar la entrega", String(deliveredError));
+      }
       sent++;
       console.log(`send-web-push: dispatch sent key=${claveDeDiagnostico(dispatch)} delivered=${delivered}`);
     } else if ((group?.subs.length ?? 0) > 0) {
@@ -1229,8 +1277,16 @@ async function runDispatch(db: Db, push: WebPushLike, secrets: PushSecrets, now:
       // Lo que nunca se reintenta es el `failure_count`: un fallo de
       // infraestructura no toca el contador, y por eso una suscripción válida no
       // se apaga porque el servidor tuviera la clave VAPID mal puesta.
-      await db.from("push_log").delete().eq("user_id", dispatch.userId).eq("dedupe_key", key);
-      console.log(`send-web-push: aviso reservado y no entregado, reserva liberada key=${claveDeDiagnostico(dispatch)}`);
+      if (reservaRetomada) {
+        // Una reserva ya retomada no se vuelve a liberar: `reclaimed_at` acota
+        // el reintento a una sola vez dentro de la ventana.
+        console.log(
+          `send-web-push: reserva retomada sin entrega, no se libera key=${claveDeDiagnostico(dispatch)}`,
+        );
+      } else {
+        await db.from("push_log").delete().eq("user_id", dispatch.userId).eq("dedupe_key", key);
+        console.log(`send-web-push: aviso reservado y no entregado, reserva liberada key=${claveDeDiagnostico(dispatch)}`);
+      }
     }
   }
 

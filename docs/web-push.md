@@ -30,7 +30,7 @@ pg_cron (cada 5 min) → pg_net → Edge Function send-web-push
                                         └─ web-push firmado con VAPID ──► navegador
 ```
 
-El service worker (`sw-src.js`) solo precachea el shell y atiende `push` y `notificationclick`. **No hay `runtimeCaching`**: los datos del usuario van siempre a Supabase y nunca se guardan en el Service Worker.
+El service worker (`sw-src.js`) solo precachea el shell y atiende `push`, `pushsubscriptionchange` y `notificationclick`. **No hay `runtimeCaching`**: los datos del usuario van siempre a Supabase y nunca se guardan en el Service Worker.
 
 ## Ficheros
 
@@ -40,6 +40,8 @@ El service worker (`sw-src.js`) solo precachea el shell y atiende `push` y `noti
 | `supabase/migrations/20260925_web_push_trigger_hardening.sql` | `touch_updated_at` con `search_path` fijo y sin EXECUTE para anon/authenticated. |
 | `supabase/migrations/20260925_web_push_cron.sql` | RPC `push_service_secret(text)`, trigger `protect_push_subscription_state`, revoke del RPC viejo y `cron.schedule` del dispatcher. |
 | `supabase/migrations/20260925_web_push_drop_secrets_plural.sql` | Retira el RPC que devolvía los tres secretos de golpe. |
+| `supabase/migrations/20261022_push_log_entregado.sql` | Añade `push_log.delivered_at` y `reclaimed_at` y marca las filas antiguas como entregadas: distingue una reserva en vuelo de un aviso enviado y acota la retoma a una vez. |
+| `supabase/migrations/20261022_push_endpoint_guard.sql` | `CHECK` de host de push conocido (FCM, WNS, Mozilla, Apple) y tope de 10 suscripciones por usuario: cierra el SSRF ciego y la amplificación de envíos. |
 | `supabase/functions/send-web-push/index.ts` | Arranque de la función: `Deno.serve` y las tipografías del runtime. |
 | `supabase/functions/send-web-push/handler.ts` | La Edge Function: autenticación, consultas, envío, mantenimiento de suscripciones y CORS. |
 | `supabase/functions/send-web-push/reminders.ts` | Lógica pura de recordatorios (fechas, zonas horarias, texto) y de las confirmaciones del modo `now`. Sin I/O: **no importa nada de `@supabase/supabase-js`**. |
@@ -114,6 +116,32 @@ Del bloque de CORS:
 - `npx tsc --noEmit`, `npx expo lint` y `npx jest` (49/49 suites, 653/653) limpios, aunque este bloque no toca la app. Ojo: `tsconfig.json` excluye `supabase/`, así que esos checks no dicen **nada** de la Edge Function. Para eso están `deno check` y `deno test`.
 
 **No verificado:** en un navegador real. Playwright no arranca en esta máquina (falta `libnspr4.so` y no hay sudo para instalarla), así que la suscripción, el banner de instalación y la recepción de un push siguen sin probarse de extremo a extremo. El CORS **sí está verificado contra producción** (v11, 2026-09-29): `OPTIONS` con la preview → `204`, con producción → `204`, con orígenes ajenos → `403`, y `POST` sin `Origin` → `401` (cron intacto).
+
+## Avisos con la PWA cerrada (2026-10-22)
+
+Bloque de robustez salido de un informe «en Android con la PWA instalada no llega nada al cerrarla». El transporte ya funcionaba (cron `202`, entregas reales a las 07:00 UTC y prueba aceptada por FCM). Los huecos eran otros cuatro:
+
+1. **El aviso de mismo día se perdía si el evento nacía después de las 12:00 locales.** `buildAppointmentDispatches` y `buildFridgeDispatches` exigían que las 09:00 locales cayeran dentro de la ventana de catchup de 180 min. Una cita o un producto creado por la tarde no avisaba nunca: la PWA se cerraba y no había segundo intento. Ahora el slot `same-day` sale en cualquier momento posterior a las 09:00 locales mientras la cita no haya empezado; `push_log` sigue impidiendo el duplicado. El `day-before` conserva la ventana para no avisar de un evento que ya pasó.
+2. **Nadie reconciliaba la suscripción al arrancar.** El alta solo ocurría al pulsar el interruptor. Si Chrome rotaba el endpoint o se perdía la fila, el servidor recibía `410`, borraba la suscripción y el interruptor seguía en «activado»: avisos mudos para siempre. `reconcileWebPush` (`src/lib/web-push.ts`) se ejecuta desde `src/app/_layout.tsx` con el usuario ya resuelto, solo en web, y solo si el permiso sigue concedido y la preferencia guardada está encendida. Exige además opt-in local por navegador (`micasa:web-push:opt-in`), porque `enabled` es global: un equipo compartido no empieza a recibir avisos por abrir la app. Las suscripciones anteriores a esta marca se adoptan. Alta, baja y reconciliación se serializan con Web Locks, y un `23505` en una carrera entre pestañas ya no da de baja la suscripción compartida: se relee la fila y, si es propia, se trata como éxito. También se compara la clave `applicationServerKey` real, no solo la marca de versión de `localStorage`.
+3. **El service worker no atendía `pushsubscriptionchange`.** Chrome podía rotar la suscripción y nadie la recreaba. Ahora se vuelve a suscribir con la misma clave VAPID; el endpoint nuevo lo sube `reconcileWebPush` en la siguiente apertura, porque el SW no tiene sesión para escribir en Supabase. Límite aceptado: entre la rotación y esa apertura, el servidor sigue enviando al endpoint viejo y recibe `410`. Para cubrir ese hueco haría falta persistir la suscripción nueva en IndexedDB o dar al SW un token de un solo uso.
+4. **Una reserva de `push_log` podía quedarse muerta.** La fila se insertaba antes de enviar y no había marca de entrega: si la invocación moría entre las dos cosas, el cron la veía como duplicado en cada vuelta y el recordatorio no salía nunca. `delivered_at` marca el envío confirmado y, pasados 15 minutos, una reserva sin marca se puede reclamar **una sola vez** (`reclaimed_at`): sin ese techo, un fallo persistente al escribir la marca reenviaría el aviso cada 15 minutos durante horas. Las filas antiguas se marcan como entregadas en la migración para no reenviar avisos viejos.
+
+**Cierre de superficie.** La auditoría señaló que `push_subscriptions.endpoint` era texto libre y sin tope: un usuario podía insertar endpoints HTTPS arbitrarios y el cron (con service role) hacía `POST` a todos. La migración `20261022_push_endpoint_guard.sql` añade un `CHECK` con los hosts reales (FCM, WNS, Mozilla, Apple) y un trigger que corta en 10 suscripciones por cuenta. Las filas existentes se comprobaron contra el patrón antes de añadirlo.
+
+ Primero la migración `20261022_push_log_entregado.sql`, después la Edge Function con el código nuevo, y por último repetir el backfill para las filas que haya escrito la función vieja entre la migración y el deploy:
+
+```sql
+update public.push_log
+   set delivered_at = sent_at
+ where delivered_at is null
+   and sent_at < now() - interval '15 minutes';
+```
+
+Si se despliega la función antes que la migración, la consulta de retoma falla (no existe `delivered_at`) y los duplicados no se recuperan; no se pierden avisos nuevos, pero el arreglo queda inerte. Un rollback de la función tampoco escribe `delivered_at`: repetir el backfill tras volver a desplegar.
+
+Comprobado en este bloque: `npx tsc --noEmit` limpio, `npx expo lint` limpio, `npx jest` 57/57 suites y 936/936 tests, `deno test` 133/133, `npm run build:web` correcto y `npm run verify:pwa` 67/67 (incluye la comprobación del listener `pushsubscriptionchange`). El `npm audit` sigue en rojo por vulnerabilidades heredadas de `develop`, no de este bloque; es lo que tumba el job de CI en todas las ramas. El conteo cambia con cada lock, así que no se fija aquí.
+
+
 
 ## Riesgos aceptados y límites
 

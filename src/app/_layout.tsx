@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -11,6 +11,7 @@ import { AuthProvider, useAuth } from '@/context/auth-context';
 import { CasaProvider } from '@/context/casa-context';
 import { attach } from '@/lib/install-prompt';
 import { vigilarActualizacion } from '@/lib/sw-update';
+import { reconcileWebPush } from '@/lib/web-push';
 
 // Engancha el almacén del evento de instalación de la PWA, y lo hace **aquí** a
 // propósito. El listener tiene que estar puesto antes de que el navegador lance
@@ -35,6 +36,26 @@ vigilarActualizacion();
 
 const SPLASH_MIN_MS = 2200;
 
+/**
+ * Reconciliación de la suscripción push al arrancar.
+ *
+ * Vive en el layout raíz por el mismo motivo que los otros enganches: es el
+ * único sitio que se evalúa siempre. Si viviera en Ajustes, solo se repararía
+ * cuando alguien abriera esa pantalla, y el caso que arregla es justo el de
+ * quien no lo hace: la suscripción se rompió en silencio y la persona cree que
+ * los avisos siguen activados.
+ */
+function WebPushReconcile() {
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !user) return;
+    void reconcileWebPush(user);
+  }, [user]);
+
+  return null;
+}
+
 function RootNavigator() {
   const { loading } = useAuth();
   const [minTimeElapsed, setMinTimeElapsed] = useState(false);
@@ -50,6 +71,7 @@ function RootNavigator() {
 
   return (
     <View style={styles.pantalla}>
+      <WebPushReconcile />
       {/* Aquí y no dentro de `(tabs)`, que es donde estaba antes: en login y en
           registro no hay layout de pestañas, y son las pantallas por las que se
           entra después de un despliegue. Empuja el contenido en vez de taparlo,

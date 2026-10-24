@@ -158,14 +158,15 @@ jobs:
         run: deno test --frozen --allow-env --node-modules-dir=none .
 
       # Puerta de vulnerabilidades, solo sobre lo que se instala en producción.
-      # `--omit=dev` porque las herramientas de build (jest, @expo/cli,
-      # workbox-cli) viven en devDependencies y arrastran advisories moderate
-      # que no llegan al bundle ni se ejecutan en el navegador de nadie.
+      # `--omit=dev` porque las herramientas de build viven en devDependencies y
+      # arrastran advisories moderate que no llegan al bundle ni se ejecutan en
+      # el navegador de nadie.
       #
-      # El nivel es `high`, no cero a propósito: por debajo hay advisory que
-      # arreglar exige bajar Expo de SDK 57 a 46, lo que es peor que la
-      # vulnerabilidad. Con `high` el bloqueo entra justo cuando algo llega a
-      # producción con riesgo real, y se sube el listón cuando se resuelva.
+      # `check-audit.mjs` es `npm audit` con una allowlist corta y caducable:
+      # node-forge@1.4.0 y zod@3.25.76 no tienen parche publicado, y sin la lista
+      # el CI quedaría rojo para siempre. Cualquier advisory high/critical nuevo
+      # sigue rompiendo, y una entrada caducada también. El detalle está en el
+      # propio script y en el README.
       #
       # Bloquear aquí, y no en el build de Vercel, es a propósito: así el
       # despliegue manual se para antes, y en CI cualquier PR con una
@@ -175,7 +176,7 @@ jobs:
       # todos sus PR se cierran sin mergear. Si algún día se activa el automerge,
       # este step es lo que corta que un PR automático llegue a desplegarse.
       - name: Auditoría de dependencias
-        run: npm audit --omit=dev --audit-level=high
+        run: node scripts/check-audit.mjs --omit=dev
 
       # El step anterior solo mira lo que va a producción, con `--omit=dev`. Ese
       # es el modelo de amenaza del navegador de un usuario, pero no el del build:
@@ -183,9 +184,7 @@ jobs:
       # CI y el deploy, con el token de Actions delante. `ignore-scripts=true` no
       # protege de eso, porque bloquea el postinstall pero no el import.
       #
-      # Por eso un segundo paso sobre el árbol completo, también a nivel high:
-      # es la misma línea que el de producción pero sin `--omit=dev`. Hoy da 0
-      # en los dos, y sube a high gracias al override de tmp, que quita los
-      # advisories high de la cadena de build.
+      # Por eso un segundo paso sobre el árbol completo, con la misma allowlist.
+      # El override de tmp ya quitó los advisories high de la cadena de build.
       - name: Auditoría de dependencias de build
-        run: npm audit --audit-level=high
+        run: node scripts/check-audit.mjs

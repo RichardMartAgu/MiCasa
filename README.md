@@ -191,14 +191,16 @@ actualización de código, hay una promesa de que no habrá un downgrade acciden
 
 ### Los `overrides`, y por qué hay un check que los vigila
 
-Hay dos overrides, y los dos sacan el paquete del rango que declara su consumidor.
-Eso se hace a propósito, porque el advisory no tiene arreglo por bump: la versión
-que lo arregla es una major y el consumidor está pineado por dentro.
+Hay tres overrides. Dos sacan el paquete del rango que declara su consumidor,
+porque el advisory no tiene arreglo por bump: la versión que lo arregla es una
+major y el consumidor está pineado por dentro. El tercero solo fuerza el parche
+dentro del mismo rango.
 
 | Override | Por qué | Consumidor | API que se comprueba |
 |---|---|---|---|
 | `tmp` `^0.0.33` → `^0.2.5` | 2 advisories *high*: escritura arbitraria vía symlink y path traversal | `workbox-cli → inquirer → external-editor` | `tmpNameSync(unObjeto)` |
 | `uuid` `^7.0.3` → `^11.1.1` | fallo de límites de buffer en v3/v5/v6 con buffer | `@expo/config-plugins → xcode` | `uuid.v4()` |
+| `source-map-js` `^1.2.1` → `^1.2.2` | advisory *high*: DoS por offsets de sección en source maps | `@expo/metro-config → postcss` | `SourceMapConsumer` |
 
 Por eso hay un `check:overrides`, que mira dos cosas:
 
@@ -219,8 +221,23 @@ se ha instalado nada.
 ```bash
 npm run check:lock      # integridad del lock, sin dependencias
 npm run check:overrides # los overrides, necesita npm ci previo
-npm run verify:deps     # los dos + los dos gates de npm audit
+npm run check:audit     # npm audit + allowlist caducable
+npm run verify:deps     # los tres + los dos gates de npm audit
 ```
+
+### Advisories sin parche: allowlist, no silencio
+
+Dos advisories *high* no tienen versión corregida publicada:
+
+| Advisory | Paquete | Por qué no se arregla aquí |
+|---|---|---|
+| `GHSA-86w9-cpqp-85rv` | `node-forge@1.4.0` | es la última versión; el fix está en el PR 1152 de `digitalbazaar/forge`, sin release. Llega por `@expo/cli → @expo/code-signing-certificates`, solo en build de Android. |
+| `GHSA-mrhx-c7xc-m3w5` | `zod@3.25.76` (prod) y `zod@4.6.5` (dev) | `@expo/cli@57` lo fija en v3; el advisory solo se corrige en zod 4.6.6 y forzar la major rompe el CLI. |
+
+`scripts/check-audit.mjs` envuelve `npm audit` con una allowlist de esos dos
+GHSA, cada uno con motivo y `reviewBy: 2027-01-31`. Cualquier advisory
+*high*/*critical* que no esté en la lista rompe el gate, y una entrada caducada
+también: la fecha obliga a comprobar si ya hay parche o si hay que subir Expo.
 
 ### Lo que no se pudo arreglar, y por qué
 

@@ -407,6 +407,31 @@ function withinWindow(fireAt: Date, window: Window): boolean {
 }
 
 /**
+ * ¿Toca mandar este candidato ahora?
+ *
+ * El aviso de "día antes" sigue atado a la ventana de catchup: si el cron estuvo
+ * caído más de tres horas, el evento ya pasó y avisar tarde no aporta nada.
+ *
+ * El de "mismo día" no puede quedarse en esa ventana. Una cita o un producto de
+ * la nevera creado a las 13:00 para hoy nacía fuera de ella, así que el aviso no
+ * salía nunca: la app estaba abierta al crearlo, se cerraba, y no llegaba nada.
+ * `push_log` ya impide repetirlo (la clave lleva tipo, referencia, día y zona),
+ * así que el aviso puede salir a cualquier hora posterior a las 09:00 locales.
+ * `eventAlreadyStarted` evita pintar "Cita hoy" de algo que ya ha pasado.
+ */
+function isDue(
+  candidate: Candidate,
+  fireAt: Date,
+  context: Context,
+  eventAlreadyStarted = false,
+): boolean {
+  if (candidate.slot === "same-day") {
+    return !eventAlreadyStarted && fireAt <= context.now;
+  }
+  return withinWindow(fireAt, context.window);
+}
+
+/**
  * Recordatorios de citas. Se avisaba al usuario que creó la cita
  * (`appointments.user_id`), que es quien eligió `reminder_choice`.
  */
@@ -429,7 +454,9 @@ export function buildAppointmentDispatches(
       if (!fallsOnLocalDay(appointment.starts_at, candidate.eventDay, context.timeZone)) continue;
 
       const fireAt = nineAmUtc(candidate.fireDay, context.timeZone);
-      if (!fireAt || !withinWindow(fireAt, context.window)) continue;
+      const startsAt = Date.parse(String(appointment.starts_at));
+      const alreadyStarted = Number.isFinite(startsAt) && startsAt <= context.now.getTime();
+      if (!fireAt || !isDue(candidate, fireAt, context, alreadyStarted)) continue;
 
       const time = formatTime(appointment.starts_at, context.timeZone);
       out.push({
@@ -728,7 +755,7 @@ export function buildFridgeDispatches(
       if (expiryLocal !== candidate.eventDay) continue;
 
       const fireAt = nineAmUtc(candidate.fireDay, context.timeZone);
-      if (!fireAt || !withinWindow(fireAt, context.window)) continue;
+      if (!fireAt || !isDue(candidate, fireAt, context)) continue;
 
       out.push({
         type: "fridge",

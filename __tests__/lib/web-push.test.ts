@@ -23,6 +23,7 @@ import {
   disableWebPush,
   enableWebPush,
   getActiveSubscription,
+  reconcileWebPush,
   getStoredBirthdayChoice,
   getStoredFridgeChoice,
   PERMISSION_TIMEOUT_MS,
@@ -658,15 +659,28 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     jest.useRealTimers();
   });
 
-  function stubSupabase(options: { insertError?: { code?: string; message?: string } | null } = {}) {
+  function stubSupabase(
+    options: {
+      insertError?: { code?: string; message?: string } | null;
+      /** Fila que devuelve la comprobación de propiedad del endpoint. */
+      ownership?: unknown;
+    } = {},
+  ) {
     const insertError = options.insertError ?? null;
     const deleteEq = jest.fn(async () => ({ error: null }));
     const insert = jest.fn(async () => ({ error: insertError }));
     const upsert = jest.fn(async () => ({ error: null }));
     const fromPushLog = jest.fn(async (_row: Record<string, unknown>) => ({ error: null }));
+    const ownership = options.ownership ?? null;
     const from = jest.fn((table: string) =>
       table === 'push_subscriptions'
-        ? { delete: () => ({ eq: deleteEq }), insert }
+        ? {
+            delete: () => ({ eq: deleteEq }),
+            insert,
+            select: () => ({
+              eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: ownership, error: null }) }) }),
+            }),
+          }
         : table === 'push_log'
           ? { insert: fromPushLog }
           : { upsert },
@@ -794,11 +808,11 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
     expect((await enableWebPush(user)).status).toBe('denied');
   });
 
-  it('un endpoint de otra cuenta no devuelve enabled y da de baja la suscripción', async () => {
-    // El aviso más caro de este bloque era este: con 23505 la fila es de otra
-    // cuenta, pero la suscripción local seguía viva y el interruptor acababa
-    // marcando que no había nada que arreglar mientras este navegador recibía los
-    // avisos de la cuenta anterior.
+  it('un endpoint de otra cuenta no devuelve enabled y NO da de baja la suscripción ajena', async () => {
+    // Con 23505 la fila es de otra cuenta. Soltar la suscripción desde aquí le
+    // quitaría los avisos a quien sí la activó: en un equipo compartido, la
+    // segunda cuenta no puede destruir la suscripción de la primera. Se informa y
+    // se deja que la decisión sea explícita en la cuenta dueña.
     const db = stubSupabase({ insertError: { code: '23505' } });
     const { subscription, pushManager } = stubPush({});
 
@@ -806,7 +820,7 @@ describe('enableWebPush: los topes por fase y el contrato de errores', () => {
 
     expect(result.status).toBe('failed');
     if (result.status === 'failed') expect(result.reason).toContain('otra cuenta');
-    expect(subscription.unsubscribe).toHaveBeenCalled();
+    expect(subscription.unsubscribe).not.toHaveBeenCalled();
     expect(db.upsert).not.toHaveBeenCalled();
     expect(pushManager.subscribe).toHaveBeenCalled();
   });
@@ -1816,5 +1830,197 @@ describe('la clave VAPID del frontend', () => {
     expect(VAPID_PUBLIC_KEY).not.toMatch(/^BGAx5MQzNUhQM9/);
     expect(VAPID_PUBLIC_KEY).not.toMatch(/^BHJV5jOQoaXKdrI/);
     expect(VAPID_PUBLIC_KEY).not.toMatch(/^BIlEd_yFpScEXL/);
+  });
+});
+
+describe('reconcileWebPush repara la suscripción al arrancar', () => {
+  const originalOs = Platform.OS;
+  let pushManager: { getSubscription: jest.Mock; subscribe: jest.Mock };
+
+  function suscripcion() {
+    return {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/actual',
+      keys: {
+        get: (name: 'p256dh' | 'auth') =>
+          name === 'p256dh'
+            ? new TextEncoder().encode('p').buffer
+            : new TextEncoder().encode('a').buffer,
+      },
+      unsubscribe: jest.fn(async () => true),
+    };
+  }
+
+  function stubSupabase(opciones: { enabled: boolean; fila: unknown }) {
+    const insert = jest.fn(async () => ({ error: null }));
+    const deleteEq = jest.fn(async () => ({ error: null }));
+    const updateEq = jest.fn(async () => ({ error: null }));
+    const upsert = jest.fn(async () => ({ error: null }));
+
+    (supabase.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === 'push_preferences') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: { enabled: opciones.enabled }, error: null }),
+            }),
+          }),
+          upsert,
+        };
+      }
+      if (table === 'push_subscriptions') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: opciones.fila, error: null }),
+              }),
+            }),
+          }),
+          delete: () => ({ eq: deleteEq }),
+          update: () => ({ eq: () => ({ eq: updateEq }) }),
+          insert,
+        };
+      }
+      return { insert: jest.fn(async () => ({ error: null })) };
+    });
+
+    return { insert, deleteEq, updateEq, upsert };
+  }
+
+  beforeEach(() => {
+    Platform.OS = 'web';
+    const almacen = new Map<string, string>();
+    Object.defineProperty(global, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (clave: string) => almacen.get(clave) ?? null,
+        setItem: (clave: string, valor: string) => void almacen.set(clave, valor),
+        removeItem: (clave: string) => void almacen.delete(clave),
+        clear: () => almacen.clear(),
+      },
+    });
+    pushManager = { getSubscription: jest.fn(async () => suscripcion()), subscribe: jest.fn(async () => suscripcion()) };
+    const registration = {
+      active: { state: 'activated', addEventListener: jest.fn(), removeEventListener: jest.fn() },
+      installing: null,
+      waiting: null,
+      pushManager,
+    };
+    Object.assign(global.window, {
+      Notification: Object.assign(function Notification() {}, {
+        permission: 'granted',
+        requestPermission: jest.fn(async () => 'granted'),
+      }),
+      PushManager: function PushManager() {},
+    });
+    Object.defineProperty(global, 'navigator', {
+      configurable: true,
+      value: {
+        serviceWorker: {
+          getRegistration: jest.fn(async () => registration),
+          register: jest.fn(async () => registration),
+          ready: Promise.resolve(registration),
+        },
+      },
+    });
+  });
+
+  afterAll(() => {
+    Platform.OS = originalOs;
+  });
+
+  it('no hace nada si el permiso no está concedido', async () => {
+    (window as unknown as { Notification: { permission: string } }).Notification.permission = 'default';
+    const db = stubSupabase({ enabled: true, fila: null });
+
+    await expect(reconcileWebPush({ id: 'user-1' } as never)).resolves.toBe('denied');
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('no resucita la suscripción de quien apagó los avisos', async () => {
+    const db = stubSupabase({ enabled: false, fila: null });
+
+    await expect(reconcileWebPush({ id: 'user-1' } as never)).resolves.toBe('disabled');
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
+  });
+
+  it('no reescribe nada si la fila ya apunta a este endpoint', async () => {
+    const db = stubSupabase({ enabled: true, fila: { timezone: detectTimeZone() } });
+
+    await expect(reconcileWebPush({ id: 'user-1' } as never)).resolves.toBe('ok');
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.deleteEq).not.toHaveBeenCalled();
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
+  });
+
+  it('sube la suscripción viva que la base había perdido', async () => {
+    // El caso que dejaba los avisos mudos para siempre: el navegador conserva su
+    // suscripción, la fila desapareció y el interruptor seguía en "activado".
+    global.localStorage.setItem('micasa:web-push:opt-in:user-1', '1');
+    const db = stubSupabase({ enabled: true, fila: null });
+
+    await expect(reconcileWebPush({ id: 'user-1' } as never)).resolves.toBe('ok');
+    expect(db.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'user-1', active: true }),
+    );
+    expect(db.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true }),
+      expect.objectContaining({ onConflict: 'user_id' }),
+    );
+  });
+
+  it('no crea una suscripción donde nadie dio opt-in, aunque el permiso esté dado', async () => {
+    // `enabled` es global del usuario: en un equipo compartido, un navegador sin
+    // interruptor pulsado no puede empezar a recibir avisos solo por abrir la app.
+    pushManager.getSubscription.mockResolvedValue(null);
+    const db = stubSupabase({ enabled: true, fila: null });
+
+    await expect(reconcileWebPush({ id: 'user-1' } as never)).resolves.toBe('disabled');
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('vuelve a crear la suscripción si este navegador ya tenía opt-in', async () => {
+    global.localStorage.setItem('micasa:web-push:opt-in:user-1', '1');
+    pushManager.getSubscription.mockResolvedValue(null);
+    const db = stubSupabase({ enabled: true, fila: null });
+
+    await expect(reconcileWebPush({ id: 'user-1' } as never)).resolves.toBe('ok');
+    expect(pushManager.subscribe).toHaveBeenCalled();
+    expect(db.insert).toHaveBeenCalled();
+  });
+
+  it('adopta una suscripción previa si la fila es de esta cuenta', async () => {
+    // La marca es nueva. Un navegador que ya estaba suscrito y tiene fila propia
+    // demuestra que alguien lo activó aquí, así que se migra sin reescribir nada.
+    const db = stubSupabase({ enabled: true, fila: { timezone: detectTimeZone() } });
+
+    await expect(reconcileWebPush({ id: 'user-1' } as never)).resolves.toBe('ok');
+    expect(global.localStorage.getItem('micasa:web-push:opt-in:user-1')).toBe('1');
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('no resucita una fila desactivada por fallos', async () => {
+    global.localStorage.setItem('micasa:web-push:opt-in:user-1', '1');
+    const db = stubSupabase({
+      enabled: true,
+      fila: { timezone: detectTimeZone(), active: false },
+    });
+
+    await expect(reconcileWebPush({ id: 'user-1' } as never)).resolves.toBe('disabled');
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('no adopta la suscripción de otra cuenta en un equipo compartido', async () => {
+    // Sin marca para esta cuenta y sin fila propia, no se hereda el consentimiento
+    // de la cuenta anterior ni se da de baja su suscripción.
+    const db = stubSupabase({ enabled: true, fila: null });
+
+    await expect(reconcileWebPush({ id: 'user-1' } as never)).resolves.toBe('disabled');
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.deleteEq).not.toHaveBeenCalled();
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
   });
 });
