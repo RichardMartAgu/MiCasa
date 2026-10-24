@@ -1,10 +1,9 @@
 // Comprueba que cada `overrides` de `package.json` siga sirviendo a quien lo consume.
 //
-// Hay varios overrides que sacan un paquete del rango que declara su consumidor,
-// y los tres están por lo mismo: advisory que no tiene arreglo por bump, porque la
-// versión que lo arregla es una major y el consumidor está pineado por dentro.
-// El arreglo es el override más un check que confirme que la versión forzada sigue
-// exponiendo la API que el consumidor llama.
+// Hay varios overrides que fuerzan una versión fuera del rango que resolvería el
+// consumidor, y están por lo mismo: advisory que no tiene arreglo por bump del
+// consumidor. El arreglo es el override más un check que confirme que la versión
+// forzada sigue exponiendo la API que el consumidor llama.
 //
 // Los overrides, y de dónde sale cada uno:
 //
@@ -20,6 +19,9 @@
 //   v11, y lo verificó `expo prebuild` generando un `.pbxproj` con UUIDs correctos.
 //   Ni v7 ni v11 exportan `v`: esa API vieja no llegó a existir, así que no hay
 //   ningún export que se haya perdido en el salto y que haga falta vigilar.
+// - `source-map-js` a `^1.2.2`, desde `^1.2.1`, por
+//   `@expo/metro-config → postcss`. El advisory high es un DoS por offsets de
+//   sección en source maps; se arregla en 1.2.2, que mantiene la API CJS.
 //
 // Ni los tests del repo cubren esto: la cadena es `workbox injectManifest` y
 // `xcode`, que solo corren en el build nativo, y los tests mockean el router.
@@ -76,7 +78,7 @@ const fails = [];
  * funciona igual de bien. Es el modo de fallo que hace que este script exista.
  *
  * El rango se aplica a mano en vez de con `semver` para no añadir una dependencia
- * a un script que corre en el build de Vercel y en CI. Los dos overrides usan
+ * a un script que corre en el build de Vercel y en CI. Todos los overrides usan
  * `^X.Y.Z`, que es comparación de tres números.
  */
 /**
@@ -88,6 +90,7 @@ const fails = [];
  * era la forma más fácil de deshacer el override sin que nada se enterase.
  */
 const MINIMO_SEGURO = {
+  'source-map-js': '1.2.2',
   tmp: '0.2.5',
   uuid: '11.1.1',
 };
@@ -195,6 +198,29 @@ check('uuid → xcode (override aplicado, y v4 con formato)', () => {
     throw new Error(`uuid@${version}.v4() no devolvió un UUID con formato v4`);
   }
   return `uuid@${version}`;
+});
+
+check('source-map-js → postcss (override aplicado, y SourceMapConsumer)', () => {
+  const require = requireFrom('postcss');
+  const version = require('source-map-js/package.json').version;
+
+  exigirOverrideAplicado('source-map-js', version);
+
+  const { SourceMapConsumer } = require('source-map-js');
+  if (typeof SourceMapConsumer !== 'function') {
+    throw new Error(`source-map-js@${version} no expone SourceMapConsumer`);
+  }
+  const mapa = new SourceMapConsumer({
+    version: 3,
+    sources: ['a.ts'],
+    names: [],
+    mappings: 'AAAA',
+  });
+  const posicion = mapa.originalPositionFor({ line: 1, column: 0 });
+  if (posicion.source !== 'a.ts') {
+    throw new Error(`source-map-js@${version} resolvió mal: ${JSON.stringify(posicion)}`);
+  }
+  return `source-map-js@${version}`;
 });
 
 check('query-string → expo-router (parse y stringify, sin desempaquetar)', () => {

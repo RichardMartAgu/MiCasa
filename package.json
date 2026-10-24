@@ -79,8 +79,9 @@
     "check:functions": "cd supabase/functions/send-web-push && npx -y deno check --frozen --node-modules-dir=none .",
     "typecheck": "tsc --noEmit",
     "build:sw": "esbuild sw-src.js --bundle --format=iife --target=es2020 --outfile=sw-bundle.js",
-    "verify:deps": "npm run check:lock && npm run check:overrides && npm audit --omit=dev --audit-level=high && npm audit --audit-level=high",
-    "check:overrides": "node scripts/check-overrides.mjs"
+    "verify:deps": "npm run check:lock && npm run check:overrides && node scripts/check-audit.mjs --omit=dev && node scripts/check-audit.mjs",
+    "check:overrides": "node scripts/check-overrides.mjs",
+    "check:audit": "node scripts/check-audit.mjs"
   },
   "jest": {
     "preset": "jest-expo",
@@ -103,6 +104,7 @@
   },
   "private": true,
   "overrides": {
+    "source-map-js": "^1.2.2",
     "tmp": "^0.2.5",
     "uuid": "^11.1.1"
   }
