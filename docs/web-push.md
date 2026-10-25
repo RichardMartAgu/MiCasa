@@ -1,6 +1,6 @@
 # Web Push — recordatorios en la web
 
-Estado: **implementado, mergeado (PR #122) y desplegado en producción el 2026-10-24 (función v17). Pendiente: prueba en un navegador real.**
+Estado: **implementado, mergeado (PR #122) y desplegado en producción el 2026-10-24 (función v17). Fix de cumpleaños mismo día mergeado (PR #123) y desplegado el 2026-10-25 (función v18). Pendiente: prueba en un navegador real.**
 
 ## Qué resuelve
 
