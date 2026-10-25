@@ -487,6 +487,14 @@ export function buildAppointmentDispatches(
  * marzo, que es el día que les toca. Es un cambio de comportamiento deliberado:
  * antes de esto, un contacto nacido el 29/02 no recibía ningún aviso en los años
  * no bisiestos, y con esto sí. La misma convención usa la app y `nextBirthdayDay`.
+ *
+ * El aviso de "mismo día" no está atado a la ventana de catchup, por el mismo motivo
+ * que una cita o un producto de la nevera del día: la ventana solo cubre tres horas
+ * tras las 09:00 locales, así que un cumpleaños de hoy dejaba de avisar a partir de
+ * las 12:00 aunque el cron siguiera corriendo. Un cumpleaños es un día entero, y
+ * `push_log` ya impide repetir el aviso (la clave lleva tipo, referencia, día y
+ * zona). El de "día antes" sí sigue en la ventana: avisar tarde de lo que ya pasó no
+ * aporta nada, y `isDue` aplica esa distinción.
  */
 export function buildBirthdayDispatches(
   contacts: ContactRow[],
@@ -507,7 +515,7 @@ export function buildBirthdayDispatches(
       if (dayInYear(Number(candidate.eventDay.slice(0, 4)), monthDay) !== candidate.eventDay) continue;
 
       const fireAt = nineAmUtc(candidate.fireDay, context.timeZone);
-      if (!fireAt || !withinWindow(fireAt, context.window)) continue;
+      if (!fireAt || !isDue(candidate, fireAt, context)) continue;
       out.push({
         type: "birthday",
         refId: contact.id,

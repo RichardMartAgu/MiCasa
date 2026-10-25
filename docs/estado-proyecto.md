@@ -33,6 +33,18 @@ Cerrados:
 
 ---
 
+## Bloque push cumpleaños mismo día — 2026-10-25
+
+- Objetivo: que el aviso de cumpleaños de hoy no muera a las 12:00 locales.
+- Causa: `buildBirthdayDispatches` usaba `withinWindow` (catchup de 3 h) para `same-day`; citas y nevera ya usaban `isDue`.
+- Fix: `isDue(candidate, fireAt, context)` en `supabase/functions/send-web-push/reminders.ts`; `day-before` conserva la ventana.
+- Tests: same-day a las 14:05 Madrid sí; antes de las 09:00 no; day-before fuera de ventana no; mismo instante en zonas este/oeste; misma clave en ejecuciones repetidas.
+- Security: APROBADO.
+- QA: PASA — Deno check limpio, 138 tests Deno, `tsc`, lint y Jest 57 suites / 937 tests. `verify:deps` rojo preexistente en `develop` (`source-map-js`).
+- Commit/push: este bloque.
+
+---
+
 ## CORS: no era un pendiente
 
 Apareció como tarea abierta en varios informes de `security` y `qa-test` durante tres

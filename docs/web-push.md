@@ -143,6 +143,12 @@ Comprobado en este bloque: `npx tsc --noEmit` limpio, `npx expo lint` limpio, `n
 
 
 
+## Cumpleaños del mismo día (2026-10-25)
+
+`buildBirthdayDispatches` seguía aplicando la ventana de catchup al slot `same-day`, así que un cumpleaños de hoy dejaba de avisar a partir de las 12:00 locales. Citas y nevera ya usaban `isDue` para ese slot desde el bloque de la PWA cerrada; cumpleaños era la única pantalla que se quedaba atrás.
+
+Ahora cumpleaños también pasa por `isDue`: `same-day` avisa a cualquier hora posterior a las 09:00 locales y `day-before` conserva la ventana de tres horas. `push_log` sigue siendo quien impide el duplicado, con la misma clave `tipo:refId:slot:dia:zona`.
+
 ## Riesgos aceptados y límites
 
 - **Sin rate limit** en la Edge Function: cualquier `POST` sin credencial fuerza un descifrado de Vault y un RPC con service role. Es trabajo barato y de solo lectura, pero es pageable desde internet.
