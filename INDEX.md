@@ -11,7 +11,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 20 `
 | [`.opencode/skills/micasa-git/SKILL.md`](.opencode/skills/micasa-git/SKILL.md) | Buenas prácticas de git de este repo: worktree por rama, comandos que ya han perdido trabajo, dependabot→`master`. | Vigente; leer antes de commitear/pushear/mergear. |
 | [`AGENTS.md`](AGENTS.md) | Reglas del proyecto, Expo v57, stack, agentes, calidad, deploy y worktrees. | Vigente; leer primero. |
 | [`CLAUDE.md`](CLAUDE.md) | Redirección a `AGENTS.md`. | Vigente; 1 línea. |
-| [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-10-19. |
+| [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-10-25. |
 | [`README.md`](README.md) | Producto, funcionalidades, stack, puesta en marcha, calidad, estructura, modelo de datos. | Vigente. |
 | [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global para continuar sesiones. **Empezar por «Pendientes»; las sesiones están en orden inverso (la primera «Sesión actual» es la más reciente).** | Actualizado 2026-10-19. |
 | [Guía maestra de proyectos](https://github.com/RichardMartAgu/proyecto-agentico) | Guía v2, skill `nuevo-proyecto` y plantillas para proyectos nuevos: coste 0, gates, Git, seguridad del agente y prompts. | Externa y versionada; fuente canónica, no duplicar en este repo. |
@@ -45,7 +45,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 20 `
 | Dónde | Secciones (`##`) |
 |---|---|
 | `docs/estado-proyecto.md` | Pendientes · CORS (falso positivo) · Riesgos aceptados · Sesiones (inverso) · Reglas de cierre · Plantilla de bloque |
-| `docs/web-push.md` | Qué resuelve · Alcance · Arquitectura · Ficheros · Secretos · Detalles que costaron entender · Auditoría · Verificación · Riesgos · **CORS** · **«Si el botón Enviar falla otra vez»** · Aviso de prueba · Qué falta · Contexto de rama · **Rotar VAPID** |
+| `docs/web-push.md` | Qué resuelve · Alcance · Arquitectura · Ficheros · Secretos · Detalles que costaron entender · Auditoría · Verificación · **Avisos con la PWA cerrada** · **Cumpleaños del mismo día** · Riesgos · **CORS** · **«Si el botón Enviar falla otra vez»** · Aviso de prueba · Qué falta · Contexto de rama · **Rotar VAPID** |
 | `docs/pwa-installable.md` | Objetivo · Gotcha `web.output: single` · Archivos · Registro del SW · Decisiones security · Verificación · Alcance · Qué falta |
 | `docs/usuarios-prueba.md` | Por qué existen · `qa-toggle@micasa.dev` · Recrear cuenta · Reglas de seguridad |
 | `docs/calendar-sync-plan.md` | Objetivo · Opción seleccionada · Cambios necesarios · Edge cases · Build · Orden · Coste · Riesgos · Preguntas |

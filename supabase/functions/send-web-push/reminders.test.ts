@@ -351,6 +351,90 @@ Deno.test("cumpleaños: aviso el mismo día", () => {
   assertEquals(dispatch[0].title, "Cumpleaños hoy: Lucía");
 });
 
+Deno.test("cumpleaños de hoy avisa aunque se pase la ventana de catchup", () => {
+  // Regresión: `same-day` usaba la ventana de catchup, que solo cubre tres horas
+  // tras las 09:00 locales. Un cumpleaños de hoy dejaba de avisar a partir de las
+  // 12:00 aunque el cron siguiera vivo; cita y nevera del mismo día sí avisaban
+  // porque pasan por `isDue`. Ahora este aviso también pasa por `isDue`.
+  //
+  // 13:05Z son las 14:05 en Madrid (CET) y las 09:00 locales caen a las 08:00Z,
+  // así que el aviso nace fuera de la ventana (10:05Z–13:05Z) y aun así sale.
+  const dispatch = buildBirthdayDispatches(
+    [{ id: "c1", name: "Lucía", birth_date: "1990-03-16" }],
+    "same-day",
+    ctx("2026-03-16T13:05:00Z", MADRID),
+  );
+  assertEquals(dispatch.length, 1);
+  assertEquals(dispatch[0].slot, "same-day");
+  assertEquals(dispatch[0].localDay, "2026-03-16");
+  assertEquals(dispatch[0].title, "Cumpleaños hoy: Lucía");
+});
+
+Deno.test("cumpleaños de hoy no avisa antes de las 09:00 locales", () => {
+  // Las 09:00 de Madrid (CET) son las 08:00Z. Un minuto antes el aviso todavía no
+  // toca, y en el instante exacto sí: `isDue` corta con `fireAt <= now`, no `<`.
+  const contactos = [{ id: "c1", name: "Lucía", birth_date: "1990-03-16" }];
+  assertEquals(
+    buildBirthdayDispatches(contactos, "same-day", ctx("2026-03-16T07:59:00Z", MADRID)),
+    [],
+  );
+  assertEquals(
+    buildBirthdayDispatches(contactos, "same-day", ctx("2026-03-16T08:00:00Z", MADRID)).length,
+    1,
+  );
+});
+
+Deno.test("cumpleaños: dos ejecuciones del mismo contexto producen la misma clave", () => {
+  // La deduplicación real vive en `push_log`/handler, no en esta función. Lo que
+  // comprueba este test es el contrato del que depende ese `insert`: con el mismo
+  // contexto, `buildBirthdayDispatches` no cambia nada entre llamadas, así que la
+  // clave única choca y el aviso no se repite.
+  const contexto = ctx("2026-03-16T13:05:00Z", MADRID);
+  const contactos = [{ id: "c1", name: "Lucía", birth_date: "1990-03-16" }];
+  const primera = buildBirthdayDispatches(contactos, "same-day", contexto);
+  const segunda = buildBirthdayDispatches(contactos, "same-day", contexto);
+  assert(primera.length === 1);
+  assertEquals(primera, segunda);
+  assertEquals(
+    dedupeKey({ ...primera[0], userId: USUARIO, timezone: MADRID }),
+    dedupeKey({ ...segunda[0], userId: USUARIO, timezone: MADRID }),
+  );
+});
+
+Deno.test("cumpleaños: el mismo instante cae en días locales distintos al este y al oeste", () => {
+  // 23:30Z del 16: en Tokio (UTC+9) ya es el 17 a las 08:30, antes de las 09:00
+  // locales, así que el aviso de hoy todavía NO sale. En Ciudad de México (UTC-6)
+  // son las 17:30 del 16 y las 09:00 locales ya pasaron a las 15:00Z, así que sí.
+  const instant = "2026-03-16T23:30:00Z";
+  assertEquals(
+    buildBirthdayDispatches(
+      [{ id: "c1", name: "Lucía", birth_date: "1990-03-17" }],
+      "same-day",
+      ctx(instant, TOKYO),
+    ),
+    [],
+  );
+  const oeste = buildBirthdayDispatches(
+    [{ id: "c1", name: "Lucía", birth_date: "1990-03-16" }],
+    "same-day",
+    ctx(instant, MEXICO),
+  );
+  assertEquals(oeste.length, 1);
+  assertEquals(oeste[0].localDay, "2026-03-16");
+});
+
+Deno.test("cumpleaños de mañana no avisa fuera de la ventana de catchup", () => {
+  // El cambio no toca `day-before`: `isDue` lo deja en la ventana de catchup, que
+  // es lo que evita avisar tarde de lo que ya pasó. Mismo instante que el test
+  // anterior, pero el cumpleaños cae mañana, así que no sale nada.
+  const dispatch = buildBirthdayDispatches(
+    [{ id: "c1", name: "Lucía", birth_date: "1990-03-17" }],
+    "day-before",
+    ctx("2026-03-16T13:05:00Z", MADRID),
+  );
+  assertEquals(dispatch, []);
+});
+
 Deno.test("cumpleaños con choice none no genera nada", () => {
   assertEquals(
     buildBirthdayDispatches(
