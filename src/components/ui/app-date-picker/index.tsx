@@ -12,6 +12,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
+import { Button } from '@/components/ui/button';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 
 export interface AppDatePickerProps {
@@ -70,23 +71,35 @@ export function AppDatePicker({
         style={styles.button}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
+        accessibilityState={{ expanded: Platform.OS === 'ios' && showIOSPicker }}
         onPress={handlePress}>
         <Text style={styles.label}>
           {icon} {formatValue(value)}
         </Text>
       </Pressable>
       {Platform.OS === 'ios' && showIOSPicker ? (
-        <DateTimePicker
-          value={value}
-          minimumDate={min}
-          maximumDate={max}
-          mode={mode}
-          display="spinner"
-          onChange={(event, selected) => {
-            setShowIOSPicker(false);
-            if (event.type === 'set' && selected) onChange(selected);
-          }}
-        />
+        <View style={styles.iosPicker}>
+          <DateTimePicker
+            value={value}
+            minimumDate={min}
+            maximumDate={max}
+            mode={mode}
+            display="spinner"
+            onChange={(event, selected) => {
+              if (event.type === 'set' && selected) onChange(selected);
+            }}
+          />
+          <Button
+            title="Listo"
+            variant="secondary"
+            size="sm"
+            accessibilityLabel="Listo"
+            accessibilityHint={
+              mode === 'date' ? 'Cierra el selector de fecha' : 'Cierra el selector de hora'
+            }
+            onPress={() => setShowIOSPicker(false)}
+          />
+        </View>
       ) : null}
     </View>
   );
@@ -103,4 +116,5 @@ const styles = StyleSheet.create({
     backgroundColor: Palette.surface,
   },
   label: { fontSize: 15, fontWeight: '600', color: Palette.textStrong },
+  iosPicker: { gap: Spacing.two, marginTop: Spacing.one },
 });

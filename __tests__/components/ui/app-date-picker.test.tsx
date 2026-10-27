@@ -8,8 +8,8 @@ jest.mock('@react-native-community/datetimepicker', () => {
   const { View } = require('react-native');
   return {
     __esModule: true,
-    default: function MockPicker() {
-      return <View testID="mock-picker" />;
+    default: function MockPicker(props: { onChange?: (event: { type: string }, date?: Date) => void }) {
+      return <View testID="mock-picker" onChange={props.onChange} />;
     },
     DateTimePickerAndroid: {
       open: (...args: unknown[]) => mockDateTimePickerAndroidOpen(...args),
@@ -99,5 +99,23 @@ describe('AppDatePicker (nativo)', () => {
     fireEvent.press(getByLabelText('Cambiar fecha'));
     expect(getByTestId('mock-picker')).toBeTruthy();
     expect(mockDateTimePickerAndroidOpen).not.toHaveBeenCalled();
+  });
+
+  it('en iOS deja elegir otra fecha sin cerrar el spinner y cierra con Listo', () => {
+    jest.replaceProperty(Platform, 'OS', 'ios');
+    const onChange = jest.fn();
+    const { getByLabelText, getByTestId, queryByTestId } = renderDatePicker(onChange);
+
+    fireEvent.press(getByLabelText('Cambiar fecha'));
+    const picker = getByTestId('mock-picker');
+    act(() => {
+      picker.props.onChange({ type: 'set' }, new Date(2026, 10, 15));
+    });
+
+    expect(onChange).toHaveBeenCalledWith(new Date(2026, 10, 15));
+    expect(getByTestId('mock-picker')).toBeTruthy();
+
+    fireEvent.press(getByLabelText('Listo'));
+    expect(queryByTestId('mock-picker')).toBeNull();
   });
 });

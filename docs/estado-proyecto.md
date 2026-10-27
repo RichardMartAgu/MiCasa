@@ -4,17 +4,16 @@
 Viven aquí y no en el chat, que es donde se pierden. Lo que sigue se confirmó después
 de cerrar los bloques; nada de esto es hipótesis.
 
-Abiertos a 2026-10-19:
+Abiertos a 2026-10-27:
 
-- **Nevera**: bloque completo en rama `feat/nevera`. Falta merge del PR, aplicar
-  `20261019_nevera.sql`, desplegar la Edge Function `send-web-push` y desplegar la web.
-  Hasta entonces la feature no funciona en producción.
+- **Nevera**: picker iOS corregido en rama `fix/nevera-ios`; falta probar en iPhone real.
+  El merge y el deploy de la feature ya están hechos.
 - **Prueba en dispositivo real** de la nevera (avisos locales en Android/iOS) y del
   push web, que sigue sin probarse en navegador real.
 - **OAuth Google**: botón oculto en login hasta que haya credenciales en Google Cloud y
   Supabase. Ver `oauth-google-pendiente.md`.
-- **Dependabot**: 7 PRs abiertos contra `master` cerrados el 2026-10-19 (CI en rojo por
-  audit preexistente). Retomar en bloque de dependencias contra `develop`.
+- **Dependabot**: PRs 124-129 cerrados el 2026-10-27 para dejar la lista limpia antes
+  del worktree de nevera. Retomar como bloque de dependencias contra `develop`.
 - **`master` divergente**: 5 commits solo en `master` (rediseño de splash, pins de jest)
   que no están en `develop`. Portar a mano si se quieren.
 - **Auditoría de dependencias**: `npm audit --audit-level=high` da 50 hallazgos (29 high)
@@ -30,6 +29,27 @@ Cerrados:
   `build:web`, a `verify:pwa` y a CI. Ver la sesión de abajo.
 - **Allowlist de CORS de las previews de Vercel** — cerrada por el PR #83. Verificado
   contra producción, no hay nada pendiente. Ver "CORS: no era un pendiente" más abajo.
+
+---
+
+## Sesión 2026-10-27 — nevera iOS y normas de avisos
+
+- Objetivo: arreglar que Nevera no dejara elegir fechas futuras y dejar por escrito
+  las normas de avisos.
+- Causa: `AppDatePicker` cerraba el spinner iOS en el primer `onChange`; el primer
+  giro escondía el picker antes de pasar de hoy a otro día.
+- Fix: spinner iOS permanece abierto; botón `Listo` cierra; `min` de Nevera usa
+  `startOfDay`; modal con `ScrollView` y `maxHeight: 90%`.
+- Tests: spinner iOS abierto tras cambiar fecha, cierre con `Listo`, fecha futura y
+  hoy en Nevera. Detalle en `bug-08-nevera-ios-picker-cierra.md`.
+- Normas: `docs/normas-avisos.md`; incluye consentimiento, audiencia, horarios,
+  fallos, pruebas y pendientes. `INDEX.md` actualizado a 22 `.md`.
+- Gates: `tsc` limpio, `expo lint` limpio, Jest 57 suites / 940 tests, Deno 138 tests,
+  `verify:pwa` 67 OK. `verify:deps` rojo preexistente por `source-map-js` en
+  `node_modules` (el lock pide 1.2.2; instalado 1.2.1).
+- Security: APROBADO. QA: PASA.
+- Pendiente: probar spinner en iPhone real y decidir si se corrige el desajuste al
+  editar un producto ya caducado.
 
 ---
 

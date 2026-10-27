@@ -11,14 +11,14 @@ MiCasa te permite llevar la **contabilidad de compras** por secciones (Bebé, Re
 ## ✨ Funcionalidades
 
 - **Autenticación** con correo y contraseña (Supabase Auth).
-- **Login con Google** (OAuth) vía `expo-auth-session` + `expo-web-browser`.
+- **OAuth Google preparado** vía `expo-auth-session` + `expo-web-browser`; botón oculto hasta configurar el provider.
 - **Casas multi-usuario**: crea una casa, comparte su código de invitación y toda tu pareja/familia gestiona los mismos datos en tiempo real. El propietario puede promover a administrador o expulsar miembros.
 - **Gastos con secciones**: categorías con color, icono y presupuesto mensual, barras de progreso y aviso cuando se supera el presupuesto.
 - **Citas**: tipo (médico, escuela, mascota…), persona, lugar, fecha y hora, con aviso configurable (día antes y/o mismo día a las 9:00, o sin aviso).
 - **Listas de la compra**: artículos con cantidad, marcado de completado y listas terminadas.
 - **Cumpleaños**: contactos con fecha de nacimiento y widget de «próximos 30 días».
 - **Nevera**: ítems con fecha de caducidad, marcado de consumido y aviso configurable (web push y notificación local).
-- **Recordatorios locales**: avisos de citas y cumpleaños en el dispositivo con `expo-notifications` (toggle en Ajustes, sin backend).
+- **Recordatorios locales**: avisos de citas, cumpleaños y nevera en el dispositivo con `expo-notifications` (toggle en Ajustes, sin backend).
 - **Tiempo real**: los cambios de cualquier miembro se reflejan al instante (Supabase Realtime).
 - **Seguridad**: Row Level Security en toda la base de datos.
 
@@ -37,7 +37,7 @@ MiCasa te permite llevar la **contabilidad de compras** por secciones (Bebé, Re
 ### 1. Crear el proyecto en Supabase (gratis)
 
 1. Crea una cuenta y un proyecto en [supabase.com](https://supabase.com).
-2. Abre **SQL Editor** y ejecuta el contenido de [`supabase/schema.sql`](supabase/schema.sql). Esto crea tablas, índices, triggers, políticas de seguridad y Realtime.
+2. Aplica el esquema y las migraciones. [`supabase/schema.sql`](supabase/schema.sql) es el esquema base; las migraciones de `supabase/migrations/` añaden Web Push, cron, hardening y el resto de cambios. Con Supabase CLI: `supabase link` y `supabase db push`. Sin CLI: ejecuta `schema.sql` y después las migraciones en orden. Solo con `schema.sql` la app arranca, pero no tendrá Web Push.
 3. En **Project Settings → API** copia la `Project URL` y la `anon public key`.
 
 ### 2. Configurar el entorno
@@ -89,7 +89,7 @@ Los avisos de citas y cumpleaños en **iPhone solo llegan con la app instalada**
 ## 🧪 Calidad
 
 ```bash
-npm test          # 783 tests unitarios (Jest)
+npm test          # 940 tests unitarios (Jest)
 npm run typecheck # TypeScript estricto
 npm run lint      # ESLint (config de Expo)
 npm run check:csp # la CSP de vercel.json contra el proyecto real
