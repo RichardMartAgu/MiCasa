@@ -1,6 +1,6 @@
 # INDEX — MiCasa
 
-App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 20 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.** Este índice es la fuente única de "qué hay": no crear documentos paralelos que lo dupliquen.
+App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 22 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.** Este índice es la fuente única de "qué hay": no crear documentos paralelos que lo dupliquen.
 
 ## Inventario completo
 
@@ -13,6 +13,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 20 `
 | [`CLAUDE.md`](CLAUDE.md) | Redirección a `AGENTS.md`. | Vigente; 1 línea. |
 | [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-10-25. |
 | [`README.md`](README.md) | Producto, funcionalidades, stack, puesta en marcha, calidad, estructura, modelo de datos. | Vigente. |
+| [`docs/normas-avisos.md`](docs/normas-avisos.md) | Normas de avisos: canales, consentimiento, preferencias, audiencia, horarios, contenido, fallos y pendientes. | Revisado 2026-10-27. |
 | [`docs/estado-proyecto.md`](docs/estado-proyecto.md) | Bitácora global para continuar sesiones. **Empezar por «Pendientes»; las sesiones están en orden inverso (la primera «Sesión actual» es la más reciente).** | Actualizado 2026-10-19. |
 | [Guía maestra de proyectos](https://github.com/RichardMartAgu/proyecto-agentico) | Guía v2, skill `nuevo-proyecto` y plantillas para proyectos nuevos: coste 0, gates, Git, seguridad del agente y prompts. | Externa y versionada; fuente canónica, no duplicar en este repo. |
 
@@ -27,6 +28,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 20 `
 | [`docs/bug-05-gastos-delete-test.md`](docs/bug-05-gastos-delete-test.md) | Regresión de test al confirmar eliminación de gasto. | Corregido; test pasa. |
 | [`docs/bug-06-casas-editar-eliminar.md`](docs/bug-06-casas-editar-eliminar.md) | Edición y eliminación de casas por owner. | Corregido; tests pasan. |
 | [`docs/bug-07-shopping-realtime-delete.md`](docs/bug-07-shopping-realtime-delete.md) | Refresco realtime al borrar ítems/listas. | Corregido y en producción. |
+| [`docs/bug-08-nevera-ios-picker-cierra.md`](docs/bug-08-nevera-ios-picker-cierra.md) | Spinner iOS cerraba el picker al primer giro e impedía fechas futuras. | Corregido; falta prueba en iPhone real. |
 
 ### Planes y pendientes
 
@@ -44,6 +46,8 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 20 `
 
 | Dónde | Secciones (`##`) |
 |---|---|
+| `docs/bug-08-nevera-ios-picker-cierra.md` | Síntoma · Causa raíz · Fix · Prevención · Verificación · Archivos |
+| `docs/normas-avisos.md` | Definiciones · Canales · Consentimiento · Preferencias · Audiencia · Horario · Contenido · Fallos · Pruebas · Prohibiciones · Pendientes |
 | `docs/estado-proyecto.md` | Pendientes · CORS (falso positivo) · Riesgos aceptados · Sesiones (inverso) · Reglas de cierre · Plantilla de bloque |
 | `docs/web-push.md` | Qué resuelve · Alcance · Arquitectura · Ficheros · Secretos · Detalles que costaron entender · Auditoría · Verificación · **Avisos con la PWA cerrada** · **Cumpleaños del mismo día** · Riesgos · **CORS** · **«Si el botón Enviar falla otra vez»** · Aviso de prueba · Qué falta · Contexto de rama · **Rotar VAPID** |
 | `docs/pwa-installable.md` | Objetivo · Gotcha `web.output: single` · Archivos · Registro del SW · Decisiones security · Verificación · Alcance · Qué falta |

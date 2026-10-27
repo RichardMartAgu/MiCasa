@@ -31,7 +31,7 @@ import {
 } from '@/lib/api';
 import { confirmDialog } from '@/lib/confirm';
 import { showNotice } from '@/lib/notice';
-import { toISODate } from '@/lib/date';
+import { startOfDay, toISODate } from '@/lib/date';
 import { fridgeDaysLeft } from '@/lib/fridge';
 import { getFridgeChoice, scheduleFridgeItem, cancelEntityKey } from '@/lib/notifications';
 import type { FridgeItem } from '@/lib/types';
@@ -72,6 +72,7 @@ export default function NeveraScreen() {
   const [notifyAudience, setNotifyAudience] = useState<NotifyAudience>('me');
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [minExpiry, setMinExpiry] = useState(() => startOfDay(new Date()));
 
   const sorted = useMemo(() => {
     return [...items].sort((a, b) => {
@@ -94,6 +95,7 @@ export default function NeveraScreen() {
     setQuantity('');
     setUnit('');
     setExpiry(defaultExpiry());
+    setMinExpiry(startOfDay(new Date()));
     setNotifyAudience('me');
     setNameError(null);
     setModalVisible(true);
@@ -105,6 +107,7 @@ export default function NeveraScreen() {
     setQuantity(item.quantity !== null && item.quantity !== undefined ? String(item.quantity) : '');
     setUnit(item.unit ?? '');
     setExpiry(new Date(`${item.expiry_date}T00:00:00`));
+    setMinExpiry(startOfDay(new Date()));
     setNotifyAudience(
       isValidNotifyAudience(item.notify_audience) ? item.notify_audience : 'me',
     );
@@ -216,6 +219,9 @@ export default function NeveraScreen() {
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.modalContent}>
             <Text style={styles.modalTitle}>
               {editingId ? 'Editar producto' : 'Nuevo producto'}
             </Text>
@@ -254,7 +260,7 @@ export default function NeveraScreen() {
               icon="📅"
               formatValue={(date) => toISODate(date)}
               accessibilityLabel={`Fecha de caducidad: ${toISODate(expiry)}`}
-              min={new Date()}
+              min={minExpiry}
             />
             <Text style={styles.fieldLabel}>Avisar a</Text>
             <View style={styles.audienceRow}>
@@ -284,6 +290,7 @@ export default function NeveraScreen() {
                 loading={saving}
               />
             </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -323,8 +330,9 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: Radius.lg,
     borderTopRightRadius: Radius.lg,
     padding: Spacing.four,
-    gap: Spacing.three,
+    maxHeight: '90%',
   },
+  modalContent: { gap: Spacing.three },
   modalTitle: { fontSize: 20, fontWeight: '700', color: Palette.text },
   row: { flexDirection: 'row', gap: Spacing.two },
   flex: { flex: 1, minWidth: 0 },

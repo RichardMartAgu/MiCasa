@@ -1,13 +1,21 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Alert, Platform } from 'react-native';
 
 import NeveraScreen from '@/app/(tabs)/nevera';
+import { startOfDay, toISODate } from '@/lib/date';
 import type { FridgeItem } from '@/lib/types';
 
+const mockDateTimePickerAndroidOpen = jest.fn();
 jest.mock('@react-native-community/datetimepicker', () => {
   const { View } = require('react-native');
-  return function MockPicker() {
-    return <View testID="date-picker" />;
+  return {
+    __esModule: true,
+    default: function MockPicker() {
+      return <View testID="date-picker" />;
+    },
+    DateTimePickerAndroid: {
+      open: (...args: unknown[]) => mockDateTimePickerAndroidOpen(...args),
+    },
   };
 });
 
@@ -154,6 +162,68 @@ describe('NeveraScreen', () => {
       );
       expect(mockScheduleFridgeItem).toHaveBeenCalledWith(milk, 'both', 'u1');
     });
+  });
+
+  it('permite elegir una caducidad futura distinta de hoy', async () => {
+    const original = Platform.OS;
+    Platform.OS = 'android';
+    try {
+      const { getByText, getByLabelText, getAllByDisplayValue } = setup([]);
+      fireEvent.press(getByLabelText('Añadir producto a la nevera'));
+      await waitFor(() => expect(getByText('Nuevo producto')).toBeTruthy());
+
+      fireEvent.press(getByLabelText(/Fecha de caducidad:/));
+      expect(mockDateTimePickerAndroidOpen).toHaveBeenCalledTimes(1);
+      const openArgs = mockDateTimePickerAndroidOpen.mock.calls[0][0] as {
+        minimumDate: Date;
+        onChange: (event: { type: string }, date?: Date) => void;
+      };
+      expect(openArgs.minimumDate).toEqual(startOfDay(new Date()));
+
+      const future = new Date();
+      future.setDate(future.getDate() + 10);
+      act(() => openArgs.onChange({ type: 'set' }, future));
+
+      const [nameInput] = getAllByDisplayValue('');
+      fireEvent.changeText(nameInput, 'Leche');
+      fireEvent.press(getByText('Añadir'));
+
+      await waitFor(() => {
+        expect(mockAddFridgeItem).toHaveBeenCalledWith(
+          expect.objectContaining({ expiry_date: toISODate(future) }),
+        );
+      });
+    } finally {
+      Platform.OS = original;
+    }
+  });
+
+  it('permite guardar hoy como caducidad', async () => {
+    const original = Platform.OS;
+    Platform.OS = 'android';
+    try {
+      const { getByText, getByLabelText, getAllByDisplayValue } = setup([]);
+      fireEvent.press(getByLabelText('Añadir producto a la nevera'));
+      await waitFor(() => expect(getByText('Nuevo producto')).toBeTruthy());
+
+      fireEvent.press(getByLabelText(/Fecha de caducidad:/));
+      const openArgs = mockDateTimePickerAndroidOpen.mock.calls[0][0] as {
+        onChange: (event: { type: string }, date?: Date) => void;
+      };
+      act(() => openArgs.onChange({ type: 'set' }, new Date()));
+
+      const [nameInput] = getAllByDisplayValue('');
+      fireEvent.changeText(nameInput, 'Leche');
+      fireEvent.press(getByText('Añadir'));
+
+      await waitFor(() => {
+        expect(mockAddFridgeItem).toHaveBeenCalledWith(
+          expect.objectContaining({ expiry_date: toISODate(new Date()) }),
+        );
+      });
+    } finally {
+      Platform.OS = original;
+    }
   });
 
   it('guarda la audiencia elegida al crear producto', async () => {
