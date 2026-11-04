@@ -71,7 +71,7 @@ Todo en verde antes de commitear. Cada comando es corto; si uno falla se corrige
 
 # Git
 
-Antes de cualquier commit, push, merge, rebase o limpieza de ramas, carga la skill `.opencode/skills/micasa-git/SKILL.md`. Recoge el flujo obligatorio de este repo y los comandos que ya han causado pérdida de trabajo aquí.
+Antes de cualquier commit, push, merge, rebase o limpieza de ramas, carga la skill `.opencode/skills/micasa-git/SKILL.md`. Recoge el flujo obligatorio de este repo y los comandos que ya han causado pérdida de trabajo aquí. Para el pipeline completo commit → push → PR → merge → limpieza → deploy, usa `.opencode/skills/micasa-release/SKILL.md`.
 
 Dos avisos concretos:
 
