@@ -1,6 +1,6 @@
 # INDEX — MiCasa
 
-App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 22 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.** Este índice es la fuente única de "qué hay": no crear documentos paralelos que lo dupliquen.
+App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 23 `.md` versionados. Este índice se actualiza al crear, modificar o borrar cualquier `.md` o skill. **Para no leer un `.md` entero, mirar antes el mapa de secciones de abajo.** Este índice es la fuente única de "qué hay": no crear documentos paralelos que lo dupliquen.
 
 ## Inventario completo
 
@@ -9,6 +9,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 22 `
 | Archivo | Propósito | Estado |
 |---|---|---|
 | [`.opencode/skills/micasa-git/SKILL.md`](.opencode/skills/micasa-git/SKILL.md) | Buenas prácticas de git de este repo: worktree por rama, comandos que ya han perdido trabajo, dependabot→`master`. | Vigente; leer antes de commitear/pushear/mergear. |
+| [`.opencode/skills/micasa-release/SKILL.md`](.opencode/skills/micasa-release/SKILL.md) | Pipeline completo: gates → commit → push → PR → checks → merge → limpieza → deploy → verificación. | Vigente; usar para release completo. |
 | [`AGENTS.md`](AGENTS.md) | Reglas del proyecto, Expo v57, stack, agentes, calidad, deploy y worktrees. | Vigente; leer primero. |
 | [`CLAUDE.md`](CLAUDE.md) | Redirección a `AGENTS.md`. | Vigente; 1 línea. |
 | [`INDEX.md`](INDEX.md) | Índice compacto y punto de entrada con menos tokens. | Actualizado 2026-10-25. |
@@ -57,6 +58,7 @@ App Expo (móvil + web/PWA) para gestionar el hogar. Inventario documental: 22 `
 | `docs/plan-bloque-a-correctitud.md` | Objetivo · Alcance · Fuera de alcance · Criterios de aceptación · Riesgos |
 | `docs/oauth-google-pendiente.md` | Pasos de configuración · Archivos tocados |
 | `docs/bug-0X-*.md` | Reporte/Síntoma · Causa raíz · Fix · Test · Nota (nunca leer: bug ya cerrado) |
+| `.opencode/skills/micasa-release/SKILL.md` | Precondiciones · Worktree · Gates · Commit · Push · PR · Checks · Merge · Limpieza · Deploy web · Edge Functions · Prohibiciones · Paradas |
 | `AGENTS.md` | Expo v57 · Idioma · Acceso a info · Emails · Frontend · Agentes · Flujo por bloque · Git · Reglas duras (worktree, nada abierto) · **Despliegue** · Telegram |
 | `README.md` | Funcionalidades · Stack · Puesta en marcha · Demo · Calidad · Estructura · Modelo de datos |
 
@@ -67,6 +69,7 @@ Viven en `~/.config/opencode/skills/`. **Cargar solo la aplicable al bloque**, n
 | Ámbito | Skill |
 |---|---|
 | Cualquier commit/push/merge | [`.opencode/skills/micasa-git`](../.opencode/skills/micasa-git/SKILL.md) — **obligatoria, local a este repo** |
+| Commit + PR + merge + deploy | [`.opencode/skills/micasa-release`](../.opencode/skills/micasa-release/SKILL.md) — **pipeline completo, local a este repo** |
 | Supabase, RLS, Edge Functions | `supabase` |
 | Consultas y esquema Postgres | `supabase-postgres-best-practices` |
 | App Expo / UI móvil | `building-native-ui` |
