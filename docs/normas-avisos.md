@@ -53,16 +53,19 @@ producto. Mientras no se conecte, no se promete email automático.
 - Un valor no elegido no se pinta como elegido. Si no se sabe leer, el selector
   queda sin marcar (`null`), no en `none`.
 
-### Defaults actuales y desviación
+### Defaults actuales
 
 - Cita: `reminder_choice = 'none'`, `notify_audience = 'me'`.
 - Nativo: cumpleaños `none`, nevera `none`.
-- Web: la fila `push_preferences` nace con `enabled = true`,
-  `birthday_choice = 'both'` y `fridge_choice = 'none'`. El opt-in por navegador
-  impide enviar hasta que se activa, pero al activarlo cumpleaños queda en
-  `both` sin elección explícita.
-- **Desviación a corregir**: `push_preferences.birthday_choice` debería nacer en
-  `none` para que la norma de consentimiento se cumpla también en web.
+- Web: tras aplicar `20261104_push_birthday_default_none.sql`, la fila
+  `push_preferences` nace con `enabled = true`, `birthday_choice = 'none'` y
+  `fridge_choice = 'none'`. Activar push no activa cumpleaños: hace falta
+  elegirlo.
+- Filas creadas antes de esa migración conservan `birthday_choice = 'both'`. No
+  se reinterpretan: no hay forma de distinguir default antiguo de elección
+  explícita.
+- **Decisión 2026-11-04**: no se hace backfill de esas filas. Se respeta lo que
+  haya guardado; forzar `none` borraría también elecciones explícitas.
 
 ## 5. Audiencia
 
@@ -139,7 +142,6 @@ producto. Mientras no se conecte, no se promete email automático.
 ## 11. Pendientes
 
 1. Implementar aviso de cita personalizado (`custom`).
-2. Alinear `push_preferences.birthday_choice` por defecto a `none`.
-3. Decidir franja de silencio nocturno.
-4. Decidir si gastos y presupuesto entran en estas normas o solo por email.
-5. Conectar `send-email` a la app o retirar la promesa de email automático.
+2. Decidir franja de silencio nocturno.
+3. Decidir si gastos y presupuesto entran en estas normas o solo por email.
+4. Conectar `send-email` a la app o retirar la promesa de email automático.

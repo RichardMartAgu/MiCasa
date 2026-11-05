@@ -42,6 +42,7 @@ El service worker (`sw-src.js`) solo precachea el shell y atiende `push`, `pushs
 | `supabase/migrations/20260925_web_push_drop_secrets_plural.sql` | Retira el RPC que devolvía los tres secretos de golpe. |
 | `supabase/migrations/20261022_push_log_entregado.sql` | Añade `push_log.delivered_at` y `reclaimed_at` y marca las filas antiguas como entregadas: distingue una reserva en vuelo de un aviso enviado y acota la retoma a una vez. |
 | `supabase/migrations/20261022_push_endpoint_guard.sql` | `CHECK` de host de push conocido (FCM, WNS, Mozilla, Apple) y tope de 10 suscripciones por usuario: cierra el SSRF ciego y la amplificación de envíos. |
+| `supabase/migrations/20261104_push_birthday_default_none.sql` | Cambia el default de `push_preferences.birthday_choice` de `both` a `none`: activar push no activa cumpleaños sin elección explícita. |
 | `supabase/functions/send-web-push/index.ts` | Arranque de la función: `Deno.serve` y las tipografías del runtime. |
 | `supabase/functions/send-web-push/handler.ts` | La Edge Function: autenticación, consultas, envío, mantenimiento de suscripciones y CORS. |
 | `supabase/functions/send-web-push/reminders.ts` | Lógica pura de recordatorios (fechas, zonas horarias, texto) y de las confirmaciones del modo `now`. Sin I/O: **no importa nada de `@supabase/supabase-js`**. |
@@ -148,6 +149,30 @@ Comprobado en este bloque: `npx tsc --noEmit` limpio, `npx expo lint` limpio, `n
 `buildBirthdayDispatches` seguía aplicando la ventana de catchup al slot `same-day`, así que un cumpleaños de hoy dejaba de avisar a partir de las 12:00 locales. Citas y nevera ya usaban `isDue` para ese slot desde el bloque de la PWA cerrada; cumpleaños era la única pantalla que se quedaba atrás.
 
 Ahora cumpleaños también pasa por `isDue`: `same-day` avisa a cualquier hora posterior a las 09:00 locales y `day-before` conserva la ventana de tres horas. `push_log` sigue siendo quien impide el duplicado, con la misma clave `tipo:refId:slot:dia:zona`.
+
+## Cumpleaños: default de consentimiento (2026-11-04)
+
+`push_preferences.birthday_choice` nacía en `both`. Activar Web Push creaba la fila y, sin elegir nada, empezaban los avisos de cumpleaños.
+
+La migración `20261104_push_birthday_default_none.sql` cambia el default a `none`. Solo afecta a filas nuevas; las antiguas con `both` se respetan porque no hay forma de distinguir el default viejo de una elección real.
+
+Verificación tras aplicar:
+
+```sql
+select column_default
+from information_schema.columns
+where table_schema = 'public'
+  and table_name = 'push_preferences'
+  and column_name = 'birthday_choice';
+-- esperado: 'none'::text
+```
+
+Rollback:
+
+```sql
+alter table public.push_preferences
+  alter column birthday_choice set default 'both';
+```
 
 ## Riesgos aceptados y límites
 

@@ -32,6 +32,20 @@ Cerrados:
 
 ---
 
+## Sesión 2026-11-04 — consentimiento de cumpleaños en Web Push
+
+- Objetivo: que activar Web Push no active avisos de cumpleaños sin elección.
+- Cambio: migración `20261104_push_birthday_default_none.sql`; default de
+  `push_preferences.birthday_choice` pasa de `both` a `none`.
+- Filas antiguas con `both`: decisión explícita de no hacer backfill; no se puede
+  distinguir default viejo de elección real.
+- Docs: normas y `docs/web-push.md` con verificación y rollback.
+- Pendiente: aplicar migración remota y comprobar `column_default = 'none'::text`.
+- Gate: migración sin cambios de código; CI de PR puede seguir rojo por auditoría
+  de dependencias preexistente.
+
+---
+
 ## Sesión 2026-10-27 — nevera iOS y normas de avisos
 
 - Objetivo: arreglar que Nevera no dejara elegir fechas futuras y dejar por escrito
