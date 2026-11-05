@@ -6,14 +6,14 @@ de cerrar los bloques; nada de esto es hipótesis.
 
 Abiertos a 2026-10-27:
 
-- **Nevera**: picker iOS corregido en rama `fix/nevera-ios`; falta probar en iPhone real.
-  El merge y el deploy de la feature ya están hechos.
+- **Nevera**: picker iOS corregido y mergeado (PR #130); falta probar en iPhone real.
+  Deploy de la web hecho.
 - **Prueba en dispositivo real** de la nevera (avisos locales en Android/iOS) y del
   push web, que sigue sin probarse en navegador real.
 - **OAuth Google**: botón oculto en login hasta que haya credenciales en Google Cloud y
   Supabase. Ver `oauth-google-pendiente.md`.
-- **Dependabot**: PRs 124-129 cerrados el 2026-10-27 para dejar la lista limpia antes
-  del worktree de nevera. Retomar como bloque de dependencias contra `develop`.
+- **Dependabot**: PRs 124-129 y 131-136 cerrados para dejar la lista limpia antes de
+  cada worktree. Retomar como bloque de dependencias contra `develop`.
 - **`master` divergente**: 5 commits solo en `master` (rediseño de splash, pins de jest)
   que no están en `develop`. Portar a mano si se quieren.
 - **Auditoría de dependencias**: `npm audit --audit-level=high` da 50 hallazgos (29 high)
@@ -40,7 +40,8 @@ Cerrados:
 - Filas antiguas con `both`: decisión explícita de no hacer backfill; no se puede
   distinguir default viejo de elección real.
 - Docs: normas y `docs/web-push.md` con verificación y rollback.
-- Pendiente: aplicar migración remota y comprobar `column_default = 'none'::text`.
+- Aplicada en producción 2026-11-05: `column_default = 'none'::text`; ledger
+  `20261105131420 push_birthday_default_none`.
 - Gate: migración sin cambios de código; CI de PR puede seguir rojo por auditoría
   de dependencias preexistente.
 

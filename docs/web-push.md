@@ -154,7 +154,7 @@ Ahora cumpleaños también pasa por `isDue`: `same-day` avisa a cualquier hora p
 
 `push_preferences.birthday_choice` nacía en `both`. Activar Web Push creaba la fila y, sin elegir nada, empezaban los avisos de cumpleaños.
 
-La migración `20261104_push_birthday_default_none.sql` cambia el default a `none`. Solo afecta a filas nuevas; las antiguas con `both` se respetan porque no hay forma de distinguir el default viejo de una elección real.
+La migración `20261104_push_birthday_default_none.sql` cambia el default a `none`. Solo afecta a filas nuevas; las antiguas con `both` se respetan porque no hay forma de distinguir el default viejo de una elección real. Aplicada en producción el 2026-11-05; verificado `column_default = 'none'::text`.
 
 Verificación tras aplicar:
 
