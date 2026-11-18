@@ -30,6 +30,7 @@ import {
   setCasaMemberRole,
   toggleFridgeItem,
   toggleShoppingItem,
+  updateShoppingItem,
   toggleShoppingList,
   updateAppointment,
   updateAppointmentKind,
@@ -52,7 +53,7 @@ function makeQuery(result: Record<string, unknown>) {
   const query: Record<string, unknown> & { then: (onfulfilled: (value: unknown) => unknown) => unknown } = {
     then: (resolve: (value: unknown) => unknown) => resolve(result),
   };
-  for (const method of ['select', 'eq', 'order', 'limit', 'insert', 'update', 'delete', 'single', 'in']) {
+  for (const method of ['select', 'eq', 'order', 'limit', 'insert', 'update', 'delete', 'single', 'maybeSingle', 'in']) {
     query[method] = jest.fn(() => query);
   }
   return query;
@@ -190,6 +191,71 @@ describe('mutaciones que devuelven { error, data }', () => {
     const result = await fn();
     expect(result.error).toEqual({ message: 'Ese registro ya existe.' });
     expect(result.data).toBeUndefined();
+  });
+});
+
+describe('updateShoppingItem', () => {
+  it('actualiza el artículo filtrando por id', async () => {
+    const query = setupFrom({ data: { id: '1' } });
+    const result = await updateShoppingItem('1', { name: '  Leche  ', quantity: 2 });
+
+    expect(result).toBeNull();
+    expect(mockFrom).toHaveBeenCalledWith('shopping_items');
+    expect(query.update).toHaveBeenCalledWith({ name: 'Leche', quantity: 2 });
+    expect(query.eq).toHaveBeenCalledWith('id', '1');
+    expect(query.select).toHaveBeenCalledWith('id');
+  });
+
+  it('envía quantity null explícito al limpiar la cantidad', async () => {
+    const query = setupFrom({ data: { id: '1' } });
+    const result = await updateShoppingItem('1', { name: 'Leche', quantity: null });
+    expect(result).toBeNull();
+    expect(query.update).toHaveBeenCalledWith({ name: 'Leche', quantity: null });
+  });
+
+  it('incluye la unidad solo cuando se pasa', async () => {
+    const query = setupFrom({ data: { id: '1' } });
+    const result = await updateShoppingItem('1', { name: 'Leche', unit: 'L' });
+    expect(result).toBeNull();
+    expect(query.update).toHaveBeenCalledWith({ name: 'Leche', unit: 'L' });
+  });
+
+  it('devuelve error si no se actualiza ninguna fila', async () => {
+    setupFrom({ data: null });
+    const result = await updateShoppingItem('1', { name: 'Leche' });
+    expect(result).toEqual({ message: 'No se pudo actualizar el artículo.' });
+  });
+
+  it('traduce errores de base de datos', async () => {
+    setupFrom({ error: { message: 'duplicate key value violates unique constraint' } });
+    const result = await updateShoppingItem('1', { name: 'Leche' });
+    expect(result).toEqual({ message: 'Ese registro ya existe.' });
+  });
+
+  it('rechaza nombre vacío, cantidad inválida y unidad larga sin llamar a Supabase', async () => {
+    mockFrom.mockClear();
+    expect(await updateShoppingItem('1', { name: '  ' })).toEqual({
+      message: 'El nombre del artículo es obligatorio.',
+    });
+    expect(await updateShoppingItem('1', { name: 'Leche', quantity: 0 })).toEqual({
+      message: 'La cantidad debe ser mayor que 0.',
+    });
+    expect(await updateShoppingItem('1', { name: 'Leche', quantity: -1 })).toEqual({
+      message: 'La cantidad debe ser mayor que 0.',
+    });
+    expect(await updateShoppingItem('1', { name: 'Leche', quantity: NaN })).toEqual({
+      message: 'La cantidad debe ser mayor que 0.',
+    });
+    expect(await updateShoppingItem('1', { name: 'Leche', unit: 'x'.repeat(33) })).toEqual({
+      message: 'La unidad no puede superar 32 caracteres.',
+    });
+    expect(await updateShoppingItem('1', { name: 'x'.repeat(121) })).toEqual({
+      message: 'El nombre no puede superar 120 caracteres.',
+    });
+    expect(await updateShoppingItem('1', { name: 'Leche', quantity: 1e100 })).toEqual({
+      message: 'La cantidad es demasiado grande.',
+    });
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 });
 

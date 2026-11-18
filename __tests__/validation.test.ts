@@ -6,6 +6,7 @@ import {
   validateDisplayName,
   validateEmail,
   validateInviteCode,
+  validateOptionalQuantity,
   validateOptionalText,
   validatePassword,
   validateTitle,
@@ -86,6 +87,50 @@ describe('validateTitle', () => {
 
   it('rechaza vacío', () => {
     expect(validateTitle('  ')).toMatchObject({ valid: false });
+  });
+
+  it('acepta 120 caracteres y rechaza 121', () => {
+    expect(validateTitle('x'.repeat(120))).toEqual({ valid: true });
+    expect(validateTitle('x'.repeat(121))).toEqual({
+      valid: false,
+      message: 'El título no puede superar 120 caracteres.',
+    });
+  });
+});
+
+describe('validateOptionalQuantity', () => {
+  it('acepta vacío como null', () => {
+    expect(validateOptionalQuantity('   ')).toEqual({ valid: true, value: null });
+  });
+
+  it('acepta números positivos con coma o punto', () => {
+    expect(validateOptionalQuantity('1,5')).toEqual({ valid: true, value: 1.5 });
+    expect(validateOptionalQuantity('2')).toEqual({ valid: true, value: 2 });
+  });
+
+  it('rechaza cero, negativos, NaN, notación científica y más de 2 decimales', () => {
+    expect(validateOptionalQuantity('0')).toMatchObject({ valid: false });
+    expect(validateOptionalQuantity('-2')).toMatchObject({ valid: false });
+    expect(validateOptionalQuantity('abc')).toMatchObject({ valid: false });
+    expect(validateOptionalQuantity('1e100')).toMatchObject({ valid: false });
+    expect(validateOptionalQuantity('0x10')).toMatchObject({ valid: false });
+    expect(validateOptionalQuantity('0,001')).toMatchObject({ valid: false });
+    expect(validateOptionalQuantity('1.234')).toMatchObject({ valid: false });
+  });
+
+  it('acepta el máximo 99999999.99 y rechaza por encima', () => {
+    expect(validateOptionalQuantity('99999999.99')).toEqual({
+      valid: true,
+      value: 99999999.99,
+    });
+    expect(validateOptionalQuantity('99999999,99')).toEqual({
+      valid: true,
+      value: 99999999.99,
+    });
+    expect(validateOptionalQuantity('100000000')).toEqual({
+      valid: false,
+      message: 'La cantidad es demasiado grande.',
+    });
   });
 });
 

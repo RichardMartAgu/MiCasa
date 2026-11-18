@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Modal,
@@ -30,11 +30,12 @@ import {
   removeShoppingList,
   toggleShoppingItem,
   toggleShoppingList,
+  updateShoppingItem,
 } from '@/lib/api';
 import { confirmDialog } from '@/lib/confirm';
 import { showNotice } from '@/lib/notice';
 import type { ShoppingItem, ShoppingList } from '@/lib/types';
-import { validateTitle } from '@/lib/validation';
+import { validateOptionalQuantity, validateTitle } from '@/lib/validation';
 
 export default function ListasScreen() {
   const { user } = useAuth();
@@ -58,6 +59,23 @@ export default function ListasScreen() {
   const [listTitle, setListTitle] = useState('');
   const [newItemName, setNewItemName] = useState('');
   const [newItemQty, setNewItemQty] = useState('');
+  const casaId = currentCasa?.id ?? null;
+  const [editing, setEditing] = useState<{ casaId: string | null; item: ShoppingItem | null }>({
+    casaId,
+    item: null,
+  });
+  const [editingCasaId, setEditingCasaId] = useState(casaId);
+  if (editingCasaId !== casaId) {
+    setEditingCasaId(casaId);
+    setEditing({ casaId, item: null });
+  }
+  const editingItem = editing.casaId === casaId ? editing.item : null;
+  const [editName, setEditName] = useState('');
+  const [editQty, setEditQty] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editQtyError, setEditQtyError] = useState<string | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const editSavingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -101,18 +119,25 @@ export default function ListasScreen() {
 
   async function handleAddItem(listId: string) {
     if (!currentCasa) return;
+    if (!newItemName.trim()) {
+      showNotice('Error', 'El nombre del artículo es obligatorio.');
+      return;
+    }
     const check = validateTitle(newItemName);
     if (!check.valid) {
       showNotice('Error', check.message);
       return;
     }
-    const qtyRaw = newItemQty.trim().replace(',', '.');
-    const qty = qtyRaw ? Number(qtyRaw) : null;
+    const qty = validateOptionalQuantity(newItemQty);
+    if (!qty.valid) {
+      showNotice('Error', qty.message);
+      return;
+    }
     const err = await addShoppingItem({
       list_id: listId,
       casa_id: currentCasa.id,
       name: newItemName.trim(),
-      quantity: qty && Number.isFinite(qty) && qty > 0 ? qty : null,
+      quantity: qty.value,
     });
     if (err) {
       showNotice('Error', err.message);
@@ -120,6 +145,53 @@ export default function ListasScreen() {
     }
     setNewItemName('');
     setNewItemQty('');
+  }
+
+  function openEditItem(item: ShoppingItem) {
+    setEditing({ casaId: currentCasa?.id ?? null, item });
+    setEditName(item.name);
+    setEditQty(item.quantity != null ? String(item.quantity).replace('.', ',') : '');
+    setEditError(null);
+    setEditQtyError(null);
+  }
+
+  async function handleSaveItem() {
+    if (!editingItem || editSavingRef.current) return;
+    const name = editName.trim();
+    if (!name) {
+      setEditError('El nombre del artículo es obligatorio.');
+      return;
+    }
+    if (name.length > 120) {
+      setEditError('El nombre no puede superar 120 caracteres.');
+      return;
+    }
+    const check = validateTitle(editName);
+    if (!check.valid) {
+      setEditError(check.message);
+      return;
+    }
+    const qty = validateOptionalQuantity(editQty);
+    if (!qty.valid) {
+      setEditQtyError(qty.message);
+      return;
+    }
+    editSavingRef.current = true;
+    setEditSaving(true);
+    try {
+      const err = await updateShoppingItem(editingItem.id, {
+        name,
+        quantity: qty.value,
+      });
+      if (err) {
+        showNotice('Error', err.message);
+        return;
+      }
+      setEditing({ casaId: currentCasa?.id ?? null, item: null });
+    } finally {
+      editSavingRef.current = false;
+      setEditSaving(false);
+    }
   }
 
   async function handleToggleList(id: string, done: boolean) {
@@ -237,8 +309,15 @@ export default function ListasScreen() {
                         </Pressable>
                         <Text style={[styles.itemName, item.done && styles.textMuted]}>
                           {item.name}
-                          {item.quantity ? ` · ${item.quantity}${item.unit ? ` ${item.unit}` : ''}` : ''}
+                          {item.quantity ? ` · ${String(item.quantity).replace('.', ',')}${item.unit ? ` ${item.unit}` : ''}` : ''}
                         </Text>
+                        <Pressable
+                          onPress={() => openEditItem(item)}
+                          hitSlop={14}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Editar artículo ${item.name}`}>
+                          <Ionicons name="pencil-outline" size={18} color={Palette.textMuted} />
+                        </Pressable>
                         <Pressable
                           onPress={() => void handleDeleteItem(item.id)}
                           hitSlop={14}
@@ -304,6 +383,58 @@ export default function ListasScreen() {
             <View style={styles.modalActions}>
               <Button title="Cancelar" variant="secondary" onPress={() => setModalVisible(false)} />
               <Button title="Crear" onPress={handleAddList} loading={saving} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={editingItem !== null}
+        animationType="slide"
+        transparent
+        accessibilityViewIsModal
+        onRequestClose={() => {
+          if (!editSaving) setEditing({ casaId: currentCasa?.id ?? null, item: null });
+        }}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modal}>
+            <Text style={styles.modalTitle}>Editar artículo</Text>
+            <TextField
+              label="Nombre del artículo"
+              value={editName}
+              onChangeText={(value) => {
+                setEditName(value);
+                if (editError) setEditError(null);
+              }}
+              placeholder="P. ej. Leche"
+              error={editError}
+            />
+            <View style={styles.editQtyRow}>
+              <Text style={styles.editQtyLabel}>Cantidad</Text>
+              <TextInput
+                style={[styles.itemInput, styles.editQtyInput]}
+                placeholder="Opcional"
+                placeholderTextColor={Palette.textMuted}
+                accessibilityLabel="Cantidad del artículo"
+                value={editQty}
+                onChangeText={(value) => {
+                  setEditQty(value);
+                  if (editQtyError) setEditQtyError(null);
+                }}
+                keyboardType="decimal-pad"
+                onSubmitEditing={() => void handleSaveItem()}
+                returnKeyType="done"
+              />
+              {editQtyError ? <Text style={styles.editQtyError}>{editQtyError}</Text> : null}
+            </View>
+            <View style={styles.modalActions}>
+              <Button
+                title="Cancelar"
+                variant="secondary"
+                disabled={editSaving}
+                onPress={() => setEditing({ casaId: currentCasa?.id ?? null, item: null })}
+              />
+              <Button title="Guardar" onPress={handleSaveItem} loading={editSaving} />
             </View>
           </View>
         </View>
@@ -382,5 +513,9 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   modalTitle: { fontSize: 20, fontWeight: '800', color: Palette.text },
+  editQtyRow: { gap: Spacing.one },
+  editQtyLabel: { fontSize: 14, fontWeight: '600', color: Palette.textSecondary },
+  editQtyInput: { flex: 0, minWidth: 0 },
+  editQtyError: { fontSize: 13, color: Palette.danger },
   modalActions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
 });

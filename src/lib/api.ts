@@ -251,6 +251,40 @@ export async function addShoppingItem(input: {
   return toError(error);
 }
 
+export async function updateShoppingItem(
+  id: string,
+  input: { name: string; quantity?: number | null; unit?: string | null },
+): Promise<ApiError | null> {
+  const name = input.name.trim();
+  if (!name) return { message: 'El nombre del artículo es obligatorio.' };
+  if (name.length > 120) return { message: 'El nombre no puede superar 120 caracteres.' };
+  if (
+    input.quantity !== undefined &&
+    input.quantity !== null &&
+    (!Number.isFinite(input.quantity) || input.quantity <= 0)
+  ) {
+    return { message: 'La cantidad debe ser mayor que 0.' };
+  }
+  if (input.quantity != null && input.quantity > 99999999.99) {
+    return { message: 'La cantidad es demasiado grande.' };
+  }
+  if (input.unit != null && input.unit.length > 32) {
+    return { message: 'La unidad no puede superar 32 caracteres.' };
+  }
+  const payload: { name: string; quantity?: number | null; unit?: string | null } = { name };
+  if (input.quantity !== undefined) payload.quantity = input.quantity;
+  if (input.unit !== undefined) payload.unit = input.unit;
+  const { data, error } = await supabase
+    .from('shopping_items')
+    .update(payload)
+    .eq('id', id)
+    .select('id')
+    .maybeSingle();
+  if (error) return toError(error);
+  if (!data) return { message: 'No se pudo actualizar el artículo.' };
+  return null;
+}
+
 export async function toggleShoppingItem(id: string, done: boolean): Promise<ApiError | null> {
   const { error } = await supabase.from('shopping_items').update({ done }).eq('id', id);
   return toError(error);

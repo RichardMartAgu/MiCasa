@@ -2,6 +2,10 @@ export type ValidationResult =
   | { valid: true }
   | { valid: false; message: string };
 
+export type QuantityResult =
+  | { valid: true; value: number | null }
+  | { valid: false; message: string };
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const INVITE_CODE_RE = /^[A-F0-9]{16}$/;
 
@@ -56,6 +60,21 @@ export function validateTitle(value: string): ValidationResult {
   if (title.length > 120)
     return { valid: false, message: 'El título no puede superar 120 caracteres.' };
   return { valid: true };
+}
+
+const QUANTITY_RE = /^\d+(?:[.,]\d{1,2})?$/;
+
+export function validateOptionalQuantity(value: string): QuantityResult {
+  const raw = value.trim();
+  if (!raw) return { valid: true, value: null };
+  if (!QUANTITY_RE.test(raw))
+    return { valid: false, message: 'La cantidad debe ser mayor que 0 con hasta 2 decimales.' };
+  const quantity = Number(raw.replace(',', '.'));
+  if (quantity <= 0)
+    return { valid: false, message: 'La cantidad debe ser mayor que 0.' };
+  if (quantity > 99999999.99)
+    return { valid: false, message: 'La cantidad es demasiado grande.' };
+  return { valid: true, value: quantity };
 }
 
 export function validateAmount(value: number): ValidationResult {
