@@ -514,7 +514,13 @@ create policy "shopping_items_insert_member" on public.shopping_items
 
 create policy "shopping_items_update_member" on public.shopping_items
   for update using (public.is_casa_member(casa_id))
-  with check (public.is_casa_member(casa_id));
+  with check (
+    public.is_casa_member(casa_id)
+    and exists (
+      select 1 from public.shopping_lists sl
+      where sl.id = shopping_items.list_id and sl.casa_id = shopping_items.casa_id
+    )
+  );
 
 create policy "shopping_items_delete_member" on public.shopping_items
   for delete using (public.is_casa_member(casa_id));

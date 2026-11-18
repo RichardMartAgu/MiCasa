@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Alert, StyleSheet } from 'react-native';
 
 import ListasScreen from '@/app/(tabs)/listas';
@@ -42,6 +42,7 @@ const mockAddShoppingList = jest.fn();
 const mockAddShoppingItem = jest.fn();
 const mockRemoveShoppingItem = jest.fn();
 const mockToggleShoppingItem = jest.fn();
+const mockUpdateShoppingItem = jest.fn();
 jest.mock('@/lib/api', () => ({
   addShoppingItem: (...args: unknown[]) => mockAddShoppingItem(...args),
   addShoppingList: (...args: unknown[]) => mockAddShoppingList(...args),
@@ -51,11 +52,13 @@ jest.mock('@/lib/api', () => ({
   removeShoppingList: jest.fn().mockResolvedValue(null),
   toggleShoppingItem: (...args: unknown[]) => mockToggleShoppingItem(...args),
   toggleShoppingList: jest.fn().mockResolvedValue(null),
+  updateShoppingItem: (...args: unknown[]) => mockUpdateShoppingItem(...args),
 }));
 
 const mockValidateTitle = jest.fn();
 jest.mock('@/lib/validation', () => ({
   validateTitle: (...args: unknown[]) => mockValidateTitle(...args),
+  validateOptionalQuantity: jest.requireActual('@/lib/validation').validateOptionalQuantity,
 }));
 
 const casa = { id: 'c1', name: 'Mi Hogar', invite_code: 'ABCD1234' };
@@ -100,6 +103,7 @@ beforeEach(() => {
   mockAddShoppingItem.mockResolvedValue(null);
   mockRemoveShoppingItem.mockResolvedValue(null);
   mockToggleShoppingItem.mockResolvedValue(null);
+  mockUpdateShoppingItem.mockResolvedValue(null);
   mockValidateTitle.mockReturnValue({ valid: true });
 });
 
@@ -253,6 +257,188 @@ describe('ListasScreen', () => {
         expect.objectContaining({ name: 'Pan', quantity: 1.5 }),
       );
     });
+  });
+
+  it('edita nombre y cantidad de un artículo', async () => {
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Editar artículo Leche')).toBeTruthy());
+    fireEvent.press(getByLabelText('Editar artículo Leche'));
+
+    await waitFor(() => expect(getByText('Editar artículo')).toBeTruthy());
+
+    const nameInput = getByLabelText('Nombre del artículo');
+    const qtyInput = getByLabelText('Cantidad del artículo');
+    expect(nameInput.props.value).toBe('Leche');
+    expect(qtyInput.props.value).toBe('2');
+
+    fireEvent.changeText(nameInput, 'Leche entera');
+    fireEvent.changeText(qtyInput, '1,5');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockUpdateShoppingItem).toHaveBeenCalledWith('i1', {
+        name: 'Leche entera',
+        quantity: 1.5,
+      });
+    });
+  });
+
+  it('avisa y no cierra el modal si falla la edición', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockUpdateShoppingItem.mockResolvedValue({ message: 'Sin conexión.' });
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Editar artículo Leche')).toBeTruthy());
+    fireEvent.press(getByLabelText('Editar artículo Leche'));
+    await waitFor(() => expect(getByText('Editar artículo')).toBeTruthy());
+
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('Error', 'Sin conexión.'));
+    expect(getByText('Editar artículo')).toBeTruthy();
+    alertSpy.mockRestore();
+  });
+
+  it('bloquea cantidad inválida al editar y conserva el dato', async () => {
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Editar artículo Leche')).toBeTruthy());
+    fireEvent.press(getByLabelText('Editar artículo Leche'));
+    await waitFor(() => expect(getByText('Editar artículo')).toBeTruthy());
+
+    fireEvent.changeText(getByLabelText('Cantidad del artículo'), '-2');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() =>
+      expect(getByText('La cantidad debe ser mayor que 0 con hasta 2 decimales.')).toBeTruthy(),
+    );
+    expect(mockUpdateShoppingItem).not.toHaveBeenCalled();
+  });
+
+  it('envía cantidad null al vaciar el campo', async () => {
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Editar artículo Leche')).toBeTruthy());
+    fireEvent.press(getByLabelText('Editar artículo Leche'));
+    await waitFor(() => expect(getByText('Editar artículo')).toBeTruthy());
+
+    fireEvent.changeText(getByLabelText('Cantidad del artículo'), '');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => {
+      expect(mockUpdateShoppingItem).toHaveBeenCalledWith('i1', {
+        name: 'Leche',
+        quantity: null,
+      });
+    });
+  });
+
+  it('cierra el modal de edición al cambiar de casa', async () => {
+    const { getByText, getByLabelText, queryByText, rerender } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Editar artículo Leche')).toBeTruthy());
+    fireEvent.press(getByLabelText('Editar artículo Leche'));
+    await waitFor(() => expect(getByText('Editar artículo')).toBeTruthy());
+
+    mockUseCasa.mockReturnValue({
+      currentCasa: { ...casa, id: 'c2', name: 'Otra casa' },
+      loading: false,
+    });
+    rerender(<ListasScreen />);
+
+    await waitFor(() => expect(queryByText('Editar artículo')).toBeNull());
+    expect(mockUpdateShoppingItem).not.toHaveBeenCalled();
+
+    mockUseCasa.mockReturnValue({ currentCasa: casa, loading: false });
+    rerender(<ListasScreen />);
+
+    await waitFor(() => expect(queryByText('Editar artículo')).toBeNull());
+  });
+
+  it('avisa si el nombre del artículo queda vacío al editar', async () => {
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Editar artículo Leche')).toBeTruthy());
+    fireEvent.press(getByLabelText('Editar artículo Leche'));
+    await waitFor(() => expect(getByText('Editar artículo')).toBeTruthy());
+
+    fireEvent.changeText(getByLabelText('Nombre del artículo'), '   ');
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() =>
+      expect(getByText('El nombre del artículo es obligatorio.')).toBeTruthy(),
+    );
+    expect(mockUpdateShoppingItem).not.toHaveBeenCalled();
+  });
+
+  it('avisa si el nombre del artículo supera 120 caracteres al editar', async () => {
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Editar artículo Leche')).toBeTruthy());
+    fireEvent.press(getByLabelText('Editar artículo Leche'));
+    await waitFor(() => expect(getByText('Editar artículo')).toBeTruthy());
+
+    fireEvent.changeText(getByLabelText('Nombre del artículo'), 'x'.repeat(121));
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() =>
+      expect(getByText('El nombre no puede superar 120 caracteres.')).toBeTruthy(),
+    );
+    expect(mockUpdateShoppingItem).not.toHaveBeenCalled();
+  });
+
+  it('no envía la edición dos veces si se pulsa Guardar repetidamente', async () => {
+    let resolveUpdate: (value: null) => void = () => {};
+    mockUpdateShoppingItem.mockImplementation(
+      () =>
+        new Promise<null>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Editar artículo Leche')).toBeTruthy());
+    fireEvent.press(getByLabelText('Editar artículo Leche'));
+    await waitFor(() => expect(getByText('Editar artículo')).toBeTruthy());
+
+    const saveButton = getByText('Guardar');
+    const qtyInput = getByLabelText('Cantidad del artículo');
+
+    fireEvent.press(saveButton);
+    // Botón ya en loading; el guard por ref debe bloquear el segundo intento
+    // aunque llegue por otra vía (submitEditing del input de cantidad).
+    fireEvent(qtyInput, 'submitEditing');
+
+    expect(mockUpdateShoppingItem).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveUpdate(null);
+    });
+    await waitFor(() => expect(mockUpdateShoppingItem).toHaveBeenCalledTimes(1));
+  });
+
+  it('valida el nombre al editar un artículo', async () => {
+    mockValidateTitle.mockReturnValue({ valid: false, message: 'El título es obligatorio.' });
+    const { getByText, getByLabelText } = setup([list], [item]);
+
+    fireEvent.press(getByText('Frutas'));
+    await waitFor(() => expect(getByLabelText('Editar artículo Leche')).toBeTruthy());
+    fireEvent.press(getByLabelText('Editar artículo Leche'));
+    await waitFor(() => expect(getByText('Editar artículo')).toBeTruthy());
+
+    fireEvent.press(getByText('Guardar'));
+
+    await waitFor(() => expect(getByText('El título es obligatorio.')).toBeTruthy());
+    expect(mockUpdateShoppingItem).not.toHaveBeenCalled();
   });
 
   it('avisa si falla el toggle de un artículo', async () => {
